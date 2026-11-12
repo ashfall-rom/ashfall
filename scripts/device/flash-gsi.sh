@@ -123,6 +123,16 @@ host_size() { host_sh "stat -c %s $(_dq "$1")"; }
 host_head() { host_sh "head -c ${2:-4} $(_dq "$1") | od -An -tx1 | tr -d ' \\n'"; }
 host_bytes() { host_sh "dd if=$(_dq "$1") bs=1 skip=$2 count=$3 2>/dev/null | od -An -tx1 | tr -d ' \\n'"; }
 
+# Android sparse header (little-endian): magic 0xed26ff3a, blk_sz @12,
+# total_blks @16 -> expanded size = total_blks * blk_sz (fastboot writes that).
+sparse_expanded_size() {
+  local out blk total
+  out=$(host_sh "od -An -tu4 -j 12 -N 8 $(_dq "$1")" 2>/dev/null) || return 1
+  read -r blk total <<<"$out" || return 1
+  [[ $blk =~ ^[0-9]+$ && $total =~ ^[0-9]+$ ]] || return 1
+  printf '%s' "$((blk * total))"
+}
+
 human() {
   local n=$1 sign='' out
   ((n < 0)) && { sign='-'; n=$((-n)); }
@@ -163,7 +173,11 @@ resolve_vbmeta() {
   for cand in "$REMOTE_FIRMWARE/vbmeta.img" \
               "$REMOTE_FIRMWARE/lun4_vbmeta_${slot}.bin" \
               "$REMOTE_FIRMWARE/lun4_vbmeta_a.bin" \
-              "$REMOTE_FIRMWARE/vbmeta_${slot}.img"; do
+              "$REMOTE_FIRMWARE/vbmeta_${slot}.img" \
+              "$REMOTE_FIRMWARE/img/vbmeta.img" \
+              "$REMOTE_FIRMWARE/img/lun4_vbmeta_${slot}.bin" \
+              "$REMOTE_FIRMWARE/img/lun4_vbmeta_a.bin" \
+              "$REMOTE_FIRMWARE/img/vbmeta_${slot}.img"; do
     if host_file_exists "$cand"; then printf '%s' "$cand"; return 0; fi
   done
   printf ''
@@ -257,20 +271,24 @@ hexok() { [[ $1 =~ ^0x[0-9a-fA-F]+$ ]]; }
 
 compute_space_budget() {
   BUDGET_LINES=(); DELETIONS=(); SPACE_KNOWN=0; GROUP_NEED=0
-  local sys prod sx vendor odm sum free_after pair part v
-  local b_vendor b_product b_system_ext b_other b_free b_need b_left
+  local sys prod sx vendor odm sys_dlkm vend_dlkm sum free_after pair part v
+  local b_vendor b_odm b_product b_system_ext b_system_dlkm b_vendor_dlkm b_other b_free b_need b_left
 
   # Sizes are only readable in fastbootd. Everywhere else (bootloader, Android,
   # no device) show the arithmetic on the documented stock baseline (PR #10);
   # it is re-measured in fastbootd before any deletion.
   if [[ ${MODE:-none} != fastbootd ]]; then
-    b_vendor=$((1823 * 1024 * 1024))    # 1.78 GiB
-    b_product=$((896 * 1024 * 1024))    # 896 MiB
-    b_system_ext=$((498 * 1024 * 1024)) # 498 MiB
-    b_other=$((b_vendor + b_product + b_system_ext))
+    # Exact stock sizes from docs/stock/super-lpdump.txt (issue #32).
+    b_vendor=1910083584      # 1.78 GiB
+    b_odm=1220608            # 1.2 MiB
+    b_product=939675648      # 896 MiB
+    b_system_ext=522039296   # 498 MiB
+    b_system_dlkm=438272     # 428 KiB
+    b_vendor_dlkm=67862528   # 64.7 MiB
+    b_other=$((b_vendor + b_odm + b_product + b_system_ext + b_system_dlkm + b_vendor_dlkm))
     b_free=$((GROUP_MAX - b_other - IMG_SIZE))
     BUDGET_LINES+=("group qti_dynamic_partitions_$SLOT max $(human "$GROUP_MAX")")
-    BUDGET_LINES+=("stock baseline (PR #10): vendor $(human "$b_vendor") + product $(human "$b_product") + system_ext $(human "$b_system_ext") = $(human "$b_other")")
+    BUDGET_LINES+=("stock baseline (lpdump, PR #10): vendor $(human "$b_vendor") + odm $(human "$b_odm") + product $(human "$b_product") + system_ext $(human "$b_system_ext") + system_dlkm $(human "$b_system_dlkm") + vendor_dlkm $(human "$b_vendor_dlkm") = $(human "$b_other")")
     b_need=0
     if ((b_free >= 0)); then
       BUDGET_LINES+=("baseline: $(human "$GROUP_MAX") - $(human "$b_other") - $(human "$IMG_SIZE") (image) = $(human "$b_free") free")
@@ -303,19 +321,21 @@ compute_space_budget() {
   sx=$(dev_fb_value "partition-size:system_ext_$SLOT")
   vendor=$(dev_fb_value "partition-size:vendor_$SLOT")
   odm=$(dev_fb_value "partition-size:odm_$SLOT")
+  sys_dlkm=$(dev_fb_value "partition-size:system_dlkm_$SLOT")
+  vend_dlkm=$(dev_fb_value "partition-size:vendor_dlkm_$SLOT")
   BUDGET_LINES+=("group qti_dynamic_partitions_$SLOT max $(human "$GROUP_MAX")")
-  BUDGET_LINES+=("sizes: system=${sys:-?} vendor=${vendor:-?} product=${prod:-?} system_ext=${sx:-?} odm=${odm:-?}")
+  BUDGET_LINES+=("sizes: system=${sys:-?} vendor=${vendor:-?} product=${prod:-?} system_ext=${sx:-?} odm=${odm:-?} system_dlkm=${sys_dlkm:-?} vendor_dlkm=${vend_dlkm:-?}")
   if ! hexok "$sys" || ! hexok "$vendor"; then
     BUDGET_LINES+=("sizes unreadable even in fastbootd (flaky getvar); will free partitions only if the flash reports no space")
     return 0
   fi
   sum=0
-  for v in "$vendor" "$odm" "$prod" "$sx"; do
+  for v in "$vendor" "$odm" "$prod" "$sx" "$sys_dlkm" "$vend_dlkm"; do
     hexok "$v" && sum=$((sum + v))
   done
   free_after=$((GROUP_MAX - sum - IMG_SIZE))
   if ((free_after >= 0)); then
-    BUDGET_LINES+=("budget: $(human "$GROUP_MAX") - $(human "$sum") (vendor+odm+product+system_ext) - $(human "$IMG_SIZE") (image) = $(human "$free_after") free")
+    BUDGET_LINES+=("budget: $(human "$GROUP_MAX") - $(human "$sum") (vendor+odm+product+system_ext+dlkm) - $(human "$IMG_SIZE") (image) = $(human "$free_after") free")
     SPACE_KNOWN=1
     return 0
   fi
@@ -376,9 +396,16 @@ IMG_MAGIC=$(host_head "$IMG_HOST" 4)
 IMG_FS=$(host_bytes "$IMG_HOST" 1080 2)
 IMG_EROFS=$(host_bytes "$IMG_HOST" 1024 4)
 
-log "image $IMG_HOST ($(human "$IMG_SIZE"), magic $IMG_MAGIC)"
+log "image $IMG_HOST (file $(human "$IMG_SIZE"), magic $IMG_MAGIC)"
 case $IMG_MAGIC in
-  3aff26ed) log "android sparse image" ;;
+  3aff26ed)
+    if expanded=$(sparse_expanded_size "$IMG_HOST") && [[ $expanded =~ ^[0-9]+$ ]]; then
+      IMG_SIZE=$expanded
+      log "android sparse image: expands to $(human "$IMG_SIZE") (budgeted)"
+    else
+      warn "android sparse image: could not parse the header; budgeting the on-disk size"
+    fi
+    ;;
   *)
     if [[ $IMG_EROFS == e2e1f5e0 ]]; then
       log "EROFS image (expected for the GSI: stock 5.15 GKI mounts EROFS)"

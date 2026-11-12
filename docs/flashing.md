@@ -154,15 +154,18 @@ Sequence:
    up to 3 minutes for `is-userspace: yes`.
 4. **Space budget** -- `super` is split into two slot groups of 6.0 GiB
    (`qti_dynamic_partitions_a/_b`); stock uses ~4.6 GiB (`system` 1.39,
-   `vendor` 1.78, `product` 0.875, `system_ext` 0.49 GiB, from
-   `docs/stock-analysis.md`). The script computes
-   `image + vendor + odm + product + system_ext` against the 6.0 GiB budget and
-   prints the arithmetic. When short, it deletes the stock `product_<slot>`
-   first and `system_ext_<slot>` only if still needed (a GSI bundles its own);
-   `vendor_<slot>` and `odm_<slot>` are never touched. `--keep-product` forbids
-   those deletions and fails instead. The budget is overridable with
-   `ASH_GROUP_MAX_BYTES` (default `6442450944`). `restore-stock.sh` brings the
-   stock super back.
+   `vendor` 1.78, `product` 0.875, `system_ext` 0.49, `vendor_dlkm` 0.065,
+   `system_dlkm` 0.0004, `odm` 0.001 GiB, from `docs/stock/super-lpdump.txt`).
+   The script computes
+   `image + vendor + odm + product + system_ext + system_dlkm + vendor_dlkm`
+   against the 6.0 GiB budget and prints the arithmetic. Android-sparse images
+   are budgeted by their **expanded** size (`total_blks * blk_sz` from the
+   sparse header), not by the on-disk file size. When short, it deletes the
+   stock `product_<slot>` first and `system_ext_<slot>` only if still needed (a
+   GSI bundles its own); `vendor_<slot>`/`odm_<slot>` and the dlkm partitions are
+   never touched. `--keep-product` forbids those deletions and fails instead.
+   The budget is overridable with `ASH_GROUP_MAX_BYTES` (default
+   `6442450944`). `restore-stock.sh` brings the stock super back.
 5. **Flash `system`** -- `fastboot --slot <slot> flash system <img>` (fastbootd
    resizes the logical partition; fastboot sparse-splits large images using
    `max-download-size`).
@@ -267,11 +270,17 @@ Flashing a broken GSI back to stock, per guide
 [§8](reference/rp5-recovery-guide.md#8-procedure-a-reflash-android-over-fastboot):
 
 ```bash
-scripts/device/restore-stock.sh --dry-run                       # plan + size checks
-scripts/device/restore-stock.sh --images /var/home/epickitrolaz/ashfall/firmware/img --wipe --yes
+scripts/device/restore-stock.sh --dry-run                 # plan + size checks
+scripts/device/restore-stock.sh --wipe --yes              # flash stock
+scripts/device/restore-stock.sh --images DIR --slot both --wipe --yes   # explicit
 ```
 
-What it flashes (both slots by default): `boot`, `init_boot`, `vendor_boot`,
+Images are read from `$REMOTE_FIRMWARE/img` when it exists (the extracted tree
+from the firmware analysis), else `$REMOTE_FIRMWARE`; override with `--images`.
+The slot defaults to `auto`: both slots when both have images, otherwise the
+slot whose images are present (with a warning).
+
+What it flashes (both slots when available): `boot`, `init_boot`, `vendor_boot`,
 `dtbo`, `recovery`, `vbmeta`, `vbmeta_system`, `vm-linux`, `vm-system`
 (optional ones are skipped with a warning when their image is missing), plus
 `splash` and `super`. `--no-super` keeps the current system; `--no-splash`

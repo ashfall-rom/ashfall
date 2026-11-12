@@ -19,8 +19,10 @@
 #
 # Options:
 #   --images DIR        stock image directory on the build host
-#                       (default: $REMOTE_FIRMWARE)
-#   --slot a|b|both     slots to flash (default: both)
+#                       (default: $REMOTE_FIRMWARE/img when it exists, else
+#                       $REMOTE_FIRMWARE)
+#   --slot a|b|both     slots to flash (default: auto: both when both slot
+#                       images exist, else the slot whose images are present)
 #   --no-super          skip the 12 GiB super image (keeps current system)
 #   --no-splash         skip splash
 #   --wipe              erase userdata + metadata (needed if /data is unusable;
@@ -47,7 +49,8 @@ load_config
 NEVER_FLASH_RE='^(persist|modemst[12]|fsg|fsc|mdm1m9kefs[0-9a-z]*|devinfo|frp|keystore|secdata|ssd|storsec|cdt|ddr|mdmddr|nvdata[12]|nvram|qpdata[0-9a-z]*|rawdump|reserve[0-9a-z]*|ssign|apdp|msadp|spunvm|uefivarstore|vm-data|vm-keystore|.*_gpt_header|.*_last_parti|metadata|userdata|misc)$'
 
 IMAGES=""
-SLOTS="both"
+SLOTS="auto"
+SLOTS_REQ="auto"
 DO_SUPER=1
 DO_SPLASH=1
 WIPE=0
@@ -65,7 +68,7 @@ die_usage() { printf 'err %s\n' "$*" >&2; printf 'try --help\n' >&2; exit 2; }
 while (($#)); do
   case $1 in
     --images) IMAGES=${2:?--images needs a dir}; shift 2 ;;
-    --slot) SLOTS=${2:?--slot needs a|b|both}; shift 2 ;;
+    --slot) SLOTS=${2:?--slot needs a|b|both}; SLOTS_REQ=$SLOTS; shift 2 ;;
     --no-super) DO_SUPER=0; shift ;;
     --no-splash) DO_SPLASH=0; shift ;;
     --wipe) WIPE=1; shift ;;
@@ -81,13 +84,19 @@ while (($#)); do
   esac
 done
 
-[[ $SLOTS == a || $SLOTS == b || $SLOTS == both ]] || die_usage "--slot must be a, b or both"
+[[ $SLOTS == a || $SLOTS == b || $SLOTS == both || $SLOTS == auto ]] || die_usage "--slot must be a, b, both or auto"
 [[ -z $SET_ACTIVE || $SET_ACTIVE == a || $SET_ACTIVE == b ]] || die_usage "--set-active must be a or b"
 if ((NO_DEVICE)) && ((!DRY_RUN)); then
   die_usage "--no-device only makes sense with --dry-run"
 fi
 if ((NO_DEVICE)) && ((!DRY_RUN)); then die_usage "--no-device only makes sense with --dry-run"; fi
-[[ -n $IMAGES ]] || IMAGES=$REMOTE_FIRMWARE
+if [[ -z $IMAGES ]]; then
+  if [[ $(host_sh "test -d $(_dq "$REMOTE_FIRMWARE/img") && echo yes || echo no") == yes ]]; then
+    IMAGES="$REMOTE_FIRMWARE/img"
+  else
+    IMAGES="$REMOTE_FIRMWARE"
+  fi
+fi
 
 TS=$(date -u +%Y%m%dT%H%M%SZ)
 LOG_DIR="$LOCAL_ARTIFACTS/device/$TS"
@@ -158,7 +167,22 @@ preflight() {
 PLAN=()
 resolve_plan() {
   local slots=() slot part img size
-  case $SLOTS in both) slots=(a b) ;; *) slots=("$SLOTS") ;; esac
+  case $SLOTS in
+    both) slots=(a b) ;;
+    auto)
+      if [[ -n $(find_image boot b) ]]; then
+        slots=(a b)
+      elif [[ -n $(find_image boot a) ]]; then
+        slots=(a)
+        warn "only slot-A stock images are present in $IMAGES; planning slot A (use --slot both once B is extracted)"
+      else
+        die "no stock boot image for slot a or b in $IMAGES"
+      fi
+      ;;
+    *) slots=("$SLOTS") ;;
+  esac
+  SLOTS="${slots[*]}"
+  log "image dir: $IMAGES; slots: $SLOTS"
   local -a parts=(boot init_boot vendor_boot dtbo recovery vbmeta vbmeta_system vm-linux vm-system)
   for slot in "${slots[@]}"; do
     for part in "${parts[@]}"; do
@@ -192,7 +216,7 @@ print_plan() {
   printf '\n================ PLAN ================\n'
   printf 'images dir:  %s\n' "$IMAGES"
   printf 'device:      %s (fastboot/bootloader)\n' "${DEV_SERIAL:-unknown}"
-  printf 'slots:       %s\n' "$SLOTS"
+  printf 'slots:       %s (requested: %s)\n' "$SLOTS" "$SLOTS_REQ"
   printf 'wipe:        %s   set-active: %s   reboot: %s\n' "$((WIPE))" "${SET_ACTIVE:-no}" "$((REBOOT))"
   printf '\nflashes:\n'
   for entry in "${PLAN[@]}"; do
