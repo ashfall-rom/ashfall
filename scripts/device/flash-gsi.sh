@@ -84,7 +84,7 @@ done
 
 [[ -n $IMG ]] || die_usage "missing <system.img>"
 [[ -z $SLOT || $SLOT == a || $SLOT == b ]] || die_usage "--slot must be a or b"
-((NO_DEVICE)) && ((DRY_RUN)) || { ((NO_DEVICE)) && die_usage "--no-device only makes sense with --dry-run"; }
+if ((NO_DEVICE)) && ((!DRY_RUN)); then die_usage "--no-device only makes sense with --dry-run"; fi
 
 TS=$(date -u +%Y%m%dT%H%M%SZ)
 LOG_DIR="$LOCAL_ARTIFACTS/device/$TS"

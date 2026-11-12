@@ -83,6 +83,10 @@ done
 
 [[ $SLOTS == a || $SLOTS == b || $SLOTS == both ]] || die_usage "--slot must be a, b or both"
 [[ -z $SET_ACTIVE || $SET_ACTIVE == a || $SET_ACTIVE == b ]] || die_usage "--set-active must be a or b"
+if ((NO_DEVICE)) && ((!DRY_RUN)); then
+  die_usage "--no-device only makes sense with --dry-run"
+fi
+if ((NO_DEVICE)) && ((!DRY_RUN)); then die_usage "--no-device only makes sense with --dry-run"; fi
 [[ -n $IMAGES ]] || IMAGES=$REMOTE_FIRMWARE
 
 TS=$(date -u +%Y%m%dT%H%M%SZ)
