@@ -12,6 +12,9 @@ HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 . "$HERE/../lib/common.sh"
 load_config
 
+# Overridable only so tests can probe a scratch lock instead of the shared tree.
+TREE_LOCK=${ASH_TREE_LOCK:-$REMOTE_TREE_LOCK}
+
 QUIET=0
 case ${1:-} in
   --quiet | -q) QUIET=1 ;;
@@ -113,10 +116,12 @@ echo \"src_exists=\$([ -d $(printf %q "$REMOTE_SRC") ] && echo yes || echo no)\"
 echo \"src_size=\$(du -sh $(printf %q "$REMOTE_SRC") 2>/dev/null | cut -f1 || echo 0)\"
 echo \"manifest=\$(git -C $(printf %q "$REMOTE_SRC")/.repo/manifests config --get branch.default.merge 2>/dev/null | sed 's|refs/heads/||' || echo unknown)\"
 echo \"projects=\$(find $(printf %q "$REMOTE_SRC")/.repo/projects -name '*.git' 2>/dev/null | wc -l)\"
-if [ ! -e $(printf %q "$REMOTE_TREE_LOCK") ]; then echo 'lock=none'
-elif flock -n $(printf %q "$REMOTE_TREE_LOCK") -c true 2>/dev/null; then echo 'lock=free'
-elif [ $? -eq 1 ]; then echo 'lock=held'
-else echo 'lock=unknown'; fi
+lf=$(printf %q "$TREE_LOCK")
+if [ ! -e \"\$lf\" ]; then echo 'lock=none'
+else
+  flock -n \"\$lf\" -c true 2>/dev/null
+  echo \"lock_rc=\$?\"
+fi
 " 2>/dev/null) || true
 declare -A B=()
 while IFS='=' read -r k v; do
@@ -176,12 +181,15 @@ elif [[ ${B[src_exists]:-no} == yes ]]; then
 else
   warnc "tree: $REMOTE_SRC missing - run scripts/sync.sh"
 fi
-case ${B[lock]:-unknown} in
-  held) okc "tree lock: held (a sync/build is running; other mutators will block)" ;;
-  free) okc "tree lock: free" ;;
-  none) okc "tree lock: no lock file yet (no sync/build has run)" ;;
-  *) warnc "tree lock: unknown (lock probe failed)" ;;
-esac
+if [[ ${B[lock]:-} == none ]]; then
+  okc "tree lock: no lock file yet ($TREE_LOCK)"
+else
+  case ${B[lock_rc]:-?} in
+    0) okc "tree lock: free" ;;
+    1) okc "tree lock: held (a sync/build is running; other mutators will block)" ;;
+    *) warnc "tree lock: unknown (lock probe failed on $TREE_LOCK, flock rc=${B[lock_rc]:-?})" ;;
+  esac
+fi
 
 if host_sh "test -d $(printf %q "$REMOTE_ROOT/jobs/sync")" >/dev/null 2>&1; then
   STATUS=$(box_sh "cat $(printf %q "$REMOTE_ROOT/jobs/sync/status") 2>/dev/null || echo unknown" | tail -1)
