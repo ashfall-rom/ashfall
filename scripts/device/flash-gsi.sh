@@ -291,10 +291,10 @@ compute_space_budget() {
     BUDGET_LINES+=("stock baseline (lpdump, PR #10): vendor $(human "$b_vendor") + odm $(human "$b_odm") + product $(human "$b_product") + system_ext $(human "$b_system_ext") + system_dlkm $(human "$b_system_dlkm") + vendor_dlkm $(human "$b_vendor_dlkm") = $(human "$b_other")")
     b_need=0
     if ((b_free >= 0)); then
-      BUDGET_LINES+=("baseline: $(human "$GROUP_MAX") - $(human "$b_other") - $(human "$IMG_SIZE") (image) = $(human "$b_free") free")
+      BUDGET_LINES+=("baseline: $(human "$GROUP_MAX") - $(human "$b_other") - $(human "$IMG_SIZE") (image) = $(human "$b_free") free (${b_free} B)")
     else
       b_need=$((-b_free))
-      BUDGET_LINES+=("baseline: $(human "$GROUP_MAX") - $(human "$b_other") - $(human "$IMG_SIZE") (image) = deficit $(human "$b_need")")
+      BUDGET_LINES+=("baseline: $(human "$GROUP_MAX") - $(human "$b_other") - $(human "$IMG_SIZE") (image) = deficit $(human "$b_need") (${b_need} B)")
     fi
     if ((b_need == 0)); then
       BUDGET_LINES+=("=> fits the group on the stock baseline")
@@ -335,7 +335,7 @@ compute_space_budget() {
   done
   free_after=$((GROUP_MAX - sum - IMG_SIZE))
   if ((free_after >= 0)); then
-    BUDGET_LINES+=("budget: $(human "$GROUP_MAX") - $(human "$sum") (vendor+odm+product+system_ext+dlkm) - $(human "$IMG_SIZE") (image) = $(human "$free_after") free")
+    BUDGET_LINES+=("budget: $(human "$GROUP_MAX") - $(human "$sum") (vendor+odm+product+system_ext+dlkm) - $(human "$IMG_SIZE") (image) = $(human "$free_after") free (${free_after} B)")
     SPACE_KNOWN=1
     return 0
   fi
