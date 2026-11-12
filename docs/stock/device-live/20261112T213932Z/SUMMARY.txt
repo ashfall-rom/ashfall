@@ -1,0 +1,16 @@
+# Snapshot summary
+
+- timestamp: 2026-11-12T21:39:44Z
+- mode: fastboot
+- fastboot serial: <redacted>
+- fastboot getvars:
+    - product: kona
+    - variant: SM8 UFS
+
+## Files
+  ./fastboot/devices.txt
+  ./fastboot/getvars.txt
+  ./fastboot/logical.txt
+  ./fastboot/partition-sizes.txt
+  ./_meta.txt
+  ./SUMMARY.txt

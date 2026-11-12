@@ -1,0 +1,72 @@
+
+## product
+product: kona
+Finished. Total time: 0.002s
+
+## variant
+variant: SM8 UFS
+Finished. Total time: 0.001s
+
+## hw-revision
+getvar:hw-revision                                 FAILED (remote: 'GetVar Variable Not found')
+Finished. Total time: 0.002s
+
+## current-slot
+getvar:current-slot                                FAILED (remote: 'GetVar Variable Not found')
+Finished. Total time: 0.002s
+
+## slot-count
+getvar:slot-count                                  FAILED (remote: 'GetVar Variable Not found')
+Finished. Total time: 0.002s
+
+## slot-suffixes
+getvar:slot-suffixes                               FAILED (remote: 'GetVar Variable Not found')
+Finished. Total time: 0.002s
+
+## unlocked
+getvar:unlocked                                    FAILED (remote: 'GetVar Variable Not found')
+Finished. Total time: 0.002s
+
+## secure
+getvar:secure                                      FAILED (remote: 'GetVar Variable Not found')
+Finished. Total time: 0.002s
+
+## is-userspace
+getvar:is-userspace                                FAILED (remote: 'unknown command')
+Finished. Total time: 0.000s
+
+## max-download-size
+getvar:max-download-size                           FAILED (remote: 'GetVar Variable Not found')
+Finished. Total time: 0.002s
+
+## version-bootloader
+getvar:version-bootloader                          FAILED (remote: 'GetVar Variable Not found')
+Finished. Total time: 0.005s
+
+## version-baseband
+getvar:version-baseband                            FAILED (remote: 'GetVar Variable Not found')
+Finished. Total time: 0.002s
+
+## version
+version: 
+Finished. Total time: 0.003s
+
+## battery-voltage
+getvar:battery-voltage                             FAILED (remote: 'GetVar Variable Not found')
+Finished. Total time: 0.002s
+
+## battery-soc-ok
+getvar:battery-soc-ok                              FAILED (remote: 'GetVar Variable Not found')
+Finished. Total time: 0.005s
+
+## off-mode-charge
+off-mode-charge: 1
+Finished. Total time: 0.002s
+
+## charger-screen-enabled
+getvar:charger-screen-enabled                      FAILED (remote: 'GetVar Variable Not found')
+Finished. Total time: 0.002s
+
+## snapshot-update-status
+snapshot-update-status: none
+Finished. Total time: 0.002s

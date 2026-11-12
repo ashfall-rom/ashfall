@@ -1,0 +1,20 @@
+
+## is-logical:boot
+getvar:is-logical:boot                             FAILED (remote: 'GetVar Variable Not found')
+Finished. Total time: 0.003s
+
+## is-logical:system
+getvar:is-logical:system                           FAILED (remote: 'GetVar Variable Not found')
+Finished. Total time: 0.003s
+
+## is-logical:product
+getvar:is-logical:product                          FAILED (remote: 'GetVar Variable Not found')
+Finished. Total time: 0.002s
+
+## is-logical:vbmeta
+getvar:is-logical:vbmeta                           FAILED (remote: 'GetVar Variable Not found')
+Finished. Total time: 0.002s
+
+## is-logical:vendor
+getvar:is-logical:vendor                           FAILED (Status read failed (No such device))
+Finished. Total time: 0.260s
