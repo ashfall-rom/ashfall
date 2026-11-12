@@ -146,32 +146,43 @@ Sequence:
 1. **Preflight** -- `product` must be `kona`, the bootloader must be unlocked
    (`unlocked: yes`; on Android, `ro.boot.flash.locked=0`). Anything else is a
    hard refusal.
-2. **Reach fastbootd** -- from Android/recovery `adb reboot bootloader`, then
+2. **Image type** -- accepts Android sparse, **EROFS** (the A17 GSI default,
+   mounted by the stock 5.15 GKI kernel) and ext4 (fallback). The filesystem
+   magic is checked; sparse images are unpacked by fastbootd.
+3. **Reach fastbootd** -- from Android/recovery `adb reboot bootloader`, then
    `fastboot reboot fastboot`; from the bootloader, the latter directly. Waits
    up to 3 minutes for `is-userspace: yes`.
-3. **Space** -- fastbootd resizes `system_<slot>` itself; the script only
-   frees `product_<slot>` when the flash actually fails for lack of space in
-   `super`, then retries once (never pre-emptively -- that would be a
-   destructive edit). `--keep-product` forbids that and fails instead;
-   `restore-stock.sh` brings the stock super back.
-4. **Flash `system`** -- `fastboot --slot <slot> flash system <img>` (fastbootd
+4. **Space budget** -- `super` is split into two slot groups of 6.0 GiB
+   (`qti_dynamic_partitions_a/_b`); stock uses ~4.6 GiB (`system` 1.39,
+   `vendor` 1.78, `product` 0.875, `system_ext` 0.49 GiB, from
+   `docs/stock-analysis.md`). The script computes
+   `image + vendor + odm + product + system_ext` against the 6.0 GiB budget and
+   prints the arithmetic. When short, it deletes the stock `product_<slot>`
+   first and `system_ext_<slot>` only if still needed (a GSI bundles its own);
+   `vendor_<slot>` and `odm_<slot>` are never touched. `--keep-product` forbids
+   those deletions and fails instead. The budget is overridable with
+   `ASH_GROUP_MAX_BYTES` (default `6442450944`). `restore-stock.sh` brings the
+   stock super back.
+5. **Flash `system`** -- `fastboot --slot <slot> flash system <img>` (fastbootd
    resizes the logical partition; fastboot sparse-splits large images using
    `max-download-size`).
-5. **vbmeta** -- the stock `vbmeta` from `$REMOTE_FIRMWARE`
+6. **vbmeta** -- the stock `vbmeta` from `$REMOTE_FIRMWARE`
    (`lun4_vbmeta_<slot>.bin` / `vbmeta.img`) is flashed with
    `--disable-verity --disable-verification`. If no stock image exists, a
    **256-byte empty vbmeta with flags=3** (hashtree + verification disabled) is
    generated with python3 and flashed instead. Either way AVB is off for the
    unsigned GSI -- without this the bootloader refuses to boot it.
-6. **Wipe (optional)** -- `fastboot erase userdata` (~6 minutes!) and
+7. **Wipe (optional)** -- `fastboot erase userdata` (~6 minutes!) and
    `fastboot erase metadata` (vold regenerates metadata-encryption keys on the
    next boot). Runs in the bootloader, not fastbootd.
-7. **Slot** -- `set-active <slot>` when the target is not the current slot
+8. **Slot** -- `set-active <slot>` when the target is not the current slot
    (takes effect on the next boot).
 
 Hard blocks: every partition name is checked against the NEVER-flash list before
-any write. The script only ever writes `system` and `vbmeta`, and erases
-`userdata`/`metadata` only with `--wipe`.
+any write. The script only writes `system` and `vbmeta`; it deletes the logical
+`product_<slot>`/`system_ext_<slot>` only for space, and erases
+`userdata`/`metadata` only with `--wipe`. `vendor_<slot>` and `odm_<slot>` are
+never touched.
 
 Logs: `out/device/<ts>/flash-gsi.log`.
 
@@ -190,7 +201,8 @@ Logs: `out/device/<ts>/flash-gsi.log`.
 |---|---|
 | `getvar ... FAILED (remote: 'GetVar Variable Not found')` on everything | flaky/wedged fastboot session -- retries, then hard power-off 15 s and re-enter fastboot |
 | `fastboot devices` works but commands hang | wedged bootloader -- same |
-| `Not enough space to resize partition` | the `product_<slot>` deletion did not run (size query failed) -- re-run; check `--keep-product` |
+| `Not enough space to resize partition` | the budget was mis-read (flaky getvar) or `--keep-product` is set; re-run or free `product_<slot>`/`system_ext_<slot>` |
+| image is EROFS | supported (stock 5.15 kernel); ext4 is only a fallback |
 | `device did not enter fastbootd` | check the screen, then `adb reboot bootloader` + `fastboot reboot fastboot` manually |
 | `FAILED (remote: 'Device is locked')` | bootloader not unlocked -- do not try to bypass it |
 | flash succeeds, Android bootloops | boot to recovery, then `scripts/device/logs.sh`; bail out with `restore-stock.sh` |

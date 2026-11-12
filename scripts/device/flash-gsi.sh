@@ -7,9 +7,13 @@
 #     partitions like `system` can be written;
 #   * touches only `system`, `vbmeta` and (with --wipe) `userdata`+`metadata`;
 #   * hard-blocks the partitions from the guide's NEVER-flash list (§13);
-#   * refuses to delete `product_<slot>` unless the image really does not fit,
-#     and explains the trade-off first;
-#   * `--dry-run` performs only read-only getvars and prints the plan.
+#   * computes the space budget of group `qti_dynamic_partitions_<slot>`
+#     (6.0 GiB; stock used ~4.6 GiB) and frees the stock product_<slot> first,
+#     then system_ext_<slot>, only when needed. vendor_/odm_ are never touched;
+#   * accepts Android-sparse, EROFS (A17 GSI default, stock 5.15 kernel) and
+#     ext4 images;
+#   * `--dry-run` performs only read-only getvars and prints the plan including
+#     the space arithmetic (exact numbers once fastbootd is reachable).
 #
 # The device must be USB-connected to the build host ($BUILD_HOST); all
 # adb/fastboot calls run there in the `ashfall-dev` container.
@@ -23,7 +27,8 @@
 #                      userdata erase takes ~6 minutes on this device)
 #   --vbmeta PATH      use this vbmeta image instead of the stock one / an
 #                      auto-generated empty vbmeta (host path or local file)
-#   --keep-product     never delete product_<slot>, even if the image needs room
+#   --keep-product     never delete product_<slot>/system_ext_<slot>, even if
+#                      the image needs room (fails instead)
 #   --serial SERIAL    device serial (default: the only one connected)
 #   --yes              skip the interactive confirmation
 #   --dry-run          print the plan, write nothing (still does read-only checks)
@@ -115,8 +120,17 @@ assert_flashable() {
 host_file_exists() { [[ $(host_sh "test -f $(_dq "$1") && echo yes || echo no") == yes ]]; }
 host_size() { host_sh "stat -c %s $(_dq "$1")"; }
 host_head() { host_sh "head -c ${2:-4} $(_dq "$1") | od -An -tx1 | tr -d ' \\n'"; }
+host_bytes() { host_sh "dd if=$(_dq "$1") bs=1 skip=$2 count=$3 2>/dev/null | od -An -tx1 | tr -d ' \\n'"; }
 
-human() { numfmt --to=iec-i --suffix=B "$1" 2>/dev/null || printf '%s bytes' "$1"; }
+human() {
+  local n=$1 sign='' out
+  ((n < 0)) && { sign='-'; n=$((-n)); }
+  if out=$(numfmt --to=iec-i --suffix=B "$n" 2>/dev/null); then
+    printf '%s%s' "$sign" "$out"
+  else
+    printf '%s%s bytes' "$sign" "$n"
+  fi
+}
 
 # Resolve the image: a path on the build host wins, otherwise upload it.
 resolve_image() {
@@ -229,6 +243,99 @@ preflight_device() {
   esac
 }
 
+# --- dynamic-partition group budget ------------------------------------------
+# Stock layout (docs/stock-analysis.md, PR #10): group
+# qti_dynamic_partitions_<slot> max 6.0 GiB, ~4.6 GiB used:
+# system 1.39 GiB, vendor 1.78 GiB, product 0.875 GiB, system_ext 0.49 GiB.
+# A GSI replaces system and bundles its own product/system_ext, so the stock
+# product_<slot> and system_ext_<slot> may be deleted, in that order.
+# vendor_<slot> and odm_<slot> are NEVER touched.
+GROUP_MAX=${ASH_GROUP_MAX_BYTES:-6442450944}   # 6.0 GiB per slot group
+
+hexok() { [[ $1 =~ ^0x[0-9a-fA-F]+$ ]]; }
+
+compute_space_budget() {
+  BUDGET_LINES=(); DELETIONS=(); SPACE_KNOWN=0; GROUP_NEED=0
+  local sys prod sx vendor odm sum free_after pair part v
+  local b_vendor b_product b_system_ext b_other b_free b_need b_left
+
+  # Sizes are only readable in fastbootd. Everywhere else (bootloader, Android,
+  # no device) show the arithmetic on the documented stock baseline (PR #10);
+  # it is re-measured in fastbootd before any deletion.
+  if [[ ${MODE:-none} != fastbootd ]]; then
+    b_vendor=$((1823 * 1024 * 1024))    # 1.78 GiB
+    b_product=$((896 * 1024 * 1024))    # 896 MiB
+    b_system_ext=$((498 * 1024 * 1024)) # 498 MiB
+    b_other=$((b_vendor + b_product + b_system_ext))
+    b_free=$((GROUP_MAX - b_other - IMG_SIZE))
+    BUDGET_LINES+=("group qti_dynamic_partitions_$SLOT max $(human "$GROUP_MAX")")
+    BUDGET_LINES+=("stock baseline (PR #10): vendor $(human "$b_vendor") + product $(human "$b_product") + system_ext $(human "$b_system_ext") = $(human "$b_other")")
+    b_need=0
+    if ((b_free >= 0)); then
+      BUDGET_LINES+=("baseline: $(human "$GROUP_MAX") - $(human "$b_other") - $(human "$IMG_SIZE") (image) = $(human "$b_free") free")
+    else
+      b_need=$((-b_free))
+      BUDGET_LINES+=("baseline: $(human "$GROUP_MAX") - $(human "$b_other") - $(human "$IMG_SIZE") (image) = deficit $(human "$b_need")")
+    fi
+    if ((b_need == 0)); then
+      BUDGET_LINES+=("=> fits the group on the stock baseline")
+    else
+      BUDGET_LINES+=("=> deficit $(human "$b_need"); deletion order: product_$SLOT, then system_ext_$SLOT")
+      b_left=$((b_need - b_product))
+      if ((b_left > 0)); then
+        b_left=$((b_left - b_system_ext))
+        if ((b_left > 0)); then
+          BUDGET_LINES+=("=> still $(human "$b_left") short after both: image too large for the group")
+        else
+          BUDGET_LINES+=("=> fits after deleting product_$SLOT and system_ext_$SLOT")
+        fi
+      else
+        BUDGET_LINES+=("=> fits after deleting product_$SLOT")
+      fi
+    fi
+    BUDGET_LINES+=("(mode=${MODE:-none}: sizes are re-measured in fastbootd before anything is deleted)")
+    return 0
+  fi
+
+  sys=$(dev_fb_value "partition-size:system_$SLOT")
+  prod=$(dev_fb_value "partition-size:product_$SLOT")
+  sx=$(dev_fb_value "partition-size:system_ext_$SLOT")
+  vendor=$(dev_fb_value "partition-size:vendor_$SLOT")
+  odm=$(dev_fb_value "partition-size:odm_$SLOT")
+  BUDGET_LINES+=("group qti_dynamic_partitions_$SLOT max $(human "$GROUP_MAX")")
+  BUDGET_LINES+=("sizes: system=${sys:-?} vendor=${vendor:-?} product=${prod:-?} system_ext=${sx:-?} odm=${odm:-?}")
+  if ! hexok "$sys" || ! hexok "$vendor"; then
+    BUDGET_LINES+=("sizes unreadable even in fastbootd (flaky getvar); will free partitions only if the flash reports no space")
+    return 0
+  fi
+  sum=0
+  for v in "$vendor" "$odm" "$prod" "$sx"; do
+    hexok "$v" && sum=$((sum + v))
+  done
+  free_after=$((GROUP_MAX - sum - IMG_SIZE))
+  if ((free_after >= 0)); then
+    BUDGET_LINES+=("budget: $(human "$GROUP_MAX") - $(human "$sum") (vendor+odm+product+system_ext) - $(human "$IMG_SIZE") (image) = $(human "$free_after") free")
+    SPACE_KNOWN=1
+    return 0
+  fi
+  GROUP_NEED=$((-free_after))
+  BUDGET_LINES+=("budget: $(human "$GROUP_MAX") - $(human "$sum") - $(human "$IMG_SIZE") = deficit $(human "$GROUP_NEED")")
+  for pair in "product:$prod" "system_ext:$sx"; do
+    part=${pair%%:*}; v=${pair#*:}
+    hexok "$v" || continue
+    ((GROUP_NEED > 0)) || break
+    DELETIONS+=("$part")
+    BUDGET_LINES+=("  -> delete ${part}_$SLOT (frees $(human "$v"))")
+    GROUP_NEED=$((GROUP_NEED - v))
+  done
+  SPACE_KNOWN=1
+  if ((GROUP_NEED > 0)); then
+    BUDGET_LINES+=("deficit $(human "$GROUP_NEED") remains after product+system_ext: image is too large for the group")
+  else
+    BUDGET_LINES+=("free after deletions: $(human "$((-GROUP_NEED))")")
+  fi
+}
+
 print_plan() {
   local img=$1 img_size=$2 vb=$3 vb_desc=$4
   printf '\n================ PLAN ================\n'
@@ -239,20 +346,24 @@ print_plan() {
   printf 'image:         %s (%s)\n' "$img" "$(human "$img_size")"
   printf 'vbmeta:        %s\n' "$vb_desc"
   printf '\nsteps:\n'
-  printf '  1. switch to fastbootd (userspace fastboot) if needed\n'
-  printf '  2. flash system_%s; free product_%s only if super is full (frees\n' "$SLOT" "$SLOT"
-  printf '     vendor apps; restored by restore-stock.sh)\n'
-  printf '  3. fastboot flash system %s\n' "$img"
+  printf '  - switch to fastbootd (userspace fastboot) if needed\n'
+  printf '  - apply the space budget: free stock product_%s first, then\n' "$SLOT"
+  printf '    system_ext_%s only if still short (never vendor_/odm_)\n' "$SLOT"
+  printf '  - fastboot --slot %s flash system %s\n' "$SLOT" "$img"
   if [[ $VB_FLAGS == 1 ]]; then
-    printf '  4. fastboot --disable-verity --disable-verification --slot %s flash vbmeta %s\n' "$SLOT" "$vb"
+    printf '  - fastboot --disable-verity --disable-verification --slot %s flash vbmeta %s\n' "$SLOT" "$vb"
   else
-    printf '  4. fastboot --slot %s flash vbmeta %s (already flags=3)\n' "$SLOT" "$vb"
+    printf '  - fastboot --slot %s flash vbmeta %s (already flags=3)\n' "$SLOT" "$vb"
   fi
   if ((WIPE)); then
-    printf '  5. fastboot erase userdata  (slow, ~6 min)\n'
-    printf '  6. fastboot erase metadata\n'
+    printf '  - fastboot erase userdata  (slow, ~6 min)\n'
+    printf '  - fastboot erase metadata\n'
   fi
-  printf '  7. fastboot set-active %s (only if it is not active already)\n' "$SLOT"
+  printf '  - fastboot set-active %s (only if it is not active already)\n' "$SLOT"
+  if ((${#BUDGET_LINES[@]})); then
+    printf '\nspace budget:\n'
+    printf '  %s\n' "${BUDGET_LINES[@]}"
+  fi
   printf '======================================\n'
 }
 
@@ -261,18 +372,19 @@ IMG_HOST=$(resolve_image "$IMG")
 IMG_SIZE=$(host_size "$IMG_HOST")
 [[ $IMG_SIZE =~ ^[0-9]+$ ]] || die "cannot stat image on $BUILD_HOST: $IMG_HOST"
 IMG_MAGIC=$(host_head "$IMG_HOST" 4)
-IMG_FS=$(host_sh "dd if=$(_dq "$IMG_HOST") bs=1 skip=1080 count=2 2>/dev/null | od -An -tx1 | tr -d ' \\n'")
+IMG_FS=$(host_bytes "$IMG_HOST" 1080 2)
+IMG_EROFS=$(host_bytes "$IMG_HOST" 1024 4)
 
 log "image $IMG_HOST ($(human "$IMG_SIZE"), magic $IMG_MAGIC)"
 case $IMG_MAGIC in
   3aff26ed) log "android sparse image" ;;
   *)
-    if [[ $IMG_FS == 53ef ]]; then
-      log "ext4 image (magic at 0x438)"
-    elif [[ $IMG_MAGIC == e2e1f5e0 || $IMG_MAGIC == e0f5e1e2 ]]; then
-      die "image looks like EROFS; the 4.19 kernel cannot mount it (PLAN: GSI must be ext4)"
+    if [[ $IMG_EROFS == e2e1f5e0 ]]; then
+      log "EROFS image (expected for the GSI: stock 5.15 GKI mounts EROFS)"
+    elif [[ $IMG_FS == 53ef ]]; then
+      log "ext4 image (magic at 0x438) -- fallback filesystem, also supported"
     else
-      warn "unrecognised image type (magic $IMG_MAGIC); expected Android sparse or ext4 system.img"
+      warn "unrecognised image type (magic $IMG_MAGIC); expected Android sparse, EROFS or ext4 system.img"
     fi
     ;;
 esac
@@ -328,6 +440,7 @@ else
   warn "no stock vbmeta in $REMOTE_FIRMWARE; generating an empty one"
 fi
 
+compute_space_budget
 print_plan "$IMG_HOST" "$IMG_SIZE" "$VB" "$VB_DESC"
 
 if ((DRY_RUN)); then
@@ -365,31 +478,35 @@ ensure_fastbootd() {
 }
 
 ensure_fastbootd
+MODE=fastbootd
 DEV_SERIAL=$(dev_resolve_serial "$SERIAL")
 log "fastbootd device: $DEV_SERIAL"
 
-# --- 2. space check (advisory) ----------------------------------------------
-# fastbootd resizes the logical partition itself, so "image > system_<slot>" is
-# not a reason to touch anything yet. The real constraint is free space in
-# super; only a failed flash proves there is not enough, and only then is
-# product_<slot> deleted (never pre-emptively: that is a destructive edit).
-sys_size=$(dev_fb_value "partition-size:system_$SLOT")
-prod_size=$(dev_fb_value "partition-size:product_$SLOT")
-super_size=$(dev_fb_value "partition-size:super")
-log "size system_$SLOT=${sys_size:-unknown} product_$SLOT=${prod_size:-unknown} super=${super_size:-unknown}"
-
-if [[ $sys_size =~ ^0x[0-9a-fA-F]+$ ]] && ((IMG_SIZE > sys_size)); then
-  log "image is $(human "$IMG_SIZE"), current system_$SLOT is $(human "$((sys_size))"); fastbootd will resize it"
-  prod_hint=${prod_size:-unknown}
-  log "if super is full the flash fails, product_$SLOT ($prod_hint) is freed once and the flash retried"
+# --- 2. space budget in the dynamic partition group --------------------------
+compute_space_budget
+log "space budget for qti_dynamic_partitions_$SLOT:"
+printf '  %s\n' "${BUDGET_LINES[@]}" >&2
+if ((GROUP_NEED > 0)); then
+  die "image does not fit the group even after deleting product_$SLOT and system_ext_$SLOT (deficit $(human "$GROUP_NEED"))"
 fi
-if [[ $super_size =~ ^0x[0-9a-fA-F]+$ ]] && ((IMG_SIZE > super_size)); then
-  die "image ($(human "$IMG_SIZE")) is larger than super ($(human "$super_size")); not a GSI system image?"
+if ((!SPACE_KNOWN)); then
+  warn "could not read the logical partition sizes (flaky fastboot); will free partitions only if the flash reports no space"
 fi
 
-# --- 3. flash system (free product_<slot> only if the flash says it is full) --
+DELETED_PARTS=" "
+if ((${#DELETIONS[@]})); then
+  if ((KEEP_PRODUCT)); then
+    die "--keep-product is set but the image needs room: ${DELETIONS[*]} would have to be deleted"
+  fi
+  for part in "${DELETIONS[@]}"; do
+    log "deleting ${part}_$SLOT (GSIs bundle product/system_ext; vendor/odm are never touched)"
+    step "delete-logical-partition ${part}_$SLOT" delete-logical-partition "${part}_$SLOT"
+    DELETED_PARTS+="$part "
+  done
+fi
+
+# --- 3. flash system ---------------------------------------------------------
 assert_flashable system
-PRODUCT_DELETED=0
 
 flash_system() {
   local out rc
@@ -401,21 +518,25 @@ flash_system() {
   return $rc
 }
 
-if ! flash_system; then
-  if ((KEEP_PRODUCT == 0)) && ((PRODUCT_DELETED == 0)) &&
-     grep -qiE 'not enough space|no space|failed to resize|cannot resize|too large' <<<"$LAST_FLASH_OUT"; then
-    warn "super is full; deleting product_$SLOT to make room"
-    log "  this only removes vendor/product apps from the flashed build;"
-    log "  scripts/device/restore-stock.sh re-flashes the stock super"
-    step "delete-logical-partition product_$SLOT" delete-logical-partition "product_$SLOT"
-    PRODUCT_DELETED=1
-    flash_system || die "flashing system failed twice; device left in fastbootd (see log above)"
-  elif ((KEEP_PRODUCT == 1)) && grep -qiE 'not enough space|no space|failed to resize|cannot resize|too large' <<<"$LAST_FLASH_OUT"; then
-    die "super is full and --keep-product is set; free space manually or drop the flag"
-  else
-    die "flashing system failed; device left in fastbootd (see log above)"
-  fi
+flashed=0
+if flash_system; then
+  flashed=1
 fi
+if ((!flashed)) && grep -qiE 'not enough space|no space|failed to resize|cannot resize|too large' <<<"$LAST_FLASH_OUT"; then
+  if ((KEEP_PRODUCT)); then
+    die "super is full and --keep-product is set; free space manually or drop the flag"
+  fi
+  for part in product system_ext; do
+    [[ $DELETED_PARTS == *" $part "* ]] && continue
+    size=$(dev_fb_value "partition-size:${part}_$SLOT")
+    hexok "$size" || continue
+    warn "super is full; deleting ${part}_$SLOT ($(human "$size")) and retrying"
+    step "delete-logical-partition ${part}_$SLOT" delete-logical-partition "${part}_$SLOT"
+    DELETED_PARTS+="$part "
+    if flash_system; then flashed=1; break; fi
+  done
+fi
+((flashed)) || die "flashing system failed; device left in fastbootd (see log above)"
 ok "system_$SLOT flashed"
 
 # --- 4. vbmeta ---------------------------------------------------------------
@@ -463,7 +584,7 @@ printf '\n================ DONE ================\n'
 printf 'image:      %s\n' "$IMG_HOST"
 printf 'slot:       %s\n' "$SLOT"
 printf 'wipe:       %s\n' "$((WIPE))"
-printf 'product_%s deleted: %s\n' "$SLOT" "${PRODUCT_DELETED:-0}"
+printf 'deleted logical partitions: %s\n' "${DELETED_PARTS:- none}"
 printf 'log:        %s\n' "$LOG"
 printf '\nnext:\n'
 printf '  fastboot reboot           # boot Android; first GSI boot can take 2-5 min\n'
