@@ -29,6 +29,17 @@
 $(call inherit-product, vendor/lineage/build/target/product/lineage_gsi_arm64.mk)
 include vendor/ashfall/ashfall_common.mk
 
+# LineageOS' build system derives LINEAGE_BUILD from a "lineage_" product-name
+# prefix (vendor/lineage/build/envsetup.sh:check_product) and gates
+# vendor/lineage/config/BoardConfigLineage.mk on it (build/make/core/config.mk).
+# Our product is called ashfall_gsi_arm64, so declare it here - product config is
+# parsed before that gate. Without it:
+#   * the Lineage soong config namespace is never registered and
+#     vendor/lineage/build/soong/Android.bp fails the analysis with
+#     "unknown variable '$(KERNEL_BUILD_OUT_PREFIX)'";
+#   * the AOSP product makefiles take their non-Lineage branches.
+LINEAGE_BUILD := ashfall_gsi_arm64
+
 PRODUCT_NAME := ashfall_gsi_arm64
 PRODUCT_BRAND := AshFall
 PRODUCT_MODEL := AshFall GSI arm64
