@@ -274,6 +274,7 @@ artifacts, and a local tree lock under `out/`.
 | `BUILD_JOBS` (config) | default `--jobs` (empty = `nproc` in the container) |
 | `CCACHE_SIZE`, `REMOTE_CCACHE` (config) | ccache max size and directory |
 | `ASH_MIN_FREE_GB` | minimum free space on the tree filesystem (default 60) |
+| `ASH_ALLOW_UNSYNCED=1` | allow a build while `repo sync` is running (normally refused) |
 | `ASH_VERSION` (config) | `ro.ashfall.version` in the image |
 
 ## Troubleshooting
@@ -281,9 +282,10 @@ artifacts, and a local tree lock under `out/`.
 | Symptom | Cause / fix |
 |---|---|
 | `no synced LineageOS tree ... (issue #1)` | tree sync has not started/finished; see `scripts/sync.sh` |
-| `is not usable yet: ... lineage_gsi_arm64.mk is missing` | sync still running; only some projects are checked out |
+| `a 'repo sync' is running ... refusing to build` | the tree is still being written; wait for the sync (override only with `ASH_ALLOW_UNSYNCED=1`) |
+| `is not usable yet: ... lineage_gsi_arm64.mk is missing` | only some projects are checked out (sync still running) |
 | `distrobox container 'ashfall-build' not found` | issue #1 has not created the container |
-| `the shared tree lock is held ... will queue` | a sync or another build is running; the job waits |
+| `the shared tree lock is held ... will queue` | another build is running; the job waits |
 | `system image filesystem is 'erofs', expected ext4` | the product/board config changed; do not build, kernel 4.19 cannot mount EROFS |
 | `PATCH CONFLICT` | a patch in `patches/` (issue #5) no longer applies; see the report |
 | `PATCH SERIES INCOMPLETE` | a patch is empty, already applied, or an mbox with several commits |

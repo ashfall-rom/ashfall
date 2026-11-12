@@ -250,6 +250,14 @@ preflight() {
   fi
   box_sh "command -v repo >/dev/null" ||
     die "'repo' is not installed in the build box $BUILD_BOX (issue #1: scripts/host/)"
+  # Building on a tree that is still being synced produces hours of confusing
+  # failures and races with the sync writer; refuse instead.
+  if host_sh "pgrep -af 'repo.* sync ' 2>/dev/null | grep -F -q $(printf %q "$TREE")"; then
+    if [[ ${ASH_ALLOW_UNSYNCED:-0} != 1 ]]; then
+      die "a 'repo sync' is running on $BUILD_HOST; refusing to build a half-synced tree (wait for issue #1, or set ASH_ALLOW_UNSYNCED=1 if you really mean it)"
+    fi
+    warn "repo sync is running and ASH_ALLOW_UNSYNCED=1 is set; building anyway"
+  fi
   if ! box_sh "flock -n $(printf %q "$REMOTE_TREE_LOCK") true" 2>/dev/null; then
     warn "the shared tree lock is held (sync or another build); this job will queue behind it"
   fi
