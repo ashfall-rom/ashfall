@@ -15,10 +15,10 @@ system_dlkm_a            qti_dynamic_partitions_a     428.0KiB            856  4
 system_ext_a             qti_dynamic_partitions_a     497.9MiB        1019608  4755456+1019608
 vendor_a                 qti_dynamic_partitions_a       1.8GiB        3730632  5775360+3730632
 vendor_dlkm_a            qti_dynamic_partitions_a      64.7MiB         132544  9506816+132544
-odm_b                    qti_dynamic_partitions_b           0B              0  
-product_b                qti_dynamic_partitions_b           0B              0  
-system_b                 qti_dynamic_partitions_b           0B              0  
-system_dlkm_b            qti_dynamic_partitions_b           0B              0  
-system_ext_b             qti_dynamic_partitions_b           0B              0  
-vendor_b                 qti_dynamic_partitions_b           0B              0  
-vendor_dlkm_b            qti_dynamic_partitions_b           0B              0  
+odm_b                    qti_dynamic_partitions_b           0B              0
+product_b                qti_dynamic_partitions_b           0B              0
+system_b                 qti_dynamic_partitions_b           0B              0
+system_dlkm_b            qti_dynamic_partitions_b           0B              0
+system_ext_b             qti_dynamic_partitions_b           0B              0
+vendor_b                 qti_dynamic_partitions_b           0B              0
+vendor_dlkm_b            qti_dynamic_partitions_b           0B              0

@@ -7,10 +7,10 @@ ramdisk_size: 2010376
 header_size: 1584
 page_size: 4096
 cmdline: ''
-name: 
+name:
 os_version: 13.0.0
 os_patch_level: 0024-07
-extra_cmdline: 
+extra_cmdline:
 kernel_offset: 4096
 ramdisk_offset: 4096
 ramdisk_type: lz4-legacy

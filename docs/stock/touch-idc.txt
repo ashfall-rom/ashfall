@@ -1,0 +1,35 @@
+# Touch/input configuration shipped by the stock firmware
+
+## /system/usr/idc (stock system image)
+   4052   40755 (2)      0      0    4096  1-Jan-2009 01:00 .
+   3945   40755 (2)      0      0    4096  1-Jan-2009 01:00 ..
+   4053  100644 (1)      0      0     634  1-Jan-2009 01:00 AVRCP.idc
+   4054  100644 (1)      0      0    1396  1-Jan-2009 01:00 Vendor_054c_Product_05c4.idc
+   4055  100644 (1)      0      0    1396  1-Jan-2009 01:00 Vendor_054c_Product_09cc.idc
+   4056  100644 (1)      0      0     782  1-Jan-2009 01:00 Vendor_0957_Product_0001.idc
+   4057  100644 (1)      0      0     869  1-Jan-2009 01:00 qwerty.idc
+   4058  100644 (1)      0      0     870  1-Jan-2009 01:00 qwerty2.idc
+
+
+## /vendor/usr/idc (stock vendor image)
+/usr/idc: File not found by ext2_lookup
+
+## touch driver module in vendor_dlkm
+focaltech_fts.ko
+
+## community A17 tree addition (not in the stock firmware)
+##   android_device_retroidpocket_RP5/lineage-24.0/device.mk
+8:    $(LOCAL_PATH)/configs/idc/fts_ts.idc:$(TARGET_COPY_OUT_VENDOR)/usr/idc/fts_ts.idc
+##   configs/idc/fts_ts.idc
+    #
+    # SPDX-FileCopyrightText: The LineageOS Project
+    # SPDX-License-Identifier: Apache-2.0
+    #
+
+    # Retroid Pocket 5 Touchscreen
+
+    device.internal = 1
+
+    touch.deviceType = touchScreen
+    touch.orientation = ORIENTATION_270
+    touch.displayId = local:4630946482288158081

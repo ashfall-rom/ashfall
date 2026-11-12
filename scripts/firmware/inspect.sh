@@ -8,7 +8,9 @@
 #   boot-headers.txt, bootconfig.txt, dtbo-table.txt, vbmeta.txt,
 #   gpt-headers.txt, kernel-version.txt, kernel-config.txt, kernel-modules.txt,
 #   vendor-apps.txt / system-apps.txt, mcu-fan-rgb.txt,
-#   community/** (A17 device tree's key files),
+#   fan-control.txt (real fan interface), touch-idc.txt,
+#   rpsettings-sysfs-strings.txt (hints only),
+#   community/** (A17 device tree's key files + FETCH-STATUS.txt),
 #   fcm-report.md (vendor manifest vs Android 17 matrices).
 #
 # Usage: scripts/firmware/inspect.sh [--out DIR] [--no-community] [--no-fcm]
@@ -173,15 +175,101 @@ find "$FW_VENDOR_DUMP/vendor/init" -type f -name '*.rc' 2>/dev/null | sed "s|$FW
   fw_sh "debugfs -R $(printf %q "ls -l /bin/hw") $(printf %q "$FW_SUPER/vendor${FW_SLOT}.img")" 2>/dev/null | sed '/^debugfs /d' || true
 } >"$FW_REPORT/mcu-fan-rgb.txt"
 
-# --- fan/RGB control sysfs (stock system app) ---------------------------
+# --- RPSettings sysfs strings (not proof that the nodes exist) ----------
 {
-  echo "# sysfs paths referenced by the stock system app RPSettings (fan, RGB LEDs, backlight)"
+  echo "# Sysfs paths/keys found as strings in the stock RPSettings.apk."
+  echo "# WARNING: this APK carries a generic multi-platform table (sprd/tegra/omap/"
+  echo "# s5p paths appear too). Treat these as hints only; see fan-control.txt for"
+  echo "# the interfaces that are actually backed by the stock kernel/DT/init."
   fw_sh "rm -rf $(printf %q "$FW_IMG/.appscan") && mkdir -p $(printf %q "$FW_IMG/.appscan") && \
     debugfs -R $(printf %q "dump /system/app/RPSettings/RPSettings.apk $FW_IMG/.appscan/RPSettings.apk") $(printf %q "$FW_SUPER/system${FW_SLOT}.img") >/dev/null 2>&1 && \
     cd $(printf %q "$FW_IMG/.appscan") && 7z x -y RPSettings.apk >/dev/null && \
     grep -aoE '/sys/(class|devices)/[A-Za-z0-9_./-]+' classes*.dex | sort -u; \
     rm -rf $(printf %q "$FW_IMG/.appscan")" 2>/dev/null || true
-} >"$FW_REPORT/fan-rgb-sysfs.txt"
+} >"$FW_REPORT/rpsettings-sysfs-strings.txt"
+
+# --- community A17 device tree ------------------------------------------
+if [[ $DO_COMMUNITY == 1 ]]; then
+  base=https://raw.githubusercontent.com/Ayn8250Dev
+  Fetched=()
+  Failed=()
+  fetch() { # <url> <dest>
+    local url=$1 dest=$2 tmp
+    tmp=$(mktemp "$FW_REPORT/community/.fetch.XXXXXX")
+    if curl -fsSL "$url" -o "$tmp"; then
+      mv "$tmp" "$dest"
+      Fetched+=("$url")
+    else
+      rm -f "$tmp"
+      Failed+=("$url")
+      warn "community fetch failed: $url"
+    fi
+  }
+  fetch "$base/android_device_ayn_sxr2130p-common/lineage-24.0/BoardConfigCommon.mk" "$FW_REPORT/community/BoardConfigCommon.mk"
+  fetch "$base/android_device_ayn_sxr2130p-common/lineage-24.0/common.mk" "$FW_REPORT/community/common.mk"
+  fetch "$base/android_device_ayn_sxr2130p-common/lineage-24.0/vintf/manifest.xml" "$FW_REPORT/community/vintf-manifest.xml"
+  fetch "$base/android_device_ayn_sxr2130p-common/lineage-24.0/init/fstab.qcom" "$FW_REPORT/community/fstab.qcom"
+  for p in system product vendor odm; do
+    fetch "$base/android_device_ayn_sxr2130p-common/lineage-24.0/properties/$p.prop" "$FW_REPORT/community/$p.prop"
+  done
+  fetch "$base/android_device_retroidpocket_RP5/lineage-24.0/properties/vendor.prop" "$FW_REPORT/community/rp5-vendor.prop"
+  fetch "$base/android_device_retroidpocket_RP5/lineage-24.0/device.mk" "$FW_REPORT/community/device.mk"
+  fetch "$base/android_device_retroidpocket_RP5/lineage-24.0/configs/idc/fts_ts.idc" "$FW_REPORT/community/fts_ts.idc"
+  fetch "$base/android_kernel_ayn_sxr2130p/lineage-24.0/arch/arm64/configs/vendor/kona-perf_defconfig" "$FW_REPORT/community/kona-perf_defconfig"
+  fetch "$base/android_kernel_ayn_sxr2130p/lineage-24.0/arch/arm64/configs/vendor/moorechip/kona_perf.config" "$FW_REPORT/community/kona_perf.config"
+  {
+    echo "# Community fetch status"
+    echo
+    echo "OK (${#Fetched[@]}):"
+    printf '  %s\n' "${Fetched[@]}"
+    echo
+    echo "FAILED (${#Failed[@]}):"
+    if ((${#Failed[@]})); then printf '  %s\n' "${Failed[@]}"; else echo "  (none)"; fi
+  } >"$FW_REPORT/community/FETCH-STATUS.txt"
+  grep -hE 'CONFIG_(EROFS|F2FS|UNICODE|BPF|CGROUP_BPF|ANDROID_BINDER|BINDERFS|CGROUPS|MEMCG|PSI|IO_URING|USERFAULTFD|DM_DEFAULT_KEY|SELINUX|INCREMENTAL_FS|OVERLAY_FS|ZRAM|LZ4|FS_ENCRYPTION|DM_VERITY)' \
+    "$FW_REPORT/community/kona-perf_defconfig" "$FW_REPORT/community/kona_perf.config" 2>/dev/null |
+    sort -u >"$FW_REPORT/community/kernel-config-of-interest.txt" || true
+fi
+
+# --- fan control evidence (kernel module + DT + init) -------------------
+{
+  echo "# Fan control interfaces actually present in the stock firmware"
+  echo
+  echo "## Device-tree node (vendor_boot dtb)"
+  fw_sh "dtc -I dtb -O dts $(printf %q "$FW_IMG/vendor_boot/dtb") 2>/dev/null | grep -B3 -A14 'gpio5-pwm'" || true
+  echo
+  echo "## Vendor init permissions"
+  grep -rn 'gpio5_pwm' "$FW_VENDOR_DUMP/vendor/init" 2>/dev/null | sed "s|$FW_VENDOR_DUMP/||" || true
+  echo
+  echo "## gpio5_pwm.ko (vendor_dlkm) match/attribute symbols"
+  fw_sh "rm -rf $(printf %q "$FW_IMG/.fan") && mkdir -p $(printf %q "$FW_IMG/.fan") && \
+    debugfs -R $(printf %q "dump /lib/modules/gpio5_pwm.ko $FW_IMG/.fan/gpio5_pwm.ko") $(printf %q "$FW_SUPER/vendor_dlkm${FW_SLOT}.img") >/dev/null 2>&1 && \
+    strings -a $(printf %q "$FW_IMG/.fan/gpio5_pwm.ko") | grep -iE 'gpio5-pwm|fan_|gpio5_pwm2|class_attr_(state|duty|speed)' | sort -u; \
+    rm -rf $(printf %q "$FW_IMG/.fan")" 2>/dev/null || true
+  echo
+  echo "## NOT found anywhere in the stock firmware: fan_info / pwm_fan / PWM_FAN"
+  echo "(the only fan_info string is the generic RPSettings table, see rpsettings-sysfs-strings.txt)"
+} >"$FW_REPORT/fan-control.txt"
+
+# --- touch input config evidence ----------------------------------------
+{
+  echo "# Touch/input configuration shipped by the stock firmware"
+  echo
+  echo "## /system/usr/idc (stock system image)"
+  fw_sh "debugfs -R $(printf %q "ls -l /system/usr/idc") $(printf %q "$FW_SUPER/system${FW_SLOT}.img") 2>/dev/null | sed '/^debugfs /d'" || true
+  echo
+  echo "## /vendor/usr/idc (stock vendor image)"
+  fw_sh "debugfs -R $(printf %q "ls -l /usr/idc") $(printf %q "$FW_SUPER/vendor${FW_SLOT}.img") 2>&1 | sed '/^debugfs /d'" || true
+  echo
+  echo "## touch driver module in vendor_dlkm"
+  fw_sh "debugfs -R $(printf %q "ls /lib/modules") $(printf %q "$FW_SUPER/vendor_dlkm${FW_SLOT}.img") 2>/dev/null | tr ' ' '\\n' | grep -iE 'fts|touch' || true"
+  echo
+  echo "## community A17 tree addition (not in the stock firmware)"
+  echo "##   android_device_retroidpocket_RP5/lineage-24.0/device.mk"
+  grep -n 'idc' "$FW_REPORT/community/device.mk" 2>/dev/null || true
+  echo "##   configs/idc/fts_ts.idc"
+  sed 's/^/    /' "$FW_REPORT/community/fts_ts.idc" 2>/dev/null || true
+} >"$FW_REPORT/touch-idc.txt"
 
 # --- boot / dtbo / vbmeta / gpt -----------------------------------------
 cp "$FW_LOG/boot-header.txt" "$FW_LOG/init_boot-header.txt" "$FW_LOG/vendor_boot-header.txt" "$FW_REPORT/" 2>/dev/null || true
@@ -215,25 +303,6 @@ fi
   done
 } >"$FW_REPORT/kernel-modules.txt"
 
-# --- community A17 device tree ------------------------------------------
-if [[ $DO_COMMUNITY == 1 ]]; then
-  base=https://raw.githubusercontent.com/Ayn8250Dev
-  fetch() { curl -fsSL "$1" || echo "# fetch failed: $1"; }
-  fetch "$base/android_device_ayn_sxr2130p-common/lineage-24.0/BoardConfigCommon.mk" >"$FW_REPORT/community/BoardConfigCommon.mk"
-  fetch "$base/android_device_ayn_sxr2130p-common/lineage-24.0/common.mk" >"$FW_REPORT/community/common.mk"
-  fetch "$base/android_device_ayn_sxr2130p-common/lineage-24.0/vintf/manifest.xml" >"$FW_REPORT/community/vintf-manifest.xml"
-  fetch "$base/android_device_ayn_sxr2130p-common/lineage-24.0/init/fstab.qcom" >"$FW_REPORT/community/fstab.qcom"
-  for p in system product vendor odm; do
-    fetch "$base/android_device_ayn_sxr2130p-common/lineage-24.0/properties/$p.prop" >"$FW_REPORT/community/$p.prop"
-  done
-  fetch "$base/android_device_retroidpocket_RP5/lineage-24.0/properties/vendor.prop" >"$FW_REPORT/community/rp5-vendor.prop"
-  fetch "$base/android_kernel_ayn_sxr2130p/lineage-24.0/arch/arm64/configs/vendor/kona-perf_defconfig" >"$FW_REPORT/community/kona-perf_defconfig"
-  fetch "$base/android_kernel_ayn_sxr2130p/lineage-24.0/vendor/moorechip/kona_perf.config" >"$FW_REPORT/community/kona_perf.config"
-  grep -hE 'CONFIG_(EROFS|F2FS|UNICODE|BPF|CGROUP_BPF|ANDROID_BINDER|BINDERFS|CGROUPS|MEMCG|PSI|IO_URING|USERFAULTFD|DM_DEFAULT_KEY|SELINUX|INCREMENTAL_FS|OVERLAY_FS|ZRAM|LZ4|FS_ENCRYPTION|DM_VERITY)' \
-    "$FW_REPORT/community/kona-perf_defconfig" "$FW_REPORT/community/kona_perf.config" 2>/dev/null |
-    sort -u >"$FW_REPORT/community/kernel-config-of-interest.txt" || true
-fi
-
 # --- Android 17 compatibility matrices ----------------------------------
 if [[ $DO_FCM == 1 ]]; then
   mkdir -p "$FW_REPORT/fcm"
@@ -255,6 +324,9 @@ if [[ $DO_FCM == 1 ]]; then
   fi
 fi
 
+# Keep generated text diff-clean (debugfs output has trailing blanks).
+find "$FW_REPORT" -type f -name '*.txt' -exec sed -i 's/[[:space:]]\+$//' {} +
+
 # --- index ---------------------------------------------------------------
 {
   echo "# Stock RP5 firmware artefacts"
@@ -269,7 +341,11 @@ fi
     echo "| \`$(basename "$f")\` | $(sed -n '1p' "$f" | cut -c1-100) |"
   done
   echo "| \`vintf/\` | stock /vendor/etc/vintf manifest + fragments |"
-  echo "| \`community/\` | A17 device-tree files used for comparison |"
+  echo "| \`community/\` | A17 device-tree files used for comparison (fetch status in \`community/FETCH-STATUS.txt\`) |"
+  if [[ $DO_COMMUNITY == 1 ]]; then
+    echo
+    echo "Community fetches: ${#Fetched[@]} ok, ${#Failed[@]} failed - see \`community/FETCH-STATUS.txt\`."
+  fi
 } >"$FW_REPORT/README.md"
 
 ok "report ready: $FW_REPORT"

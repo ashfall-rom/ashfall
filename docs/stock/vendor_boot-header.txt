@@ -8,7 +8,7 @@ ramdisk_addr: 16777216
 ramdisk_size: 9725209
 cmdline: 'lpm_levels.sleep_disabled=1 video=vfb:640x400,bpp=32,memsize=3072000 msm_rtb.filter=0x237 service_locator.enable=1 swiotlb=2048 loop.max_part=7 cgroup.memory=nokmem,nosocket reboot=panic_warm bootconfig buildvariant=user'
 tags_addr: 256
-name: 
+name:
 header_size: 2128
 dtb_size: 3184830
 dtb_addr: 32505856

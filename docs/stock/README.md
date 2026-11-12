@@ -9,7 +9,7 @@ firmware (`STOCK_FW_URL`), slot suffix `_a`. No binary images.
 | `boot-headers.txt` | path: /var/home/epickitrolaz/ashfall/firmware/img/lun4_boot_a.bin |
 | `boot-header.txt` | path: /var/home/epickitrolaz/ashfall/firmware/img/lun4_boot_a.bin |
 | `dtbo-table.txt` | dt_table: version=0 total_size=4263184 header_size=32 entry_size=32 count=18 page_size=4096 |
-| `fan-rgb-sysfs.txt` | # sysfs paths referenced by the stock system app RPSettings (fan, RGB LEDs, backlight) |
+| `fan-control.txt` | # Fan control interfaces actually present in the stock firmware |
 | `fstab-first-stage-mount.txt` | system                                                  /system                ext4    ro,barrier=1, |
 | `fstab-vendor-ramdisk.txt` | ## first_stage_ramdisk/fstab.qcom |
 | `gpt-headers.txt` | ## lun0_gpt_header.bin |
@@ -24,9 +24,11 @@ firmware (`STOCK_FW_URL`), slot suffix `_a`. No binary images.
 | `props-of-interest.txt` | ## vendor |
 | `props-system.txt` | #################################### |
 | `props-vendor.txt` | #################################### |
+| `rpsettings-sysfs-strings.txt` | # Sysfs paths/keys found as strings in the stock RPSettings.apk. |
 | `super-lpdump.txt` | # super block device(s) |
 | `system-apps.txt` | ## /system/app |
 | `system_ext-apps.txt` | ## /app |
+| `touch-idc.txt` | # Touch/input configuration shipped by the stock firmware |
 | `vbmeta.txt` | ## lun4_vbmeta_a.bin |
 | `vendor-apps.txt` | ## /app |
 | `vendor_boot-header.txt` | path: /var/home/epickitrolaz/ashfall/firmware/img/lun4_vendor_boot_a.bin |
@@ -35,4 +37,6 @@ firmware (`STOCK_FW_URL`), slot suffix `_a`. No binary images.
 | `fcm-report.md` | # VINTF matrix comparison |
 | `README.md` | # Stock RP5 firmware artefacts |
 | `vintf/` | stock /vendor/etc/vintf manifest + fragments |
-| `community/` | A17 device-tree files used for comparison |
+| `community/` | A17 device-tree files used for comparison (fetch status in `community/FETCH-STATUS.txt`) |
+
+Community fetches: 13 ok, 0 failed - see `community/FETCH-STATUS.txt`.

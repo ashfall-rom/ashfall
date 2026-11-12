@@ -1,0 +1,61 @@
+# Fan control interfaces actually present in the stock firmware
+
+## Device-tree node (vendor_boot dtb)
+		};
+
+		pm8150l_gpio6 {
+			compatible = "gpio5-pwm";
+			status = "ok";
+			pwms = <0xc3 0x00 0x186a0>;
+			qcom,fan-en-gpio = <0x91 0x07 0x00>;
+			qcom,fan-fg-gpio = <0x91 0x00 0x2004>;
+			gpio5-pwm-state = <0x01>;
+			gpio5-pwm-duty-ns = <0x2710>;
+			gpio5-pwm-period-ns = <0xc350>;
+			pinctrl-names = "default\0fg_int";
+			pinctrl-0 = <0xc4>;
+			pinctrl-1 = <0xc5>;
+		};
+
+		tsens@c222000 {
+			compatible = "qcom,tsens24xx";
+			reg = <0xc222000 0x08 0xc263000 0x1ff>;
+			reg-names = "tsens_srot_physical\0tsens_tm_physical";
+			interrupts = <0x00 0x1fa 0x04 0x00 0x1fc 0x04>;
+			interrupt-names = "tsens-upper-lower\0tsens-critical";
+			tsens-reinit-wa;
+			#thermal-sensor-cells = <0x01>;
+			phandle = <0x1f>;
+
+## Vendor init permissions
+vendor/init/hw/init.qcom.rc:273:	chmod 0666 /sys/class/gpio5_pwm2/state
+vendor/init/hw/init.qcom.rc:274:	chmod 0666 /sys/class/gpio5_pwm2/duty
+vendor/init/hw/init.qcom.rc:275:	chmod 0666 /sys/class/gpio5_pwm2/speed
+vendor/init/hw/init.qcom.rc:576:	chmod 0666 /sys/class/gpio5_pwm2/state
+vendor/init/hw/init.qcom.rc:577:	chmod 0666 /sys/class/gpio5_pwm2/speed
+
+## gpio5_pwm.ko (vendor_dlkm) match/attribute symbols
+3%s: get data->fan_int_gpio failed
+3%s: Invalid fan_en_gpio [%d]!
+3%s: Unable to request fan_en_gpio  [%d]
+4%s: gpio5-pwm-period-ns is not defind
+4%s: gpio5-pwm-state is not defind
+class_attr_duty
+class_attr_speed
+class_attr_state
+fan_en_gpio
+fan_fg_count
+fan_fg_int_gpio
+fan_int_gpio
+fan_irq
+fan_irq_handler
+fan_irq_handler.cfi_jt
+gpio5-pwm
+gpio5_pwm2
+gpio5-pwm-duty-ns
+gpio5-pwm-period-ns
+gpio5-pwm-state
+%s: fan_irq= %d
+
+## NOT found anywhere in the stock firmware: fan_info / pwm_fan / PWM_FAN
+(the only fan_info string is the generic RPSettings table, see rpsettings-sysfs-strings.txt)

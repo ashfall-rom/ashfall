@@ -17,7 +17,7 @@ FW_LOG=${FW_LOG:-$REMOTE_FIRMWARE/logs}
 
 # Packages the fw container needs. android-sdk-libsparse-utils has simg2img;
 # lpunpack/lpdump are provided by our own scripts/firmware/lpunpack.py.
-FW_PKGS="p7zip-full lz4 cpio python3 file xxd android-sdk-libsparse-utils e2fsprogs erofs-utils device-tree-compiler curl ca-certificates git rsync"
+FW_PKGS="p7zip-full lz4 cpio python3 file xxd android-sdk-libsparse-utils e2fsprogs erofs-utils device-tree-compiler binutils curl ca-certificates git rsync"
 
 # fw_host <command>: run a command on the build host. In the remote phase we
 # are already on the build host, so run it locally (never SSH to ourselves).

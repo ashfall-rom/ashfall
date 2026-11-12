@@ -1,4 +1,7 @@
-# sysfs paths referenced by the stock system app RPSettings (fan, RGB LEDs, backlight)
+# Sysfs paths/keys found as strings in the stock RPSettings.apk.
+# WARNING: this APK carries a generic multi-platform table (sprd/tegra/omap/
+# s5p paths appear too). Treat these as hints only; see fan-control.txt for
+# the interfaces that are actually backed by the stock kernel/DT/init.
 /sys/class/gpio5_pwm2/duty
 /sys/class/gpio5_pwm2/en_backlight
 /sys/class/gpio5_pwm2/state
