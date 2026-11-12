@@ -41,17 +41,15 @@ printf 'AshFall doctor - %s :: %s\n' "$BUILD_HOST" "$BUILD_BOX"
 # --------------------------------------------------------------------------
 # 1. Host reachability + hardware
 # --------------------------------------------------------------------------
-# shellcheck disable=SC2016 # remote script: $ expands on the build host
-HOST_OUT=$(host_sh '
-echo "hostname=$(hostname)"
-echo "kernel=$(uname -r)"
-echo "nproc=$(nproc)"
-echo "mem_gb=$(awk "/MemTotal/{printf \"%d\", \$2/1024/1024}" /proc/meminfo)"
-echo "disk_total=$(df -BG --output=size $(printf %q "$REMOTE_ROOT") 2>/dev/null | tail -1 | tr -dc 0-9)"
-echo "disk_free=$(df -BG --output=avail $(printf %q "$REMOTE_ROOT") 2>/dev/null | tail -1 | tr -dc 0-9)"
-echo "distrobox=$(command -v distrobox >/dev/null && echo yes || echo no)"
-echo "podman=$(command -v podman >/dev/null && echo yes || echo no)"
-' 2>/dev/null) || {
+# shellcheck disable=SC2016 # $ expands on the build host (escaped where local)
+HOST_OUT=$(host_sh "echo \"hostname=\$(hostname)\"
+echo \"kernel=\$(uname -r)\"
+echo \"nproc=\$(nproc)\"
+echo \"mem_gb=\$(awk '/MemTotal/{printf \"%d\", \$2/1024/1024}' /proc/meminfo)\"
+echo \"disk_total=\$(df -BG --output=size $(printf %q "$REMOTE_ROOT") 2>/dev/null | tail -1 | tr -dc 0-9)\"
+echo \"disk_free=\$(df -BG --output=avail $(printf %q "$REMOTE_ROOT") 2>/dev/null | tail -1 | tr -dc 0-9)\"
+echo \"distrobox=\$(command -v distrobox >/dev/null && echo yes || echo no)\"
+echo \"podman=\$(command -v podman >/dev/null && echo yes || echo no)\"" 2>/dev/null) || {
   failc "SSH to $BUILD_HOST failed (check key/network: ssh $BUILD_HOST)"
   printf '\nsummary: %d failed, %d warnings\n' "$FAILS" "$WARNS"
   exit 1
@@ -97,7 +95,7 @@ echo 'box=ok'
 missing=''
 for p in $PKGS; do dpkg-query -W -f='\${Status}' \"\$p\" 2>/dev/null | grep -q 'install ok installed' || missing=\"\$missing \$p\"; done
 echo \"missing_pkgs=\$missing\"
-echo \"repo=\$(command -v repo >/dev/null && repo --version 2>/dev/null | awk 'NR==1{print \$NF}' || echo missing)\"
+echo \"repo=\$(repo --version 2>/dev/null | awk '/launcher version/{print \$NF; exit}' || true)\"
 missing_cmds=''
 for c in tmux flock ccache git-lfs rsync schedtool lzop pngcrush python3; do command -v \$c >/dev/null || missing_cmds=\"\$missing_cmds \$c\"; done
 echo \"missing_cmds=\$missing_cmds\"
@@ -183,7 +181,7 @@ esac
 if host_sh "test -d $(printf %q "$REMOTE_ROOT/jobs/sync")" >/dev/null 2>&1; then
   STATUS=$(box_sh "cat $(printf %q "$REMOTE_ROOT/jobs/sync/status") 2>/dev/null || echo unknown" | tail -1)
   EXIT=$(box_sh "cat $(printf %q "$REMOTE_ROOT/jobs/sync/exit") 2>/dev/null || echo -" | tail -1)
-  LAST=$(box_sh "tail -n 3 $(printf %q "$REMOTE_ROOT/jobs/sync/log") 2>/dev/null" | tr '\n' ' ')
+  LAST=$(box_sh "tail -c 4000 $(printf %q "$REMOTE_ROOT/jobs/sync/log") 2>/dev/null" | tr '\r' '\n' | grep -v '^$' | tail -3 | tr '\n' ' ')
   case $STATUS in
     running)
       if box_sh "tmux has-session -t ashfall-sync 2>/dev/null" >/dev/null 2>&1; then

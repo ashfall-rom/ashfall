@@ -93,7 +93,7 @@ fi
 
 # AOSP build tools not packaged by apt: Google's repo launcher.
 if command -v repo >/dev/null; then
-  echo "==> repo present: $(repo --version 2>/dev/null | awk 'NR==1{print $NF; exit}')"
+  echo "==> repo present: $(repo --version 2>/dev/null | awk '/launcher version/{print $NF; exit}')"
 elif [[ $mode == check ]]; then
   echo "==> repo missing (would install to /usr/local/bin/repo)"
 else

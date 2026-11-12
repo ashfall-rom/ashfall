@@ -183,7 +183,11 @@ cmd_wait() {
     st=$(job_status "$name")
     [[ $st == 'running' || $st == 'starting' ]] || break
     if ! box_sh "tmux has-session -t $(printf %q "${JOB_PREFIX}${name}") 2>/dev/null" >/dev/null 2>&1; then
-      st=stale
+      # The session can disappear a moment before the runner's last write;
+      # re-read once before calling it stale.
+      sleep 2
+      st=$(job_status "$name")
+      [[ $st == 'running' || $st == 'starting' ]] && st=stale
       break
     fi
     if ((timeout > 0)) && ((SECONDS >= deadline)); then
@@ -198,8 +202,14 @@ cmd_wait() {
     return 2
   fi
   if [[ $st == stale ]]; then
-    warn "no tmux session for '$name' but status is not final - container restarted?"
-    return 1
+    # The runner exits right after writing its final state, so the session can
+    # disappear between our status poll and the tmux probe: re-read once.
+    sleep 2
+    st=$(job_status "$name")
+    if [[ $st == 'running' || $st == 'starting' ]]; then
+      warn "no tmux session for '$name' but status is not final - container restarted?"
+      return 1
+    fi
   fi
   local rc
   rc=$(box_sh "cat $(printf %q "$REMOTE_ROOT/jobs/$name/exit") 2>/dev/null || echo -" | tail -1)

@@ -10,7 +10,7 @@ clean and the box can be thrown away and recreated at any time.
 | Host | `epickitrolaz@100.66.37.14` (Tailscale) |
 | OS | Fedora Silverblue 45, kernel 7.2.x |
 | CPU / RAM | Ryzen 7 7800X3D, 16 threads / 62 GiB |
-| Disk | ~1.9 TB on `/var/home` (~880 GiB free after the sync) |
+| Disk | ~1.9 TB on `/var/home` (~747 GiB free after the sync) |
 | Box | `ashfall-build`, image `docker.io/library/ubuntu:24.04` |
 | Tree | `/var/home/epickitrolaz/ashfall/src/lineage` (`$REMOTE_SRC`) |
 
@@ -161,12 +161,15 @@ Measured on 2026-11-12 (Tailscale, host on a ~1 Gbit/s connection):
 | 21:46:58 | 68 GB | 1077 | |
 | 21:50:06 | 89 GB | 1239 | all projects fetched; checkout still running |
 | 22:00:02 | 131 GB | 1239 | first pass ended rc=1: HTTP 429 on 30 repos |
-| 22:0x | 131 GB | 1239 | resumed with `--retries`; see PR for final numbers |
+| 22:03:43 | 131 GB | 1239 | resumed with `-j8 --retry-fetches=5`; fetches the 30 failed repos |
+| 22:20:44 | 160 GB | 1239 | done, exit 0 (`job.sh status sync`) |
 
 Rough numbers: 3-8 GB/min while the network is the bottleneck. A cold sync of a
-depth-1 LineageOS 24.0 tree lands around 130 GB on disk including `.repo/`
-(the checkout itself is ~40 GB). The full build needs another ~150 GB for
+depth-1 LineageOS 24.0 tree lands at ~160 GB on disk including `.repo/`
+(first pass 131 GB in 25 min, then ~17 min more to re-fetch the repos that hit
+HTTP 429; the checkout itself is ~40 GB of that). The full build needs another ~150 GB for
 `out/` plus ccache (capped at 80 GB).
 
-Disk budget on `/var/home` (~1.9 TB): tree ~80 GB + `out/` ~150 GB + ccache
-80 GB + artifacts -> comfortable; keep at least 200 GB free before a build.
+Disk budget on `/var/home` (~1.9 TB): tree 160 GB (depth-1, includes
+`.repo/`) + `out/` ~150 GB + ccache 80 GB + artifacts -> comfortable; keep at
+least 200 GB free before a build. `doctor.sh` fails below 200 GB free.
