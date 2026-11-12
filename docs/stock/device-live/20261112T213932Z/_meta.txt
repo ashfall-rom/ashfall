@@ -1,0 +1,16 @@
+ashfall device snapshot
+timestamp:   2026-11-12T21:39:44Z
+host:        fedora
+kernel:      Linux fedora 7.2.15-300.fc45.x86_64 #1 SMP PREEMPT_DYNAMIC Sun Nov  1 16:11:16 UTC 2026 x86_64 x86_64 x86_64 GNU/Linux
+container:   ashfall-dev
+adb:         Android Debug Bridge version 1.0.41
+fastboot:    fastboot version 34.0.4-debian
+usb:
+  Bus 001 Device 002: ID 2dc8:301c 8BitDo IDLE
+  Bus 001 Device 009: ID 18d1:d00d Google Android
+adb devices:
+  List of devices attached
+  
+fastboot devices:
+  <redacted>               fastboot
+   usb:1-3

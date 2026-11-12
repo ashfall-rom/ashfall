@@ -1,0 +1,4 @@
+# cmd: timeout 25 fastboot devices -l
+<redacted>               fastboot
+ usb:1-3
+

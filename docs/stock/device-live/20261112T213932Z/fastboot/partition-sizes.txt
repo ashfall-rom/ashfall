@@ -1,0 +1,224 @@
+
+## partition-size:boot_a
+getvar:partition-size:boot_a                       FAILED (remote: 'GetVar Variable Not found')
+Finished. Total time: 0.005s
+
+## partition-type:boot_a
+partition-type:boot_a: raw
+Finished. Total time: 0.002s
+
+## partition-size:boot_b
+partition-size:boot_b:  0x6000000
+Finished. Total time: 0.002s
+
+## partition-type:boot_b
+partition-type:boot_b: raw
+Finished. Total time: 0.002s
+
+## partition-size:vendor_boot_a
+getvar:partition-size:vendor_boot_a                FAILED (remote: 'GetVar Variable Not found')
+Finished. Total time: 0.003s
+
+## partition-type:vendor_boot_a
+partition-type:vendor_boot_a: raw
+Finished. Total time: 0.002s
+
+## partition-size:vendor_boot_b
+partition-size:vendor_boot_b:  0x6000000
+Finished. Total time: 0.002s
+
+## partition-type:vendor_boot_b
+partition-type:vendor_boot_b: raw
+Finished. Total time: 0.002s
+
+## partition-size:init_boot_a
+getvar:partition-size:init_boot_a                  FAILED (remote: 'GetVar Variable Not found')
+Finished. Total time: 0.003s
+
+## partition-type:init_boot_a
+partition-type:init_boot_a: raw
+Finished. Total time: 0.003s
+
+## partition-size:init_boot_b
+partition-size:init_boot_b:  0x800000
+Finished. Total time: 0.004s
+
+## partition-type:init_boot_b
+partition-type:init_boot_b: raw
+Finished. Total time: 0.002s
+
+## partition-size:dtbo_a
+getvar:partition-size:dtbo_a                       FAILED (remote: 'GetVar Variable Not found')
+Finished. Total time: 0.003s
+
+## partition-type:dtbo_a
+partition-type:dtbo_a: raw
+Finished. Total time: 0.002s
+
+## partition-size:dtbo_b
+partition-size:dtbo_b:  0x1800000
+Finished. Total time: 0.002s
+
+## partition-type:dtbo_b
+partition-type:dtbo_b: raw
+Finished. Total time: 0.002s
+
+## partition-size:recovery_a
+getvar:partition-size:recovery_a                   FAILED (remote: 'GetVar Variable Not found')
+Finished. Total time: 0.003s
+
+## partition-type:recovery_a
+partition-type:recovery_a: raw
+Finished. Total time: 0.002s
+
+## partition-size:recovery_b
+partition-size:recovery_b:  0x6400000
+Finished. Total time: 0.002s
+
+## partition-type:recovery_b
+partition-type:recovery_b: raw
+Finished. Total time: 0.002s
+
+## partition-size:vbmeta_a
+getvar:partition-size:vbmeta_a                     FAILED (remote: 'GetVar Variable Not found')
+Finished. Total time: 0.003s
+
+## partition-type:vbmeta_a
+partition-type:vbmeta_a: raw
+Finished. Total time: 0.004s
+
+## partition-size:vbmeta_b
+partition-size:vbmeta_b:  0x10000
+Finished. Total time: 0.002s
+
+## partition-type:vbmeta_b
+partition-type:vbmeta_b: raw
+Finished. Total time: 0.002s
+
+## partition-size:vbmeta_system_a
+getvar:partition-size:vbmeta_system_a              FAILED (remote: 'GetVar Variable Not found')
+Finished. Total time: 0.003s
+
+## partition-type:vbmeta_system_a
+partition-type:vbmeta_system_a: raw
+Finished. Total time: 0.003s
+
+## partition-size:vbmeta_system_b
+partition-size:vbmeta_system_b:  0x10000
+Finished. Total time: 0.003s
+
+## partition-type:vbmeta_system_b
+partition-type:vbmeta_system_b: raw
+Finished. Total time: 0.003s
+
+## partition-size:abl_a
+getvar:partition-size:abl_a                        FAILED (remote: 'GetVar Variable Not found')
+Finished. Total time: 0.004s
+
+## partition-type:abl_a
+partition-type:abl_a: raw
+Finished. Total time: 0.002s
+
+## partition-size:abl_b
+partition-size:abl_b:  0x100000
+Finished. Total time: 0.002s
+
+## partition-type:abl_b
+partition-type:abl_b: raw
+Finished. Total time: 0.002s
+
+## partition-size:loader_a
+getvar:partition-size:loader_a                     FAILED (remote: 'GetVar Variable Not found')
+Finished. Total time: 0.003s
+
+## partition-type:loader_a
+partition-type:loader_a: raw
+Finished. Total time: 0.002s
+
+## partition-size:loader_b
+partition-size:loader_b:  0xA00000
+Finished. Total time: 0.002s
+
+## partition-type:loader_b
+partition-type:loader_b: raw
+Finished. Total time: 0.001s
+
+## partition-size:imagefv_a
+getvar:partition-size:imagefv_a                    FAILED (remote: 'GetVar Variable Not found')
+Finished. Total time: 0.003s
+
+## partition-type:imagefv_a
+partition-type:imagefv_a: raw
+Finished. Total time: 0.002s
+
+## partition-size:imagefv_b
+partition-size:imagefv_b:  0x200000
+Finished. Total time: 0.001s
+
+## partition-type:imagefv_b
+partition-type:imagefv_b: raw
+Finished. Total time: 0.001s
+
+## partition-size:vm-linux_a
+getvar:partition-size:vm-linux_a                   FAILED (remote: 'GetVar Variable Not found')
+Finished. Total time: 0.003s
+
+## partition-type:vm-linux_a
+partition-type:vm-linux_a: raw
+Finished. Total time: 0.003s
+
+## partition-size:vm-linux_b
+partition-size:vm-linux_b:  0x2000000
+Finished. Total time: 0.002s
+
+## partition-type:vm-linux_b
+partition-type:vm-linux_b: raw
+Finished. Total time: 0.002s
+
+## partition-size:vm-system_a
+getvar:partition-size:vm-system_a                  FAILED (remote: 'GetVar Variable Not found')
+Finished. Total time: 0.003s
+
+## partition-type:vm-system_a
+partition-type:vm-system_a: raw
+Finished. Total time: 0.003s
+
+## partition-size:vm-system_b
+partition-size:vm-system_b:  0x8000000
+Finished. Total time: 0.003s
+
+## partition-type:vm-system_b
+partition-type:vm-system_b: raw
+Finished. Total time: 0.003s
+
+## partition-size:splash
+getvar:partition-size:splash                       FAILED (remote: 'GetVar Variable Not found')
+Finished. Total time: 0.003s
+
+## partition-type:splash
+partition-type:splash: raw
+Finished. Total time: 0.002s
+
+## partition-size:metadata
+getvar:partition-size:metadata                     FAILED (remote: 'GetVar Variable Not found')
+Finished. Total time: 0.003s
+
+## partition-type:metadata
+partition-type:metadata: raw
+Finished. Total time: 0.003s
+
+## partition-size:userdata
+partition-size:userdata:  0x1A21ED3000
+Finished. Total time: 0.003s
+
+## partition-type:userdata
+partition-type:userdata: ext4
+Finished. Total time: 0.002s
+
+## partition-size:super
+getvar:partition-size:super                        FAILED (remote: 'GetVar Variable Not found')
+Finished. Total time: 0.006s
+
+## partition-type:super
+getvar:partition-type:super                        FAILED (remote: 'GetVar Variable Not found')
+Finished. Total time: 0.003s
