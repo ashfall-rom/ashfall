@@ -1,0 +1,47 @@
+From da5f79fc8d20c1ce8f4ea454e36801699bf50496 Mon Sep 17 00:00:00 2001
+From: Pierre-Hugues Husson <phh@phh.me>
+Date: Tue, 5 Oct 2021 17:59:16 -0400
+Subject: [PATCH 2/2] DisplayManager: survive an unparsable global display
+ configuration
+
+The global display values come from framework resources, which the stock RP5
+vendor overlays with its Android 13 RRO
+(/vendor/overlay/FrameworksResTarget_Vendor.apk). If an overlaid automatic
+brightness array does not satisfy this framework's stricter parser (control
+points not strictly increasing is the classic failure), the exception escapes
+DisplayDeviceConfig.create() inside system_server and the device boot-loops.
+
+Catch it, log it and fall back to the plain PowerManager-based values, which is
+what the code already does when no configuration exists at all.
+
+Ported-from: https://github.com/ponces/treble_aosp/blob/android-16.0/patches/trebledroid/platform_frameworks_base/0002-Fallback-to-stupid-autobrightness-if-brightness-valu.patch
+---
+ .../server/display/DisplayDeviceConfig.java        | 14 ++++++++++++--
+ 1 file changed, 12 insertions(+), 2 deletions(-)
+
+diff --git a/services/core/java/com/android/server/display/DisplayDeviceConfig.java b/services/core/java/com/android/server/display/DisplayDeviceConfig.java
+index f25b593c2..697776932 100644
+--- a/services/core/java/com/android/server/display/DisplayDeviceConfig.java
++++ b/services/core/java/com/android/server/display/DisplayDeviceConfig.java
+@@ -1026,9 +1026,19 @@ public class DisplayDeviceConfig {
+      */
+     public static DisplayDeviceConfig create(Context context, boolean useConfigXml,
+             DisplayManagerFlags flags) {
+-        final DisplayDeviceConfig config;
++        DisplayDeviceConfig config;
+         if (useConfigXml) {
+-            config = getConfigFromGlobalXml(context, flags);
++            try {
++                config = getConfigFromGlobalXml(context, flags);
++            } catch (Exception e) {
++                // The global values come from framework resources, which on this device are
++                // overlaid by the stock vendor RRO (/vendor/overlay/FrameworksResTarget_Vendor.apk)
++                // written for Android 13. If that overlay's brightness arrays do not satisfy
++                // this framework's parser (e.g. control points not strictly increasing), the
++                // exception escapes inside system_server. Fall back to the plain values.
++                Slog.e(TAG, "Failed to parse the global display config, using defaults", e);
++                config = getConfigFromPmValues(context, flags);
++            }
+         } else {
+             config = getConfigFromPmValues(context, flags);
+         }
