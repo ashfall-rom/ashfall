@@ -13,8 +13,11 @@
 #     then system_ext_<slot>, only when needed. vendor_/odm_ are never touched;
 #   * accepts Android-sparse, EROFS (A17 GSI default, stock 5.15 kernel) and
 #     ext4 images;
+#   * the target slot is re-validated to be exactly a|b, including when it came
+#     from the device's current-slot;
 #   * `--dry-run` performs only read-only getvars and prints the plan including
-#     the space arithmetic (exact numbers once fastbootd is reachable).
+#     the space arithmetic (exact numbers once fastbootd is reachable). With
+#     --keep-product and a deficit it marks the plan as refused and exits 1.
 #
 # The device must be USB-connected to the build host ($BUILD_HOST); all
 # adb/fastboot calls run there in the `ashfall-dev` container.
@@ -270,7 +273,7 @@ GROUP_MAX=${ASH_GROUP_MAX_BYTES:-6442450944}   # 6.0 GiB per slot group
 hexok() { [[ $1 =~ ^0x[0-9a-fA-F]+$ ]]; }
 
 compute_space_budget() {
-  BUDGET_LINES=(); DELETIONS=(); SPACE_KNOWN=0; GROUP_NEED=0
+  BUDGET_LINES=(); DELETIONS=(); SPACE_KNOWN=0; GROUP_NEED=0; PLAN_REFUSED=0
   local sys prod sx vendor odm sys_dlkm vend_dlkm sum free_after pair part v
   local b_vendor b_odm b_product b_system_ext b_system_dlkm b_vendor_dlkm b_other b_free b_need b_left
 
@@ -296,8 +299,12 @@ compute_space_budget() {
       b_need=$((-b_free))
       BUDGET_LINES+=("baseline: $(human "$GROUP_MAX") - $(human "$b_other") - $(human "$IMG_SIZE") (image) = deficit $(human "$b_need") (${b_need} B)")
     fi
+    GROUP_NEED=$b_need
     if ((b_need == 0)); then
       BUDGET_LINES+=("=> fits the group on the stock baseline")
+    elif ((KEEP_PRODUCT)); then
+      BUDGET_LINES+=("=> does NOT fit and --keep-product forbids deleting product_$SLOT/system_ext_$SLOT: the run would refuse")
+      PLAN_REFUSED=1
     else
       BUDGET_LINES+=("=> deficit $(human "$b_need"); deletion order: product_$SLOT, then system_ext_$SLOT")
       b_left=$((b_need - b_product))
@@ -341,6 +348,12 @@ compute_space_budget() {
   fi
   GROUP_NEED=$((-free_after))
   BUDGET_LINES+=("budget: $(human "$GROUP_MAX") - $(human "$sum") - $(human "$IMG_SIZE") = deficit $(human "$GROUP_NEED")")
+  if ((KEEP_PRODUCT)); then
+    BUDGET_LINES+=("--keep-product forbids deleting product_$SLOT/system_ext_$SLOT: the run would refuse")
+    SPACE_KNOWN=1
+    PLAN_REFUSED=1
+    return 0
+  fi
   for pair in "product:$prod" "system_ext:$sx"; do
     part=${pair%%:*}; v=${pair#*:}
     hexok "$v" || continue
@@ -368,8 +381,13 @@ print_plan() {
   printf 'vbmeta:        %s\n' "$vb_desc"
   printf '\nsteps:\n'
   printf '  - switch to fastbootd (userspace fastboot) if needed\n'
-  printf '  - apply the space budget: free stock product_%s first, then\n' "$SLOT"
-  printf '    system_ext_%s only if still short (never vendor_/odm_)\n' "$SLOT"
+  if ((KEEP_PRODUCT)) && ((GROUP_NEED > 0)); then
+    printf '  - space budget: image does not fit and --keep-product forbids deleting\n'
+    printf '    product_%s/system_ext_%s -> this run would REFUSE\n' "$SLOT" "$SLOT"
+  else
+    printf '  - apply the space budget: free stock product_%s first, then\n' "$SLOT"
+    printf '    system_ext_%s only if still short (never vendor_/odm_)\n' "$SLOT"
+  fi
   printf '  - fastboot --slot %s flash system %s\n' "$SLOT" "$img"
   if [[ $VB_FLAGS == 1 ]]; then
     printf '  - fastboot --disable-verity --disable-verification --slot %s flash vbmeta %s\n' "$SLOT" "$vb"
@@ -423,6 +441,9 @@ preflight_device
 if [[ -z $SLOT ]]; then
   if [[ -n $CUR_SLOT ]]; then SLOT=$CUR_SLOT; else SLOT=a; fi
 fi
+# Defense in depth: the slot is interpolated into partition names, --slot args
+# and set-active. Never trust a device-reported value without re-validating it.
+[[ $SLOT == a || $SLOT == b ]] || die "unexpected current-slot '$SLOT'; pass --slot a|b explicitly"
 log "target slot: $SLOT"
 
 # Product / unlock checks (skip when unknown: --no-device or offline dry-run)
@@ -472,6 +493,11 @@ compute_space_budget
 print_plan "$IMG_HOST" "$IMG_SIZE" "$VB" "$VB_DESC"
 
 if ((DRY_RUN)); then
+  if ((PLAN_REFUSED)); then
+    warn "dry-run: this plan would be refused (--keep-product and the image does not fit)"
+    log "dry-run: no device writes performed"
+    exit 1
+  fi
   log "dry-run: no device writes performed"
   exit 0
 fi
@@ -514,6 +540,9 @@ log "fastbootd device: $DEV_SERIAL"
 compute_space_budget
 log "space budget for qti_dynamic_partitions_$SLOT:"
 printf '  %s\n' "${BUDGET_LINES[@]}" >&2
+if ((GROUP_NEED > 0)) && ((KEEP_PRODUCT)); then
+  die "--keep-product: image does not fit the group and deleting product_$SLOT/system_ext_$SLOT is forbidden (deficit $(human "$GROUP_NEED"))"
+fi
 if ((GROUP_NEED > 0)); then
   die "image does not fit the group even after deleting product_$SLOT and system_ext_$SLOT (deficit $(human "$GROUP_NEED"))"
 fi
@@ -597,8 +626,14 @@ else
 fi
 
 cur=$(dev_fb_value current-slot)
+if [[ $cur != a && $cur != b ]]; then
+  warn "unexpected current-slot '$cur' from fastbootd; leaving the active slot untouched"
+  cur=''
+fi
 if [[ $cur == "$SLOT" ]]; then
   ok "slot $SLOT already active"
+elif [[ -z $cur ]]; then
+  log "active slot not changeable now; flashing slot $SLOT only"
 else
   if step "set active slot $SLOT" set-active "$SLOT"; then
     ok "slot $SLOT marked active (takes effect on the next boot)"
