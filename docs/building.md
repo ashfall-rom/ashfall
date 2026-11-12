@@ -125,8 +125,10 @@ rejects it with `Invalid lunch combo` (it would parse as
 never work. If every candidate is rejected the build dies and asks for
 `LUNCH_RELEASE` in `config/ashfall.conf`.
 
-An attempt that silently selects another product or release is rejected by the
-same read-back check.
+An attempt that selects another product is rejected via `get_build_var
+TARGET_PRODUCT`; the release is checked against the `TARGET_RELEASE` that
+`lunch` exports (`get_build_var TARGET_RELEASE` is empty on lineage-24.0 because
+`core/release_config.mk` consumes and unsets it during the make parse).
 
 ### Filesystem: EROFS by default, ext4 as fallback
 

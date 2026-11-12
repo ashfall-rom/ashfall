@@ -274,7 +274,10 @@ preflight() {
     die "'repo' is not installed in the build box $BUILD_BOX (issue #1: scripts/host/)"
   # Building on a tree that is still being synced produces hours of confusing
   # failures and races with the sync writer; refuse instead.
-  if host_sh "pgrep -af 'repo.* sync ' 2>/dev/null | grep -F -q $(printf %q "$TREE")"; then
+  # Only python3 processes are inspected: pgrep -f over the whole command line
+  # would also match the shell that runs this very probe (it contains both the
+  # pattern and the tree path), which made the guard a false positive.
+  if host_sh "pgrep -x python3 -a 2>/dev/null | grep -F -- $(printf %q "--repo-dir=$TREE/.repo") | grep -F -q -- '-- sync'"; then
     if [[ ${ASH_ALLOW_UNSYNCED:-0} != 1 ]]; then
       die "a 'repo sync' is running on $BUILD_HOST; refusing to build a half-synced tree (wait for issue #1, or set ASH_ALLOW_UNSYNCED=1 if you really mean it)"
     fi
@@ -407,8 +410,11 @@ try_lunch() { # try_lunch <product> <release> <variant>
   fi
   got=$(get_var TARGET_PRODUCT)
   [[ $got == "$p" ]] || { info "  lunched '$got' instead of '$p'"; return 1; }
-  got=$(get_var TARGET_RELEASE)
-  [[ $got == "$r" ]] || { info "  release is '$got' instead of '$r'"; return 1; }
+  # lunch exports TARGET_RELEASE, but get_build_var does not expose it on
+  # lineage-24.0 (core/release_config.mk consumes and unsets it while make
+  # parses), so verify the value lunch just put in the environment.
+  [[ ${TARGET_RELEASE:-} == "$r" ]] ||
+    { info "  release is '${TARGET_RELEASE:-}' instead of '$r'"; return 1; }
   return 0
 }
 
