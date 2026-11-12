@@ -1,0 +1,24 @@
+# super block device(s)
+#   name='super' size=12884901888 (12.0GiB) first_logical_sector=2048 alignment=1048576 alignment_offset=0
+# metadata version=10.2 logical_block_size=4096
+
+group                            max_size         used         free   flags
+default                                0B           0B           0B   0x0
+qti_dynamic_partitions_a           6.0GiB       4.6GiB       1.4GiB   0x0
+qti_dynamic_partitions_b           6.0GiB           0B       6.0GiB   0x0
+
+partition                group                            size        sectors  extents
+odm_a                    qti_dynamic_partitions_a       1.2MiB           2384  2048+2384
+product_a                qti_dynamic_partitions_a     896.1MiB        1835304  6144+1835304
+system_a                 qti_dynamic_partitions_a       1.4GiB        2908760  1843200+2908760
+system_dlkm_a            qti_dynamic_partitions_a     428.0KiB            856  4753408+856
+system_ext_a             qti_dynamic_partitions_a     497.9MiB        1019608  4755456+1019608
+vendor_a                 qti_dynamic_partitions_a       1.8GiB        3730632  5775360+3730632
+vendor_dlkm_a            qti_dynamic_partitions_a      64.7MiB         132544  9506816+132544
+odm_b                    qti_dynamic_partitions_b           0B              0
+product_b                qti_dynamic_partitions_b           0B              0
+system_b                 qti_dynamic_partitions_b           0B              0
+system_dlkm_b            qti_dynamic_partitions_b           0B              0
+system_ext_b             qti_dynamic_partitions_b           0B              0
+vendor_b                 qti_dynamic_partitions_b           0B              0
+vendor_dlkm_b            qti_dynamic_partitions_b           0B              0

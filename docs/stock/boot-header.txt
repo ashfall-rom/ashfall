@@ -1,0 +1,17 @@
+path: /var/home/epickitrolaz/ashfall/firmware/img/lun4_boot_a.bin
+file_size: 100663296
+kind: boot
+header_version: 4
+kernel_size: 55667200
+ramdisk_size: 0
+header_size: 1584
+page_size: 4096
+cmdline: ''
+name:
+os_version: 13.0.0
+os_patch_level: 0024-07
+extra_cmdline:
+kernel_offset: 4096
+ramdisk_offset: 55672832
+ramdisk_type: None
+kernel: 55667200 bytes @ 4096 -> /var/home/epickitrolaz/ashfall/firmware/img/boot/kernel

@@ -1,0 +1,19 @@
+# Community fetch status
+
+OK (13):
+  https://raw.githubusercontent.com/Ayn8250Dev/android_device_ayn_sxr2130p-common/lineage-24.0/BoardConfigCommon.mk
+  https://raw.githubusercontent.com/Ayn8250Dev/android_device_ayn_sxr2130p-common/lineage-24.0/common.mk
+  https://raw.githubusercontent.com/Ayn8250Dev/android_device_ayn_sxr2130p-common/lineage-24.0/vintf/manifest.xml
+  https://raw.githubusercontent.com/Ayn8250Dev/android_device_ayn_sxr2130p-common/lineage-24.0/init/fstab.qcom
+  https://raw.githubusercontent.com/Ayn8250Dev/android_device_ayn_sxr2130p-common/lineage-24.0/properties/system.prop
+  https://raw.githubusercontent.com/Ayn8250Dev/android_device_ayn_sxr2130p-common/lineage-24.0/properties/product.prop
+  https://raw.githubusercontent.com/Ayn8250Dev/android_device_ayn_sxr2130p-common/lineage-24.0/properties/vendor.prop
+  https://raw.githubusercontent.com/Ayn8250Dev/android_device_ayn_sxr2130p-common/lineage-24.0/properties/odm.prop
+  https://raw.githubusercontent.com/Ayn8250Dev/android_device_retroidpocket_RP5/lineage-24.0/properties/vendor.prop
+  https://raw.githubusercontent.com/Ayn8250Dev/android_device_retroidpocket_RP5/lineage-24.0/device.mk
+  https://raw.githubusercontent.com/Ayn8250Dev/android_device_retroidpocket_RP5/lineage-24.0/configs/idc/fts_ts.idc
+  https://raw.githubusercontent.com/Ayn8250Dev/android_kernel_ayn_sxr2130p/lineage-24.0/arch/arm64/configs/vendor/kona-perf_defconfig
+  https://raw.githubusercontent.com/Ayn8250Dev/android_kernel_ayn_sxr2130p/lineage-24.0/arch/arm64/configs/vendor/moorechip/kona_perf.config
+
+FAILED (0):
+  (none)

@@ -1,0 +1,9 @@
+## /app
+     12   40755 (2)      0   2000    4096  1-Jan-2009 01:00 .
+      2   40755 (2)      0   2000    4096  1-Jan-2009 01:00 ..
+     13   40755 (2)      0   2000    4096  1-Jan-2009 01:00 ConnectionSecurityService
+     19   40755 (2)      0   2000    4096  1-Jan-2009 01:00 TimeService
+     25   40755 (2)      0   2000    4096  1-Jan-2009 01:00 TrustZoneAccessService
+     31   40755 (2)      0   2000    4096  1-Jan-2009 01:00 pasrservice
+
+## /priv-app
