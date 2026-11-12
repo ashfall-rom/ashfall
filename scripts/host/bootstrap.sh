@@ -35,7 +35,7 @@ host_sh 'command -v distrobox >/dev/null && command -v podman >/dev/null' >/dev/
 host_sh "mkdir -p $(printf %q "$REMOTE_ROOT")/{src,ccache,ws,artifacts,logs,firmware}" >/dev/null
 ok "remote layout under $REMOTE_ROOT ready"
 
-if host_sh "distrobox list 2>/dev/null | grep -qE '\\|[[:space:]]*$(printf %q "$BUILD_BOX")[[:space:]]*\\|'"; then
+if host_sh "distrobox list 2>/dev/null | cut -d'|' -f2 | tr -d ' ' | grep -qx $(printf %q "$BUILD_BOX")"; then
   ok "box '$BUILD_BOX' exists"
 else
   if [[ $MODE == check ]]; then
