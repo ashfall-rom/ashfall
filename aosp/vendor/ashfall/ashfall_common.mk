@@ -43,7 +43,7 @@ PRODUCT_PRODUCT_PROPERTIES += \
 # Static framework/package overlays (rotation default, strings, ...): phase 4.
 # PRODUCT_PACKAGE_OVERLAYS += vendor/ashfall/overlay
 
-# Device-specific sepolicy (kernel 4.19 / SM8250 quirks): phase 4. This is a
+# Device-specific sepolicy (SM8250 / stock 5.15 GKI quirks): phase 4. This is a
 # board-level variable, which works from a product makefile for the same
 # reason GSI_FILE_SYSTEM_TYPE does (product config is parsed first).
 # BOARD_SEPOLICY_DIRS += vendor/ashfall/sepolicy

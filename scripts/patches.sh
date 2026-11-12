@@ -13,6 +13,11 @@
 # recorded in <project>/.git/ashfall-patches-base and reused for plain git
 # checkouts (tests) where no repo manifest exists.
 #
+# When --tree (or the default $REMOTE_SRC) is the shared tree, apply/reset take
+# a blocking flock on $REMOTE_TREE_LOCK; status is read-only and never locks.
+# A caller that already holds the lock (scripts/build.sh) sets
+# ASH_TREE_LOCK_HELD=1 so the tool does not nest the lock (that would deadlock).
+#
 # Exit status: 0 on success, 1 on any patch conflict or resolution error.
 
 set -euo pipefail
@@ -27,6 +32,7 @@ PATCHES_DIR=""
 REV=""
 DO_CLEAN=1
 KEEP_CONFLICTS=0
+NO_LOCK=0
 ACTION=""
 
 usage() {
@@ -45,6 +51,9 @@ Options:
   --rev REV         baseline revision for every project instead of the repo
                     manifest revision (testing / pinning)
   --no-clean        keep untracked files (skip `git clean -fdq`)
+  --no-lock         do not take REMOTE_TREE_LOCK even on the shared tree
+                    (only for scratch trees or when the caller holds it and
+                    sets ASH_TREE_LOCK_HELD=1)
   --keep-conflicts  leave the failed `git am` state in place for inspection
   -h, --help        this help
 
@@ -215,9 +224,37 @@ reset_project() { # <rel> <base>
   (( DO_CLEAN )) && git -C "$dir" clean -fdq
 }
 
+# The commit subject `git am` will produce for a patch file. Uses `git mailinfo`
+# (the same machinery git am uses) so RFC 2822 folded subjects and encoded
+# subjects unfold identically; a first-line-only read reports long subjects as
+# missing in `status` (issue #11).
 patch_subject() {
   local subj
-  subj=$(awk '/^Subject: /{ sub(/^Subject: \[PATCH[^]]*\] */, ""); sub(/\r$/, ""); print; exit }' "$1")
+  if subj=$(git mailinfo /dev/null /dev/null <"$1" 2>/dev/null |
+    sed -n 's/^Subject:[[:space:]]*//p' | head -n1) && [[ -n $subj ]]; then
+    printf '%s\n' "$subj"
+    return 0
+  fi
+  # Fallback for files `git mailinfo` cannot parse: unfold the header manually.
+  subj=$(awk '
+    /^Subject:[ \t]*/ {
+      s = $0
+      sub(/^Subject:[ \t]*/, "", s)
+      inse = 1
+      next
+    }
+    inse && /^[ \t]/ {
+      line = $0
+      sub(/^[ \t]+/, "", line)
+      s = s " " line
+      next
+    }
+    inse { exit }
+    END {
+      sub(/^\[PATCH[^]]*\][ \t]*/, "", s)
+      sub(/[ \t]+$/, "", s)
+      print s
+    }' "$1")
   printf '%s\n' "${subj:-$(basename "$1")}"
 }
 
@@ -399,16 +436,15 @@ while (( $# > 0 )); do
     --rev) [[ $# -ge 2 ]] || die "--rev needs a revision"; REV=$2; shift 2 ;;
     --rev=*) REV=${1#*=}; shift ;;
     --no-clean) DO_CLEAN=0; shift ;;
+    --no-lock) NO_LOCK=1; shift ;;
     --keep-conflicts) KEEP_CONFLICTS=1; shift ;;
     -h|--help) usage 0 ;;
     *) die "unknown argument '$1' (see --help)" ;;
   esac
 done
 
-if [[ -z $TREE ]]; then
-  load_config
-  TREE=$REMOTE_SRC
-fi
+load_config
+[[ -n $TREE ]] || TREE=$REMOTE_SRC
 [[ -d $TREE ]] || die "tree directory not found: $TREE"
 TREE=$(cd "$TREE" && pwd)
 
@@ -424,6 +460,38 @@ else
 fi
 
 need git
+
+# --- shared tree lock -------------------------------------------------------
+# docs/PLAN.md: anything that mutates $REMOTE_SRC must hold $REMOTE_TREE_LOCK.
+# build.sh's job acquires it and passes ASH_TREE_LOCK_HELD=1, so the pipeline
+# does not nest the lock. A standalone `apply`/`reset` against the shared tree
+# takes it here; `status` is read-only and never locks, and scratch trees
+# (--tree elsewhere) are not locked.
+lock_shared_tree() {
+  [[ $ACTION == apply || $ACTION == reset ]] || return 0
+  [[ -n ${REMOTE_TREE_LOCK:-} && -n ${REMOTE_SRC:-} ]] || return 0
+  [[ $(realpath -m "$TREE") == "$(realpath -m "$REMOTE_SRC")" ]] || return 0
+
+  if (( NO_LOCK )); then
+    warn "mutating the shared tree without a lock (--no-lock); hold $REMOTE_TREE_LOCK yourself"
+    return 0
+  fi
+  if [[ ${ASH_TREE_LOCK_HELD:-0} == 1 ]]; then
+    log "tree lock already held by the caller ($REMOTE_TREE_LOCK)"
+    return 0
+  fi
+  command -v flock >/dev/null 2>&1 ||
+    die "flock is required to patch the shared tree (use --no-lock only for a scratch tree)"
+  mkdir -p "$(dirname "$REMOTE_TREE_LOCK")"
+  exec 9>"$REMOTE_TREE_LOCK"
+  if ! flock -n 9; then
+    log "shared tree lock is busy (sync/build); waiting for $REMOTE_TREE_LOCK"
+    flock 9
+  fi
+  ok "holding shared tree lock: $REMOTE_TREE_LOCK"
+}
+
+lock_shared_tree
 
 case $ACTION in
   apply)

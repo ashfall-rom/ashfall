@@ -8,5 +8,5 @@ Wire it up in `vendor/ashfall/ashfall_common.mk` once there is content:
 BOARD_SEPOLICY_DIRS += vendor/ashfall/sepolicy
 ```
 
-The GSI builds against the AOSP/LineageOS policy only; kernel 4.19 / SM8250
+The GSI builds against the AOSP/LineageOS policy only; SM8250 / 5.15 GKI
 quirks are phase 4 (#5).

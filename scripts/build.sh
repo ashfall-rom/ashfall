@@ -32,6 +32,7 @@ JOBS=""
 VARIANT=""
 PRODUCT=""
 DO_XZ=0
+FS="erofs"
 DRY_RUN=0
 BUILD_ID=""
 FETCH_ID=""
@@ -49,6 +50,8 @@ Build options:
   --jobs N           parallel jobs (default: BUILD_JOBS from config, else nproc)
   --variant V        build variant (default: GSI_VARIANT, userdebug)
   --product P        product (default: GSI_PRODUCT, ashfall_gsi_arm64)
+  --fs erofs|ext4    system.img filesystem (default: erofs; ext4 is the
+                     fallback for kernels without EROFS)
   --xz               also produce system.img.xz in the artifact directory
   --build-id ID      explicit build id (default: <utc>-<product>-<variant>-<sha>)
   --dry-run          print the plan (paths, lunch release, commands) and exit;
@@ -56,6 +59,10 @@ Build options:
   --local-tree DIR   run the same pipeline against a tree on THIS machine
                      (testing only; skips ssh/rsync/ws_push)
   -h, --help         this help
+
+Image size budget (stock super group leaves ~4.2 GiB for system.img):
+  ASH_IMAGE_WARN_GIB  warn above this many GiB (default 3.8)
+  ASH_IMAGE_MAX_GIB   fail above this many GiB (default 4.2)
 
 Artifacts:
   --fetch <build-id> rsync $REMOTE_ARTIFACTS/<build-id> into out/<build-id>
@@ -78,6 +85,8 @@ while (( $# > 0 )); do
     --variant=*) VARIANT=${1#*=}; shift ;;
     --product) [[ $# -ge 2 ]] || die "--product needs a value"; PRODUCT=$2; shift 2 ;;
     --product=*) PRODUCT=${1#*=}; shift ;;
+    --fs) [[ $# -ge 2 ]] || die "--fs needs erofs or ext4"; FS=$2; shift 2 ;;
+    --fs=*) FS=${1#*=}; shift ;;
     --xz) DO_XZ=1; shift ;;
     --build-id) [[ $# -ge 2 ]] || die "--build-id needs a value"; BUILD_ID=$2; shift 2 ;;
     --build-id=*) BUILD_ID=${1#*=}; shift ;;
@@ -104,6 +113,17 @@ case $VARIANT in
 esac
 [[ -n $PRODUCT ]] || die "no product: pass --product or set GSI_PRODUCT"
 [[ -z $JOBS || $JOBS =~ ^[0-9]+$ ]] || die "--jobs must be a number (got '$JOBS')"
+case $FS in
+  erofs|ext4) ;;
+  *) die "unsupported --fs '$FS' (erofs|ext4)" ;;
+esac
+ASH_IMAGE_WARN_GIB=${ASH_IMAGE_WARN_GIB:-3.8}
+ASH_IMAGE_MAX_GIB=${ASH_IMAGE_MAX_GIB:-4.2}
+for v in ASH_IMAGE_WARN_GIB ASH_IMAGE_MAX_GIB; do
+  [[ ${!v} =~ ^[0-9]+([.][0-9]+)?$ ]] || die "$v must be a number in GiB (got '${!v}')"
+done
+awk -v w="$ASH_IMAGE_WARN_GIB" -v m="$ASH_IMAGE_MAX_GIB" 'BEGIN { exit !(w <= m) }' ||
+  die "ASH_IMAGE_WARN_GIB ($ASH_IMAGE_WARN_GIB) must be <= ASH_IMAGE_MAX_GIB ($ASH_IMAGE_MAX_GIB)"
 
 # --- helpers ----------------------------------------------------------------
 
@@ -210,10 +230,12 @@ AshFall GSI build plan
   build id      : $BUILD_ID
   product       : $PRODUCT
   variant       : $VARIANT
+  system fs     : $FS (ext4 fallback via --fs ext4)
   release       : ${LUNCH_RELEASE:-auto-detect (vendor/lineage/vars/aosp_target_release, then release configs)}
   jobs          : ${JOBS:-auto (nproc)}
   clean build   : $([[ $DO_CLEAN == 1 ]] && echo yes || echo no)
   xz            : $([[ $DO_XZ == 1 ]] && echo yes || echo no)
+  image budget  : warn > ${ASH_IMAGE_WARN_GIB} GiB, fail > ${ASH_IMAGE_MAX_GIB} GiB
   ashfall commit: $GIT_SHA$GIT_DIRTY ($GIT_BRANCH)
   ashfall ver   : $ASH_VERSION
   ws            : $WS
@@ -226,7 +248,7 @@ AshFall GSI build plan
 Steps inside the job (holding $TREE_LOCK):
   1. rsync overlay, patches.sh apply  (lock: $TREE_LOCK)
   2. source build/envsetup.sh; lunch $PRODUCT-<release>-$VARIANT
-  3. assert BOARD_SYSTEMIMAGE_FILE_SYSTEM_TYPE == ext4 (kernel 4.19)
+  3. assert BOARD_SYSTEMIMAGE_FILE_SYSTEM_TYPE == $FS
   4. m -j<jobs> systemimage
   5. sha256/build.prop/installed-files/system_image_info.txt -> artifacts
 EOF
@@ -280,6 +302,7 @@ export ASH_PRODUCT=$(printf %q "$PRODUCT")
 export ASH_VARIANT=$(printf %q "$VARIANT")
 export ASH_RELEASE=$(printf %q "$LUNCH_RELEASE")
 export ASH_JOBS=$(printf %q "$JOBS")
+export ASH_VERSION=$(printf %q "$ASH_VERSION")
 export ASH_VERSION_STR=$(printf %q "$ASH_VERSION")
 export ASH_GIT_COMMIT=$(printf %q "$GIT_SHA$GIT_DIRTY")
 export ASH_GIT_BRANCH=$(printf %q "$GIT_BRANCH")
@@ -290,6 +313,9 @@ export ASH_TREE_LOCK=$(printf %q "$TREE_LOCK")
 export ASH_CCACHE=$(printf %q "$REMOTE_CCACHE")
 export ASH_CCACHE_SIZE=$(printf %q "$CCACHE_SIZE")
 export ASH_CLEAN=$DO_CLEAN
+export ASH_SYSTEM_FS=$(printf %q "$FS")
+export ASH_IMAGE_WARN_GIB=$(printf %q "$ASH_IMAGE_WARN_GIB")
+export ASH_IMAGE_MAX_GIB=$(printf %q "$ASH_IMAGE_MAX_GIB")
 export ASH_XZ=$DO_XZ
 export ASH_OVERLAY_DELETE_DIRS=$(printf %q "$OVERLAY_DELETE_DIRS")
 export ASH_MIN_FREE_GB=$(printf %q "${ASH_MIN_FREE_GB:-60}")
@@ -307,11 +333,12 @@ trap 'rc=$?; printf "%s\n" "$rc" > "$ASH_STATUS"; printf "\n==> job finished rc=
 ts()   { date -u +%Y-%m-%dT%H:%M:%SZ; }
 step() { printf '\n===== [%s] %s =====\n' "$(ts)" "$*"; }
 info() { printf '[%s] %s\n' "$(ts)" "$*"; }
+warn() { printf '[%s] WARNING: %s\n' "$(ts)" "$*"; }
 die()  { printf '\nERROR: %s\n' "$*" >&2; exit 1; }
 
 BUILD_START=$(date +%s)
 step "AshFall GSI build $ASH_BUILD_ID"
-info "product=$ASH_PRODUCT variant=$ASH_VARIANT release=${ASH_RELEASE:-auto} jobs=${ASH_JOBS:-auto}"
+info "product=$ASH_PRODUCT variant=$ASH_VARIANT release=${ASH_RELEASE:-auto} jobs=${ASH_JOBS:-auto} fs=$ASH_SYSTEM_FS"
 info "ashfall=$ASH_GIT_COMMIT ($ASH_GIT_BRANCH) version=$ASH_VERSION_STR"
 info "tree=$ASH_TREE ws=$ASH_WS"
 info "host=$(uname -a)"
@@ -340,6 +367,7 @@ if ! flock -n 9; then
   flock 9
 fi
 info "lock held: $ASH_TREE_LOCK"
+export ASH_TREE_LOCK_HELD=1
 LOCK_ACQUIRED=$(ts)
 info "lock acquired at $LOCK_ACQUIRED"
 
@@ -408,28 +436,46 @@ detect_release() {
   return 0
 }
 
+# lineage-24.0's lunch() only accepts <product>-<release>-<variant>: the legacy
+# two-part form is rejected with "Invalid lunch combo" before any release
+# defaulting, so every attempt below names a release explicitly (issue #13).
 LUNCH_OK=0
+candidates=()
 if [[ -n $ASH_RELEASE ]]; then
-  if try_lunch "$ASH_PRODUCT" "$ASH_RELEASE" "$ASH_VARIANT"; then LUNCH_OK=1; RELEASE_USED=$ASH_RELEASE; fi
+  candidates+=("$ASH_RELEASE")
+  info "release from config: $ASH_RELEASE"
 else
   detected=$(detect_release || true)
-  candidate=${detected%%$'\t'*}
-  source_of=${detected#*$'\t'}
-  if [[ -n $candidate ]] && try_lunch "$ASH_PRODUCT" "$candidate" "$ASH_VARIANT"; then
-    LUNCH_OK=1; RELEASE_USED=$candidate
-    info "auto-detected release config: $candidate (from $source_of)"
+  if [[ -n $detected ]]; then
+    candidates+=("${detected%%$'\t'*}")
+    info "auto-detected release config: ${detected%%$'\t'*} (from ${detected#*$'\t'})"
   fi
 fi
+# AOSP always ships trunk_staging; it is the safest last resort even though
+# LineageOS itself builds with its own release config.
+candidates+=("trunk_staging")
 
-if (( ! LUNCH_OK )); then
-  # Last resort: two-part lunch (A17 defaults TARGET_RELEASE to trunk_staging),
-  # then read back the release it picked.
-  info "falling back to 'lunch $ASH_PRODUCT-$ASH_VARIANT'"
-  lunch "$ASH_PRODUCT-$ASH_VARIANT" >/dev/null 2>&1 || die "lunch failed for product '$ASH_PRODUCT'"
-  RELEASE_USED=$(get_var TARGET_RELEASE)
-  [[ $(get_var TARGET_PRODUCT) == "$ASH_PRODUCT" ]] || die "lunch selected the wrong product"
-  info "lunch defaulted to release '$RELEASE_USED'"
-fi
+ordered=()
+declare -A _seen=()
+for c in "${candidates[@]}"; do
+  [[ -n $c ]] || continue
+  [[ -n ${_seen[$c]:-} ]] && continue
+  _seen[$c]=1
+  ordered+=("$c")
+done
+
+for c in "${ordered[@]}"; do
+  if try_lunch "$ASH_PRODUCT" "$c" "$ASH_VARIANT"; then
+    LUNCH_OK=1
+    RELEASE_USED=$c
+    [[ $c == "${ordered[0]}" ]] || info "release fallback: $c"
+    break
+  fi
+  info "release '$c' rejected by the tree; trying the next candidate"
+done
+(( LUNCH_OK )) || \
+  die "cannot lunch $ASH_PRODUCT-<release>-$ASH_VARIANT: no usable release config (tried: ${ordered[*]}); set LUNCH_RELEASE in config/ashfall.conf"
+
 
 TARGET_DEVICE_USED=$(get_var TARGET_DEVICE)
 TARGET_ARCH_USED=$(get_var TARGET_ARCH)
@@ -443,10 +489,13 @@ info "USE_SOONG_DEFINED_SYSTEM_IMAGE=${SOONG_SYSIMG:-<unset>}"
 info "BOARD_SYSTEMIMAGE_FILE_SYSTEM_TYPE=${SYSTEM_FS:-<unset>}"
 [[ -n $PRODUCT_OUT ]] || die "PRODUCT_OUT is empty - lunch did not complete"
 
-# Kernel 4.19 on the RP5 has no EROFS support. Fail early instead of shipping
-# an image the device cannot mount.
-[[ $SYSTEM_FS == ext4 ]] || die "system image filesystem is '${SYSTEM_FS:-unset}', expected ext4 (kernel 4.19 has no EROFS)"
-info "ext4 system image confirmed by the build system"
+# The image must be the filesystem we asked for: the product mk maps
+# ASH_SYSTEM_FS to GSI_FILE_SYSTEM_TYPE, and BoardConfigGsiCommon.mk turns that
+# into BOARD_SYSTEMIMAGE_FILE_SYSTEM_TYPE. A silent fallback to the tree default
+# (ext4) would be a broken build for a `--fs erofs` run, so fail early.
+[[ $SYSTEM_FS == "$ASH_SYSTEM_FS" ]] || \
+  die "system image filesystem is '${SYSTEM_FS:-unset}', expected '$ASH_SYSTEM_FS' (set via --fs / ASH_SYSTEM_FS)"
+info "'$ASH_SYSTEM_FS' system image confirmed by the build system"
 
 # --- ccache ---------------------------------------------------------------
 step "ccache"
@@ -518,11 +567,51 @@ do
   cp -f "$f" "$ASH_ARTIFACT_DIR/$(basename "$f")"
 done
 
-# Independent proof of the filesystem, not just the make variable.
+# Independent proof of the filesystem, not just the make variable: read the
+# superblock magic (ext4: 0xEF53 at +1080, EROFS: 0xE0F5E1E2 at +1024). This
+# does not depend on file(1)'s magic database.
+image_fs() {
+  python3 - "$1" <<'IMGFS'
+import sys
+
+path = sys.argv[1]
+try:
+    with open(path, "rb") as f:
+        f.seek(1024)
+        sb = f.read(64)
+except OSError:
+    print("unreadable")
+    sys.exit(0)
+
+if sb[:4] in (b"\xe2\xe1\xf5\xe0", b"\xe0\xf5\xe1\xe2"):
+    print("erofs")
+elif len(sb) >= 58 and sb[56:58] == b"\x53\xef":
+    print("ext4")
+else:
+    print("unknown")
+IMGFS
+}
+
+IMG_SIZE=$(stat -c %s "$ASH_ARTIFACT_DIR/system.img")
+IMG_GIB=$(awk -v b="$IMG_SIZE" 'BEGIN { printf "%.2f", b / 1073741824 }')
+IMG_FS=$(image_fs "$ASH_ARTIFACT_DIR/system.img")
 IMG_TYPE=$(file -b "$ASH_ARTIFACT_DIR/system.img" 2>/dev/null || echo 'file(1) unavailable')
-info "system.img type: $IMG_TYPE"
-echo "$IMG_TYPE" | grep -qi 'ext[234] filesystem' ||
-  die "system.img is not an ext filesystem ($IMG_TYPE) - kernel 4.19 would not mount it"
+info "system.img: $IMG_FS, ${IMG_GIB} GiB ($IMG_SIZE bytes)"
+info "file(1): $IMG_TYPE"
+[[ $IMG_FS == "$ASH_SYSTEM_FS" ]] ||
+  die "system.img is '$IMG_FS', expected '$ASH_SYSTEM_FS' (wrong GSI_FILE_SYSTEM_TYPE?)"
+
+# Size budget: the stock super group is 6.0 GiB and a GSI replaces system_a,
+# leaving ~4.2 GiB for system.img (docs/stock-analysis.md, docs/PLAN.md).
+IMAGE_SIZE_CHECK=ok
+if awk -v g="$IMG_GIB" -v m="$ASH_IMAGE_MAX_GIB" 'BEGIN { exit !(g > m) }'; then
+  die "system.img is ${IMG_GIB} GiB, over the ${ASH_IMAGE_MAX_GIB} GiB budget (super has ~4.2 GiB for system); shrink the build or raise ASH_IMAGE_MAX_GIB deliberately"
+elif awk -v g="$IMG_GIB" -v w="$ASH_IMAGE_WARN_GIB" 'BEGIN { exit !(g > w) }'; then
+  IMAGE_SIZE_CHECK=warning
+  warn "system.img is ${IMG_GIB} GiB, above the ${ASH_IMAGE_WARN_GIB} GiB comfort limit (hard limit ${ASH_IMAGE_MAX_GIB} GiB)"
+else
+  info "system.img fits the size budget (${IMG_GIB} GiB <= ${ASH_IMAGE_WARN_GIB} GiB)"
+fi
 
 if [[ $ASH_XZ == 1 ]]; then
   step "xz system.img"
@@ -539,6 +628,8 @@ BUILD_END=$(date +%s)
   echo "target_device=$TARGET_DEVICE_USED"
   echo "target_arch=$TARGET_ARCH_USED"
   echo "system_filesystem=$SYSTEM_FS"
+  echo "system_filesystem_requested=$ASH_SYSTEM_FS"
+  echo "system_filesystem_detected=$IMG_FS"
   echo "use_soong_defined_system_image=${SOONG_SYSIMG:-}"
   echo "ashfall_commit=$ASH_GIT_COMMIT"
   echo "ashfall_branch=$ASH_GIT_BRANCH"
@@ -552,7 +643,11 @@ BUILD_END=$(date +%s)
   echo "finished_utc=$(date -u -d "@$BUILD_END" +%Y-%m-%dT%H:%M:%SZ)"
   echo "wall_time_s=$((BUILD_END - BUILD_START))"
   echo "build_time_s=$((BUILD_FINISHED - BUILD_STARTED))"
-  echo "system_img_bytes=$(stat -c %s "$ASH_ARTIFACT_DIR/system.img")"
+  echo "system_img_bytes=$IMG_SIZE"
+  echo "system_img_gib=$IMG_GIB"
+  echo "image_budget_warn_gib=$ASH_IMAGE_WARN_GIB"
+  echo "image_budget_max_gib=$ASH_IMAGE_MAX_GIB"
+  echo "image_size_check=$IMAGE_SIZE_CHECK"
   echo "system_img_sha256=$(cut -d' ' -f1 "$ASH_ARTIFACT_DIR/system.img.sha256")"
   echo "system_img_type=$IMG_TYPE"
 } > "$ASH_ARTIFACT_DIR/build-info.txt"

@@ -14,7 +14,8 @@
 # limitations under the License.
 #
 
-# AshFall GSI for the Retroid Pocket 5 (SM8250 "kona", kernel 4.19).
+# AshFall GSI for the Retroid Pocket 5 (SM8250 "kona", stock kernel 5.15 GKI).
+# See docs/stock-analysis.md: the STOCK kernel is 5.15.148 with EROFS support.
 #
 # Inherits LineageOS' vanilla arm64 GSI:
 #   vendor/lineage/build/target/product/lineage_gsi_arm64.mk   (lineage-24.0)
@@ -34,13 +35,19 @@ PRODUCT_MODEL := AshFall GSI arm64
 PRODUCT_MANUFACTURER := AshFall
 
 # --- filesystem -------------------------------------------------------------
-# The RP5 ships a 4.19 kernel, which has no EROFS support, so the system image
-# MUST be ext4. GSI builds read this knob in
+# EROFS by default (compressed, and the stock RP5 kernel is 5.15 GKI with EROFS
+# support). The stock super group leaves ~4.2 GiB for system.img, so the
+# compressed image matters. ext4 stays available as a fallback for kernels
+# without EROFS (`scripts/build.sh --fs ext4`).
+#
+# GSI builds read this knob in
 # build/make/target/board/BoardConfigGsiCommon.mk:
-#     GSI_FILE_SYSTEM_TYPE ?= ext4
+#     GSI_FILE_SYSTEM_TYPE ?= ext4          # AOSP/LineageOS default: ext4
 #     BOARD_SYSTEMIMAGE_FILE_SYSTEM_TYPE := $(GSI_FILE_SYSTEM_TYPE)
 # Product makefiles are parsed before board configs (core/envsetup.mk:
-# product_config.mk before board_config.mk), so pinning it here is effective.
-# scripts/build.sh asserts `get_build_var BOARD_SYSTEMIMAGE_FILE_SYSTEM_TYPE`
-# == ext4 after lunch and aborts the build otherwise.
-GSI_FILE_SYSTEM_TYPE := ext4
+# product_config.mk before board_config.mk), so setting it here is effective.
+# scripts/build.sh exports ASH_SYSTEM_FS (default erofs) before lunch and
+# asserts that BOARD_SYSTEMIMAGE_FILE_SYSTEM_TYPE matches it, then verifies the
+# finished image by its superblock magic.
+ASHFALL_SYSTEM_FS ?= $(if $(filter ext4 erofs,$(strip $(ASH_SYSTEM_FS))),$(strip $(ASH_SYSTEM_FS)),erofs)
+GSI_FILE_SYSTEM_TYPE := $(ASHFALL_SYSTEM_FS)

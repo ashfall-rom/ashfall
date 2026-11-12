@@ -41,6 +41,9 @@ scripts/build.sh --fetch <build-id> --wait
 # full rebuild (wipes <tree>/out), custom parallelism
 scripts/build.sh --clean --jobs 16
 
+# ext4 fallback instead of the default EROFS system image
+scripts/build.sh --fs ext4
+
 # see exactly what would happen, without touching the host
 scripts/build.sh --dry-run
 ```
@@ -70,7 +73,8 @@ uncommitted changes).
       patched project to its manifest revision before applying;
    3. `source build/envsetup.sh` and lunches
       `<product>-<release>-<variant>` (auto-detected, see below);
-   4. asserts `BOARD_SYSTEMIMAGE_FILE_SYSTEM_TYPE == ext4`;
+   4. asserts `BOARD_SYSTEMIMAGE_FILE_SYSTEM_TYPE` equals the requested
+      `--fs` (default `erofs`, fallback `ext4`);
    5. enables ccache (`$REMOTE_CCACHE`, `CCACHE_SIZE`) and runs
       `m -j<jobs> systemimage`, then tries `m vbmetaimage` (optional, absent for
       a GSI);
@@ -111,32 +115,82 @@ which build flag values apply. On LineageOS 24.0:
 2. `vendor/lineage/vars/aosp_target_release`;
 3. the newest name in `vendor/lineage/release/release_configs/*.textproto`,
    else in `build/release/release_configs/*.textproto`;
-4. last resort: two-part `lunch <product>-<variant>` and read `TARGET_RELEASE`
-   back (`build.sh` logs a warning in this case).
+4. `trunk_staging` (AOSP's default release, always present in `build/release`).
 
-Each attempt is verified with `get_build_var TARGET_PRODUCT` and
-`get_build_var TARGET_RELEASE`; a lunch that silently selects another product or
-release is rejected.
+Each candidate is tried as the full `<product>-<release>-<variant>` form and
+verified by reading `TARGET_PRODUCT`/`TARGET_RELEASE` back. The legacy two-part
+`lunch <product>-<variant>` is **not** used: `lineage-24.0`'s `envsetup.sh`
+rejects it with `Invalid lunch combo` (it would parse as
+`product-release` with an empty variant), so a fallback that relied on it could
+never work. If every candidate is rejected the build dies and asks for
+`LUNCH_RELEASE` in `config/ashfall.conf`.
 
-### Why the system image must be ext4
+An attempt that silently selects another product or release is rejected by the
+same read-back check.
 
-The Retroid Pocket 5 ships a 4.19 kernel, which cannot mount EROFS. On
-lineage-24.0, `build/make/target/board/BoardConfigGsiCommon.mk` does:
+### Filesystem: EROFS by default, ext4 as fallback
+
+AshFall's GSI is **EROFS**. The stock Retroid Pocket 5 kernel is a 5.15.148 GKI
+kernel with EROFS support (`docs/stock-analysis.md`), and the stock super group
+`qti_dynamic_partitions_a` (6.0 GiB) leaves only ~4.2 GiB for a `system.img`
+that replaces `system_a`, so the compressed image is what we want. (The 4.19
+kernel and `ro.bpf.kver_override` quoted in older notes belong to the community
+device build, not to the GSI on stock vendor.)
+
+Verified against lineage-24.0 / AOSP `android-17.0.0_r1`:
+`build/make/target/board/BoardConfigGsiCommon.mk` reads
 
 ```make
-GSI_FILE_SYSTEM_TYPE ?= ext4
+# system.img is ext4/erofs and non-sparsed.
+GSI_FILE_SYSTEM_TYPE ?= ext4          # tree default is ext4, not EROFS
 BOARD_SYSTEMIMAGE_FILE_SYSTEM_TYPE := $(GSI_FILE_SYSTEM_TYPE)
+TARGET_USERIMAGES_SPARSE_EXT_DISABLED := true
+TARGET_USERIMAGES_SPARSE_EROFS_DISABLED := true
 ```
 
-`lineage_generic_target.mk` also sets `USE_SOONG_DEFINED_SYSTEM_IMAGE := false`,
-so the make-based image path (which uses `BOARD_SYSTEMIMAGE_FILE_SYSTEM_TYPE`),
-not the Soong `android_gsi` image path, produces `system.img`.
+So the *tree* default is ext4; AshFall makes EROFS explicit instead of relying
+on it. `lineage_generic_target.mk` sets
+`USE_SOONG_DEFINED_SYSTEM_IMAGE := false`, so the make-based image path (which
+uses `BOARD_SYSTEMIMAGE_FILE_SYSTEM_TYPE`), not the Soong `android_gsi` image
+path, produces `system.img`.
 
-`aosp/vendor/ashfall/products/ashfall_gsi_arm64.mk` pins
-`GSI_FILE_SYSTEM_TYPE := ext4` (product config is parsed before board config in
-`core/envsetup.mk`, so the pin is effective) and `build.sh` fails the build if
-the resolved value is anything else. After the build it additionally checks
-`file system.img` and refuses to collect an image that is not an ext filesystem.
+The product (`aosp/vendor/ashfall/products/ashfall_gsi_arm64.mk`) does:
+
+```make
+ASHFALL_SYSTEM_FS ?= $(if $(filter ext4 erofs,$(strip $(ASH_SYSTEM_FS))),$(strip $(ASH_SYSTEM_FS)),erofs)
+GSI_FILE_SYSTEM_TYPE := $(ASHFALL_SYSTEM_FS)
+```
+
+Product config is parsed before board config (`core/envsetup.mk`:
+`product_config.mk` before `board_config.mk`), so the value is effective.
+`scripts/build.sh --fs erofs|ext4` (default `erofs`) exports `ASH_SYSTEM_FS`;
+a manual lunch without it gets EROFS.
+
+Four independent checks guard the result:
+
+1. after lunch, `get_build_var BOARD_SYSTEMIMAGE_FILE_SYSTEM_TYPE` must equal
+   the requested filesystem;
+2. after the build, the image's **superblock magic** is read directly
+   (EROFS `0xE0F5E1E2` at offset 1024, ext4 `0xEF53` at offset 1080 - no
+   dependence on `file(1)`'s magic database) and must match;
+3. the size budget below;
+4. `build-info.txt` records `system_filesystem_requested`,
+   `system_filesystem_detected`, `system_img_gib` and `image_size_check`.
+
+### system.img size budget
+
+`super` is 6.0 GiB and the GSI replaces `system_a`; deleting the stock
+`product_a`/`system_ext_a` (a GSI bundles both) leaves ~4.2 GiB for
+`system.img`. `build.sh` therefore:
+
+- **warns** above `ASH_IMAGE_WARN_GIB` (default 3.8 GiB),
+- **fails** above `ASH_IMAGE_MAX_GIB` (default 4.2 GiB) after collecting the
+  image, so an oversized build is never reported as success,
+- always records the size (`system_img_bytes`, `system_img_gib`) in
+  `build-info.txt`.
+
+Both limits are GiB (decimal values allowed) and must satisfy
+`ASH_IMAGE_WARN_GIB <= ASH_IMAGE_MAX_GIB`.
 
 ## The product: `aosp/vendor/ashfall`
 
@@ -147,7 +201,7 @@ repo so it is reviewable).
 |---|---|
 | `AndroidProducts.mk` | registers `products/ashfall_gsi_arm64.mk` and lunch choices |
 | `ashfall_common.mk` | props/packages/overlays shared with the future device build |
-| `products/ashfall_gsi_arm64.mk` | the GSI: inherits `lineage_gsi_arm64`, ext4, branding |
+| `products/ashfall_gsi_arm64.mk` | the GSI: inherits `lineage_gsi_arm64`, EROFS, branding |
 | `overlay/` | static overlay placeholder (phase 4) |
 | `sepolicy/` | device sepolicy placeholder (phase 4) |
 
@@ -164,9 +218,12 @@ ro.ashfall.version   <- ASH_VERSION from config/ashfall.conf
 ro.ashfall.build.id  <- build id of the image
 ```
 
-`build.sh` exports `ASH_VERSION` and `ASH_BUILD_ID` into the build environment,
-and make imports environment variables, so the props need no generated file. A
-manual `lunch` + `m` without those exports falls back to `0.1.0-dev` / `local`.
+`build.sh` exports `ASH_VERSION` and `ASH_BUILD_ID` into the generated job
+environment (the same names the product reads) and make imports environment
+variables, so the props need no generated file. A manual `lunch` + `m` without
+those exports falls back to `0.1.0-dev` / `local`. `build-info.txt` records
+`ashfall_version=` from the same variable, so it always agrees with
+`getprop ro.ashfall.version` in the image.
 
 To extend the product:
 
@@ -209,6 +266,18 @@ Rules:
   files; otherwise the run fails with `PATCH SERIES INCOMPLETE` (a silently
   skipped, empty or already-applied patch would otherwise produce a tree that
   does not match `patches/`).
+- **Shared tree lock**: `apply`/`reset` check whether `--tree` resolves to
+  `$REMOTE_SRC`; if it does they take a blocking `flock` on `$REMOTE_TREE_LOCK`
+  (`status` is read-only and never locks, scratch trees are never locked). The
+  build job already holds that lock, so `build.sh` exports
+  `ASH_TREE_LOCK_HELD=1` and `patches.sh` skips the nested lock (a nested flock
+  on the same file from another process would deadlock). `--no-lock` bypasses
+  the check for scratch trees or when you hold the lock yourself; never use it
+  on the shared tree.
+- **Subjects**: `status` derives each patch's commit subject with
+  `git mailinfo` (the same machinery `git am` uses), so RFC 2822 folded
+  subjects are unfolded exactly like the commit git am creates. A first-line-only
+  read would report long subjects as missing even when the patch is applied.
 - **Conflicts** exit non-zero and print `PATCH CONFLICT` with the project, the
   patch list, the conflicting files and the tail of `git am`'s output. By
   default the project is restored to the baseline (`--keep-conflicts` leaves the
@@ -222,7 +291,7 @@ Rules:
 $ scripts/patches.sh status --tree /path/to/tree
 frameworks/base      2/2 applied  base 1a2b3c4d5e6f  head 9f8e7d6c5b4a
 system/core          1/2 applied  base 001122334455  head 66778899aabb
-    missing: netd: relax BPF version check for 4.19 kernels
+    missing: vendor.qti: fix gatekeeper HAL for stock kona vendor
 ```
 
 ## Artifacts
@@ -231,14 +300,14 @@ system/core          1/2 applied  base 001122334455  head 66778899aabb
 
 | File | Content |
 |---|---|
-| `system.img` | the GSI (raw ext4, non-sparse) |
+| `system.img` | the GSI (raw EROFS, non-sparse; ext4 with `--fs ext4`) |
 | `system.img.sha256` | `sha256sum` of the image |
 | `system.img.xz` | optional, with `--xz` |
 | `build.prop` | `/system/build.prop` of the image |
 | `installed-files.txt`, `installed-files.json` | installed file lists |
 | `system_image_info.txt`, `file_list.txt` | image packing metadata |
 | `vbmeta.img` | only if the target produces one |
-| `build-info.txt` | product, variant, release, device, fs type, commit, timings, image size/sha256/type, ccache stats, host info |
+| `build-info.txt` | product, variant, release, device, filesystem requested/detected, image size (bytes + GiB) and budget verdict, commit, timings, sha256, ccache stats, host info |
 | `build.log` | copy of `$REMOTE_LOGS/<build-id>/build.log` |
 
 `build-info.txt` is the machine-readable answer to "what exactly is this
@@ -275,6 +344,10 @@ artifacts, and a local tree lock under `out/`.
 | `CCACHE_SIZE`, `REMOTE_CCACHE` (config) | ccache max size and directory |
 | `ASH_MIN_FREE_GB` | minimum free space on the tree filesystem (default 60) |
 | `ASH_ALLOW_UNSYNCED=1` | allow a build while `repo sync` is running (normally refused) |
+| `ASH_IMAGE_WARN_GIB` | warn above this `system.img` size (default 3.8) |
+| `ASH_IMAGE_MAX_GIB` | fail above this `system.img` size (default 4.2) |
+| `ASH_SYSTEM_FS` | `erofs`/`ext4`; normally set by `--fs`, read by the product mk |
+| `ASH_TREE_LOCK_HELD=1` | tell `patches.sh` the caller already holds `$REMOTE_TREE_LOCK` (set by `build.sh`) |
 | `ASH_VERSION` (config) | `ro.ashfall.version` in the image |
 
 ## Troubleshooting
@@ -286,9 +359,13 @@ artifacts, and a local tree lock under `out/`.
 | `is not usable yet: ... lineage_gsi_arm64.mk is missing` | only some projects are checked out (sync still running) |
 | `distrobox container 'ashfall-build' not found` | issue #1 has not created the container |
 | `the shared tree lock is held ... will queue` | another build is running; the job waits |
-| `system image filesystem is 'erofs', expected ext4` | the product/board config changed; do not build, kernel 4.19 cannot mount EROFS |
+| `system image filesystem is 'X', expected 'Y'` | the tree did not honour `--fs`; check the product overlay and `GSI_FILE_SYSTEM_TYPE` |
+| `system.img is 'unknown', expected 'erofs'` | the image is sparse or truncated, or the wrong target was built |
+| `system.img is N GiB, over the 4.2 GiB budget` | the image does not fit the stock super group; shrink the build or raise `ASH_IMAGE_MAX_GIB` deliberately |
 | `PATCH CONFLICT` | a patch in `patches/` (issue #5) no longer applies; see the report |
 | `PATCH SERIES INCOMPLETE` | a patch is empty, already applied, or an mbox with several commits |
-| `lunch failed for product` | product makefile missing from the tree (overlay failed) or release detection picked a release the tree rejects; set `LUNCH_RELEASE` |
+| `cannot lunch ... no usable release config` | the tree rejected every candidate release (and `trunk_staging`); set `LUNCH_RELEASE` in `config/ashfall.conf` |
+| `lunch failed for product` | the product makefile is missing from the tree (overlay failed) |
+| `shared tree lock is busy ... waiting` | a sync or build holds the lock; `patches.sh` waits for it (that is correct, do not kill it) |
 | `not enough free space` | free space where `$REMOTE_SRC` lives (needs ~200 GiB for the tree and build out); override `ASH_MIN_FREE_GB` only if you know better |
 | build job "started" but no log | `ssh $HOST 'distrobox enter ashfall-build -- tmux ls'`; the status file appears even on early failures |
