@@ -149,10 +149,11 @@ Sequence:
 2. **Reach fastbootd** -- from Android/recovery `adb reboot bootloader`, then
    `fastboot reboot fastboot`; from the bootloader, the latter directly. Waits
    up to 3 minutes for `is-userspace: yes`.
-3. **Space** -- compares the image size with `system_<slot>`. Only when the
-   image does not fit, `delete-logical-partition product_<slot>` frees the
-   vendor product partition (restored by `restore-stock.sh`). `--keep-product`
-   forbids that and fails instead.
+3. **Space** -- fastbootd resizes `system_<slot>` itself; the script only
+   frees `product_<slot>` when the flash actually fails for lack of space in
+   `super`, then retries once (never pre-emptively -- that would be a
+   destructive edit). `--keep-product` forbids that and fails instead;
+   `restore-stock.sh` brings the stock super back.
 4. **Flash `system`** -- `fastboot --slot <slot> flash system <img>` (fastbootd
    resizes the logical partition; fastboot sparse-splits large images using
    `max-download-size`).
@@ -255,7 +256,7 @@ Flashing a broken GSI back to stock, per guide
 
 ```bash
 scripts/device/restore-stock.sh --dry-run                       # plan + size checks
-scripts/device/restore-stock.sh --images "$REMOTE_FIRMWARE/img" --wipe --yes
+scripts/device/restore-stock.sh --images /var/home/epickitrolaz/ashfall/firmware/img --wipe --yes
 ```
 
 What it flashes (both slots by default): `boot`, `init_boot`, `vendor_boot`,

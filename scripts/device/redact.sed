@@ -22,3 +22,7 @@ s/^([[:space:]]*)[[:alnum:]_.:-]{6,}([[:space:]]+(device|recovery|sideload|unaut
 s/^([[:space:]]*)[[:alnum:]_.:-]{6,}([[:space:]]+(device|recovery|sideload|unauthorized|offline)[[:space:]]+.*(product:|transport_id:|usb:).*)$/\1<redacted>\2/
 # 7. `fastboot devices` serial column: "<serial>  fastboot"
 s/^([[:space:]]*)[[:alnum:]_.:-]{6,}([[:space:]]+(fastboot|unknown|sideload)[[:space:]]*(usb:.*)?)$/\1<redacted>\2/
+# 8. key=value serials from /proc/cmdline, dmesg, power_supply uevents
+s/((androidboot[._a-z0-9]*serial(no)?)|([a-z0-9_]*serial_number)|serialno|serial)=[^[:space:]]+/\1=<redacted>/Ig
+# 9. free-form serial labels
+s/(Serial Number|SerialNo|Serial number)([[:space:]]*[:=][[:space:]]*)[^[:space:]]+/\1\2<redacted>/Ig

@@ -52,7 +52,7 @@ capf() {
   } >"$f"
 }
 
-state=$(timeout 25 adb devices 2>/dev/null | awk 'NR>1 && NF {print $2; exit}')
+state=$(timeout 25 adb devices 2>/dev/null | awk 'NR>1 && NF {print $2; exit}' || true)
 
 {
   printf 'ashfall log collection\n'

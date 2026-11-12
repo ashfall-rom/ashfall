@@ -59,6 +59,10 @@ done
 
 [[ -n $OUT ]] || OUT="$LOCAL_ARTIFACTS/device/$TS-logs"
 
+if ((REDACT)) && ((BUGREPORT)); then
+  die "--redact cannot scrub the bugreport zip (it stays unredacted); drop --bugreport or share the zip knowingly"
+fi
+
 ((ENSURE)) && dev_ensure
 
 mode=$(dev_mode)

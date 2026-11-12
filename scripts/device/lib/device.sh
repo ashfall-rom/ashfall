@@ -35,9 +35,14 @@ dev_sh() {
   host_sh "timeout 1800 distrobox enter --name $(_dq "$DEV_BOX") --no-tty -- bash -lc $inner"
 }
 
+# host_sh_tty: like host_sh but allocates a remote TTY (for interactive shells).
+host_sh_tty() {
+  ssh -tt "${ASH_SSH_OPTS[@]}" "$BUILD_HOST" "bash -lc $(printf %q "$*")"
+}
+
 dev_interactive_sh() {
   local inner; inner=$(_dq "$1")
-  host_sh "distrobox enter --name $(_dq "$DEV_BOX") -- bash -lc $inner"
+  host_sh_tty "distrobox enter --name $(_dq "$DEV_BOX") -- bash -lc $inner"
 }
 
 dev_exists() {
@@ -186,9 +191,11 @@ dev_fb_getvar() {
   return 1
 }
 
-# dev_fb_value <var>: value of a single getvar (empty when unavailable)
+# dev_fb_value <var>: value of a single getvar (empty when unavailable).
+# Never fails: callers run under `set -e`/`pipefail` and a flaky bootloader
+# must degrade to "unknown", not kill the script.
 dev_fb_value() {
-  dev_fb_getvar "$1" 2>/dev/null | fb_parse "$1"
+  dev_fb_getvar "$1" 2>/dev/null | fb_parse "$1" || true
 }
 
 # dev_adb <args...>: adb against $DEV_SERIAL

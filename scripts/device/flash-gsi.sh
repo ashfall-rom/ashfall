@@ -58,6 +58,7 @@ WIPE=0
 DRY_RUN=0
 ASSUME_YES=0
 KEEP_PRODUCT=0
+SLOT_GIVEN=0
 SERIAL=""
 VBMETA=""
 NO_DEVICE=0
@@ -68,7 +69,7 @@ die_usage() { printf 'err %s\n' "$*" >&2; printf 'try --help\n' >&2; exit 2; }
 
 while (($#)); do
   case $1 in
-    --slot) SLOT=${2:?--slot needs a|b}; shift 2 ;;
+    --slot) SLOT=${2:?--slot needs a|b}; SLOT_GIVEN=1; shift 2 ;;
     --wipe|-w) WIPE=1; shift ;;
     --vbmeta) VBMETA=${2:?--vbmeta needs a path}; shift 2 ;;
     --keep-product) KEEP_PRODUCT=1; shift ;;
@@ -135,7 +136,14 @@ resolve_image() {
 resolve_vbmeta() {
   local slot=$1 cand
   if [[ -n $VBMETA ]]; then
-    printf '%s' "$VBMETA"; return 0
+    if host_file_exists "$VBMETA"; then
+      printf '%s' "$VBMETA"
+    elif [[ -f $VBMETA ]]; then
+      printf '%s' "$(upload_to_host "$VBMETA")"
+    else
+      die "--vbmeta: not found locally or on $BUILD_HOST: $VBMETA"
+    fi
+    return 0
   fi
   for cand in "$REMOTE_FIRMWARE/vbmeta.img" \
               "$REMOTE_FIRMWARE/lun4_vbmeta_${slot}.bin" \
@@ -232,13 +240,13 @@ print_plan() {
   printf 'vbmeta:        %s\n' "$vb_desc"
   printf '\nsteps:\n'
   printf '  1. switch to fastbootd (userspace fastboot) if needed\n'
-  printf '  2. re-check free space in super; delete product_%s only if the image\n' "$SLOT"
-  printf '     does not fit (frees vendor apps; restored by restore-stock.sh)\n'
+  printf '  2. flash system_%s; free product_%s only if super is full (frees\n' "$SLOT" "$SLOT"
+  printf '     vendor apps; restored by restore-stock.sh)\n'
   printf '  3. fastboot flash system %s\n' "$img"
   if [[ $VB_FLAGS == 1 ]]; then
-    printf '  4. fastboot --disable-verity --disable-verification flash vbmeta %s\n' "$vb"
+    printf '  4. fastboot --disable-verity --disable-verification --slot %s flash vbmeta %s\n' "$SLOT" "$vb"
   else
-    printf '  4. fastboot flash vbmeta %s (already flags=3)\n' "$vb"
+    printf '  4. fastboot --slot %s flash vbmeta %s (already flags=3)\n' "$SLOT" "$vb"
   fi
   if ((WIPE)); then
     printf '  5. fastboot erase userdata  (slow, ~6 min)\n'
@@ -292,6 +300,16 @@ if [[ -n $UNLOCKED ]]; then
     yes|0|unlocked) ok "bootloader unlocked: $UNLOCKED" ;;
     *) die "refusing to flash: bootloader reports locked ($UNLOCKED)" ;;
   esac
+fi
+
+# A flaky getvar must never let a write through unverified: these values are
+# required for a real flash, even though dry-run/offline plans tolerate them.
+if ((!DRY_RUN)) && ((NO_DEVICE == 0)); then
+  [[ -n $PRODUCT ]] || die "cannot read 'product' from the device (flaky fastboot?); refusing to flash"
+  [[ -n $UNLOCKED ]] || die "cannot read 'unlocked' from the device (flaky fastboot?); refusing to flash"
+  if ((SLOT_GIVEN == 0)); then
+    [[ -n $CUR_SLOT ]] || die "cannot read 'current-slot'; pass --slot a|b explicitly"
+  fi
 fi
 
 # vbmeta resolution
@@ -350,44 +368,28 @@ ensure_fastbootd
 DEV_SERIAL=$(dev_resolve_serial "$SERIAL")
 log "fastbootd device: $DEV_SERIAL"
 
-# --- 2. space check + optional product deletion ------------------------------
+# --- 2. space check (advisory) ----------------------------------------------
+# fastbootd resizes the logical partition itself, so "image > system_<slot>" is
+# not a reason to touch anything yet. The real constraint is free space in
+# super; only a failed flash proves there is not enough, and only then is
+# product_<slot> deleted (never pre-emptively: that is a destructive edit).
 sys_size=$(dev_fb_value "partition-size:system_$SLOT")
 prod_size=$(dev_fb_value "partition-size:product_$SLOT")
 super_size=$(dev_fb_value "partition-size:super")
 log "size system_$SLOT=${sys_size:-unknown} product_$SLOT=${prod_size:-unknown} super=${super_size:-unknown}"
 
-need=0
-if [[ $sys_size =~ ^0x[0-9a-fA-F]+$ ]]; then
-  sys_bytes=$((sys_size))
-  ((IMG_SIZE > sys_bytes)) && need=$((IMG_SIZE - sys_bytes))
+if [[ $sys_size =~ ^0x[0-9a-fA-F]+$ ]] && ((IMG_SIZE > sys_size)); then
+  log "image is $(human "$IMG_SIZE"), current system_$SLOT is $(human "$((sys_size))"); fastbootd will resize it"
+  prod_hint=${prod_size:-unknown}
+  log "if super is full the flash fails, product_$SLOT ($prod_hint) is freed once and the flash retried"
 fi
 if [[ $super_size =~ ^0x[0-9a-fA-F]+$ ]] && ((IMG_SIZE > super_size)); then
   die "image ($(human "$IMG_SIZE")) is larger than super ($(human "$super_size")); not a GSI system image?"
 fi
 
-if ((need > 0)); then
-  prod_bytes=0
-  [[ $prod_size =~ ^0x[0-9a-fA-F]+$ ]] && prod_bytes=$((prod_size))
-  warn "image is $(human "$IMG_SIZE"), system_$SLOT is $(human "$sys_bytes") -> need $(human "$need") more in super"
-  if ((KEEP_PRODUCT)); then
-    die "--keep-product set and the image does not fit; free space manually or drop the flag"
-  fi
-  if ((prod_bytes >= need)); then
-    log "deleting logical partition product_$SLOT (frees $(human "$prod_bytes")) to make room"
-    log "  this only removes vendor/product apps from the flashed build;"
-    log "  scripts/device/restore-stock.sh re-flashes the stock super"
-    step "delete-logical-partition product_$SLOT" delete-logical-partition "product_$SLOT"
-    PRODUCT_DELETED=1
-  else
-    die "not enough space: need $(human "$need"), product_$SLOT only holds $(human "$prod_bytes"). Free another logical partition manually."
-  fi
-else
-  ok "image fits in the current system_$SLOT (no partition surgery needed)"
-  PRODUCT_DELETED=0
-fi
-
-# --- 3. flash system ---------------------------------------------------------
+# --- 3. flash system (free product_<slot> only if the flash says it is full) --
 assert_flashable system
+PRODUCT_DELETED=0
 
 flash_system() {
   local out rc
@@ -395,15 +397,21 @@ flash_system() {
   printf '    + fastboot --slot %s flash system %s\n' "$SLOT" "$IMG_HOST"
   out=$(fb --slot "$SLOT" flash system "$IMG_HOST" 2>&1) && rc=0 || rc=$?
   printf '%s\n' "$out"
+  LAST_FLASH_OUT=$out
   return $rc
 }
 
 if ! flash_system; then
-  if ((PRODUCT_DELETED == 0)) && ((KEEP_PRODUCT == 0)) && [[ $prod_size =~ ^0x[0-9a-fA-F]+$ ]]; then
-    warn "flash failed and product_$SLOT still exists; freeing it and retrying once"
+  if ((KEEP_PRODUCT == 0)) && ((PRODUCT_DELETED == 0)) &&
+     grep -qiE 'not enough space|no space|failed to resize|cannot resize|too large' <<<"$LAST_FLASH_OUT"; then
+    warn "super is full; deleting product_$SLOT to make room"
+    log "  this only removes vendor/product apps from the flashed build;"
+    log "  scripts/device/restore-stock.sh re-flashes the stock super"
     step "delete-logical-partition product_$SLOT" delete-logical-partition "product_$SLOT"
     PRODUCT_DELETED=1
     flash_system || die "flashing system failed twice; device left in fastbootd (see log above)"
+  elif ((KEEP_PRODUCT == 1)) && grep -qiE 'not enough space|no space|failed to resize|cannot resize|too large' <<<"$LAST_FLASH_OUT"; then
+    die "super is full and --keep-product is set; free space manually or drop the flag"
   else
     die "flashing system failed; device left in fastbootd (see log above)"
   fi
@@ -414,9 +422,9 @@ ok "system_$SLOT flashed"
 assert_flashable vbmeta
 if ((VB_FLAGS)); then
   step "flash vbmeta with verity+verification disabled" \
-    --disable-verity --disable-verification flash vbmeta "$VB"
+    --disable-verity --disable-verification --slot "$SLOT" flash vbmeta "$VB"
 else
-  step "flash generated empty vbmeta (flags=3)" flash vbmeta "$VB"
+  step "flash generated empty vbmeta (flags=3)" --slot "$SLOT" flash vbmeta "$VB"
 fi
 ok "vbmeta flashed (verification disabled: required for a GSI)"
 

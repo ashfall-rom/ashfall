@@ -73,7 +73,9 @@ fastboot_serial() {
   timeout 25 fastboot devices 2>/dev/null | awk 'NF>=2 {print $1; exit}'
 }
 adb_serial() {
-  timeout 25 adb devices 2>/dev/null | awk 'NR>1 && $2=="device" {print $1; exit}'
+  # recovery/sideload expose adb too (limited), so capture them as well
+  timeout 25 adb devices 2>/dev/null |
+    awk 'NR>1 && ($2=="device" || $2=="recovery" || $2=="sideload") {print $1; exit}'
 }
 
 # The RP5 bootloader intermittently reports "GetVar Variable Not found" or
