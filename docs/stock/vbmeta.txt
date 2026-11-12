@@ -1,0 +1,52 @@
+## lun4_vbmeta_a.bin
+version=1.0 algorithm=2 flags=0x0 rollback_index=0 rollback_location=0
+release_string='avbtool 1.2.0' descriptors=4816B auth=576B aux=5888B
+public_key=1032B hash=32B signature=512B
+  descriptor chain: name='vbmeta_system' rollback_location=2 flags=0x0 key=520B
+  descriptor property: com.android.build.boot.os_version=13
+  descriptor property: com.android.build.boot.fingerprint=qti/kona/kona:13/TKQ1.240621.001/RP510261930:user/release-keys
+  descriptor property: com.android.build.boot.security_patch=2024-07-05
+  descriptor property: com.android.build.boot.security_patch=2024-07-05
+  descriptor property: com.android.build.init_boot.os_version=13
+  descriptor property: com.android.build.init_boot.fingerprint=qti/kona/kona:13/TKQ1.240621.001/RP510261930:user/release-keys
+  descriptor property: com.android.build.init_boot.security_patch=2024-07-05
+  descriptor property: com.android.build.vendor_boot.fingerprint=qti/kona/kona:13/TKQ1.240621.001/RP510261930:user/release-keys
+  descriptor property: com.android.build.recovery.fingerprint=qti/kona/kona:13/TKQ1.240621.001/RP510261930:user/release-keys
+  descriptor property: com.android.build.vendor.os_version=13
+  descriptor property: com.android.build.vendor.fingerprint=qti/kona/kona:13/TKQ1.240621.001/RP510261930:user/release-keys
+  descriptor property: com.android.build.vendor.security_patch=2024-07-05
+  descriptor property: com.android.build.vendor.security_patch=2024-07-05
+  descriptor property: com.android.build.odm.os_version=13
+  descriptor property: com.android.build.odm.fingerprint=qti/kona/kona:13/TKQ1.240621.001/RP510261930:user/release-keys
+  descriptor property: com.android.build.vendor_dlkm.os_version=13
+  descriptor property: com.android.build.vendor_dlkm.fingerprint=qti/kona/kona:13/TKQ1.240621.001/RP510261930:user/release-keys
+  descriptor property: com.android.build.system_dlkm.os_version=13
+  descriptor property: com.android.build.system_dlkm.fingerprint=qti/kona/kona:13/TKQ1.240621.001/RP510261930:user/release-keys
+  descriptor property: com.android.build.dtbo.fingerprint=qti/kona/kona:13/TKQ1.240621.001/RP510261930:user/release-keys
+  descriptor hash: partition=boot image_size=55672832 flags=0x0 digest=32B
+  descriptor hash: partition=dtbo image_size=4263184 flags=0x0 digest=32B
+  descriptor hash: partition=init_boot image_size=2015232 flags=0x0 digest=32B
+  descriptor hash: partition=recovery image_size=14532608 flags=0x0 digest=32B
+  descriptor hash: partition=vendor_boot image_size=12926976 flags=0x0 digest=32B
+  descriptor hashtree: (details skipped)
+  descriptor hashtree: (details skipped)
+  descriptor hashtree: (details skipped)
+  descriptor hashtree: (details skipped)
+## lun0_vbmeta_system_a.bin
+version=1.0 algorithm=1 flags=0x0 rollback_index=1720137600 rollback_location=0
+release_string='avbtool 1.2.0' descriptors=1840B auth=320B aux=2368B
+public_key=520B hash=32B signature=256B
+  descriptor property: com.android.build.system.os_version=13
+  descriptor property: com.android.build.system.fingerprint=qti/qssi/qssi:13/TKQ1.240621.001/RP510261838:user/release-keys
+  descriptor property: com.android.build.system.security_patch=2024-07-05
+  descriptor property: com.android.build.system.security_patch=2024-07-05
+  descriptor property: com.android.build.product.os_version=13
+  descriptor property: com.android.build.product.fingerprint=qti/qssi/qssi:13/TKQ1.240621.001/RP510261838:user/release-keys
+  descriptor property: com.android.build.product.security_patch=2024-07-05
+  descriptor property: com.android.build.product.security_patch=2024-07-05
+  descriptor property: com.android.build.system_ext.os_version=13
+  descriptor property: com.android.build.system_ext.fingerprint=qti/qssi/qssi:13/TKQ1.240621.001/RP510261838:user/release-keys
+  descriptor property: com.android.build.system_ext.security_patch=2024-07-05
+  descriptor hashtree: (details skipped)
+  descriptor hashtree: (details skipped)
+  descriptor hashtree: (details skipped)

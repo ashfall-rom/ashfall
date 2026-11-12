@@ -1,0 +1,178 @@
+# vendor init lines mentioning MCU / fan / RGB / input / rotation
+vendor/init/android.hardware.wifi.supplicant-service.rc:12:	disabled
+vendor/init/boringssl_self_test.rc:9:    reboot_on_failure reboot,boringssl-self-check-failed
+vendor/init/boringssl_self_test.rc:14:    reboot_on_failure reboot,boringssl-self-check-failed
+vendor/init/hostapd.android.rc:20:    disabled
+vendor/init/hw/common.rc:26:    disabled
+vendor/init/hw/init.qcom.factory.rc:33:    disabled
+vendor/init/hw/init.qcom.factory.rc:38:    disabled
+vendor/init/hw/init.qcom.factory.rc:44:        disabled
+vendor/init/hw/init.qcom.factory.rc:66:# UsbDeviceManager.java---->getDefaultFunctions and trySetEnabledFunctions
+vendor/init/hw/init.qcom.factory.rc:129:    # Load persist properties and override properties (if enabled) from /data.
+vendor/init/hw/init.qcom.factory.rc:147:    disabled
+vendor/init/hw/init.qcom.factory.rc:154:    disabled
+vendor/init/hw/init.qcom.factory.rc:160:    disabled
+vendor/init/hw/init.qcom.factory.rc:166:    disabled
+vendor/init/hw/init.qcom.factory.rc:172:    disabled
+vendor/init/hw/init.qcom.factory.rc:178:    disabled
+vendor/init/hw/init.qcom.factory.rc:184:    disabled
+vendor/init/hw/init.qcom.factory.rc:190:    disabled
+vendor/init/hw/init.qcom.factory.rc:196:    disabled
+vendor/init/hw/init.qcom.factory.rc:202:    disabled
+vendor/init/hw/init.qcom.factory.rc:208:    disabled
+vendor/init/hw/init.qcom.factory.rc:214:    disabled
+vendor/init/hw/init.qcom.factory.rc:220:    disabled
+vendor/init/hw/init.qcom.factory.rc:226:    disabled
+vendor/init/hw/init.qcom.factory.rc:232:    disabled
+vendor/init/hw/init.qcom.factory.rc:238:    disabled
+vendor/init/hw/init.qcom.factory.rc:244:    disabled
+vendor/init/hw/init.qcom.factory.rc:250:    disabled
+vendor/init/hw/init.qcom.factory.rc:256:    disabled
+vendor/init/hw/init.qcom.rc:143:    chown system system /sys/module/msm_core/parameters/disabled
+vendor/init/hw/init.qcom.rc:196:    # To prevent out of order acknowledgements from making
+vendor/init/hw/init.qcom.rc:263:	chmod 0666 /sys/class/sn3112l/led/enable
+vendor/init/hw/init.qcom.rc:264:	chmod 0666 /sys/class/sn3112l/led/brightness
+vendor/init/hw/init.qcom.rc:265:	chmod 0666 /sys/class/sn3112l/led/miniled_enable
+vendor/init/hw/init.qcom.rc:266:	chmod 0666 /sys/class/sn3112l/led/vled_enable
+vendor/init/hw/init.qcom.rc:267:	chmod 0666 /sys/class/sn3112l/led/blackvalue
+vendor/init/hw/init.qcom.rc:268:	chmod 0666 /sys/class/sn3112r/led/enable
+vendor/init/hw/init.qcom.rc:269:	chmod 0666 /sys/class/sn3112r/led/brightness
+vendor/init/hw/init.qcom.rc:270:	chmod 0666 /sys/class/leds/red/brightness
+vendor/init/hw/init.qcom.rc:271:	chmod 0666 /sys/class/leds/green/brightness
+vendor/init/hw/init.qcom.rc:272:	chmod 0666 /sys/class/leds/blue/brightness
+vendor/init/hw/init.qcom.rc:486:    disabled
+vendor/init/hw/init.qcom.rc:493:    disabled
+vendor/init/hw/init.qcom.rc:495:on property:persist.vendor.qcomsysd.enabled=1
+vendor/init/hw/init.qcom.rc:498:on property:persist.vendor.qcomsysd.enabled=0
+vendor/init/hw/init.qcom.rc:503:    disabled
+vendor/init/hw/init.qcom.rc:510:    disabled
+vendor/init/hw/init.qcom.rc:572: 	chmod 0666 /sys/class/sn3112l/led/enable
+vendor/init/hw/init.qcom.rc:573:	chmod 0666 /sys/class/sn3112l/led/brightness
+vendor/init/hw/init.qcom.rc:574: 	chmod 0666 /sys/class/sn3112r/led/enable
+vendor/init/hw/init.qcom.rc:575: 	chmod 0666 /sys/class/sn3112r/led/brightness
+vendor/init/hw/init.qcom.rc:623:    disabled
+vendor/init/hw/init.qcom.rc:637:    disabled
+vendor/init/hw/init.qcom.rc:645:    disabled
+vendor/init/hw/init.qcom.rc:655:    disabled
+vendor/init/hw/init.qcom.rc:665:    disabled
+vendor/init/hw/init.qcom.rc:669:    disabled
+vendor/init/hw/init.qcom.rc:674:    disabled
+vendor/init/hw/init.qcom.rc:679:    disabled
+vendor/init/hw/init.qcom.rc:684:    disabled
+vendor/init/hw/init.qcom.rc:689:    disabled
+vendor/init/hw/init.qcom.rc:694:    disabled
+vendor/init/hw/init.qcom.rc:699:    disabled
+vendor/init/hw/init.qcom.rc:704:    disabled
+vendor/init/hw/init.qcom.rc:717:    disabled
+vendor/init/hw/init.qcom.rc:724:    disabled
+vendor/init/hw/init.qcom.rc:752:    disabled
+vendor/init/hw/init.qcom.rc:759:    disabled
+vendor/init/hw/init.qcom.rc:766:    disabled
+vendor/init/hw/init.qcom.rc:773:    disabled
+vendor/init/hw/init.qcom.rc:788:    disabled
+vendor/init/hw/init.qcom.rc:793:    disabled
+vendor/init/hw/init.qcom.rc:828:    disabled
+vendor/init/hw/init.qcom.rc:834:    disabled
+vendor/init/hw/init.qcom.rc:840:   disabled
+vendor/init/hw/init.qcom.rc:869:    disabled
+vendor/init/hw/init.qcom.rc:875:    disabled
+vendor/init/hw/init.qcom.rc:880:    disabled
+vendor/init/hw/init.qcom.rc:887:    disabled
+vendor/init/hw/init.qcom.rc:895:    disabled
+vendor/init/hw/init.qcom.rc:901:    disabled
+vendor/init/hw/init.qcom.rc:907:    disabled
+vendor/init/hw/init.qcom.rc:914:    disabled
+vendor/init/hw/init.qcom.rc:920:    disabled
+vendor/init/hw/init.qcom.rc:929:    disabled
+vendor/init/hw/init.qcom.rc:935:    disabled
+vendor/init/hw/init.qcom.rc:941:    disabled
+vendor/init/hw/init.qcom.rc:947:    disabled
+vendor/init/hw/init.qcom.rc:953:    disabled
+vendor/init/hw/init.qcom.rc:961:    disabled
+vendor/init/hw/init.qcom.rc:984:    disabled
+vendor/init/hw/init.qcom.rc:1003:    disabled
+vendor/init/hw/init.qcom.rc:1011:     disabled
+vendor/init/hw/init.qcom.rc:1020:on property:vendor.chre.enabled=0
+vendor/init/hw/init.qcom.rc:1025:    disabled
+vendor/init/hw/init.qti.kernel.rc:50:    # disabled and /sys/kernel/debug/tracing might not be available
+vendor/init/hw/init.qti.kernel.rc:157:    disabled
+vendor/init/hw/init.qti.kernel.rc:164:    disabled
+vendor/init/hw/init.qti.kernel.rc:184:    disabled
+vendor/init/hw/init.qti.kernel.rc:190:    disabled
+vendor/init/hw/init.qti.kernel.rc:199:    disabled
+vendor/init/hw/init.qti.kernel.rc:208:    disabled
+vendor/init/hw/init.target.rc:148:    disabled
+vendor/init/hw/init.target.rc:153:    disabled
+vendor/init/init.qti.media.rc:39:    disabled
+vendor/init/qconfig.rc:17:    # disabled
+vendor/init/qdcmss.rc:6:    disabled
+vendor/init/qwesd.rc:10:# Used 'disabled' flag, so daemon won't be started until explicit start
+vendor/init/qwesd.rc:15:    disabled
+vendor/init/rild.rc:4:    disabled
+vendor/init/ssgtzd.rc:14:# Used 'disabled' flag, so daemon won't be started until explicit start
+vendor/init/ssgtzd.rc:19:    disabled
+vendor/init/vendor.qti.diag.rc:16:    disabled
+vendor/init/vendor.qti.hardware.alarm@1.0-service.rc:11:    disabled
+vendor/init/vendor.qti.hardware.dsp@1.0-service.rc:13:	# disabled
+vendor/init/vendor.qti.hardware.factory@1.0-service.rc:11:    disabled
+vendor/init/vendor.qti.hardware.vibrator.service.rc:11:    write /sys/class/leds/vibrator/trigger "transient"
+vendor/init/vendor.qti.hardware.wifi.wifilearner@1.0-service.rc:16:    disabled
+vendor/init/vendor.qti.psiclient@1.0-service.rc:9:    disabled
+vendor/init/vendor.qti.psiclient@1.0-service.rc:12:# Stop psi service when vendor.pasr.[activemode.enabled/enabled] is disabled
+vendor/init/vendor.qti.psiclient@1.0-service.rc:13:on property:vendor.pasr.activemode.enabled=false
+vendor/init/vendor.qti.psiclient@1.0-service.rc:16:on property:vendor.pasr.enabled=false
+vendor/init/vendor.qti.psiclient@1.0-service.rc:20:on property:vendor.pasr.activemode.enabled=true && property:vendor.pasr.enabled=true
+
+# vendor apps
+
+# vendor hw services
+    133   40751 (2)      0   2000    4096  1-Jan-2009 01:00 .
+     37   40751 (2)      0   2000    8192  1-Jan-2009 01:00 ..
+    134  100755 (1)      0   2000   28904  1-Jan-2009 01:00 android.hardware.atrace@1.0-service
+    135  100755 (1)      0   2000   23520  1-Jan-2009 01:00 android.hardware.audio.service
+    136  100755 (1)   1002   1002   28440  1-Jan-2009 01:00 android.hardware.bluetooth@1.0-service-qti
+    137  100755 (1)      0   2000   15240  1-Jan-2009 01:00 android.hardware.boot@1.2-service
+    138  100755 (1)      0   2000   15560  1-Jan-2009 01:00 android.hardware.camera.provider@2.4-service_64
+    139  100755 (1)      0   2000   47640  1-Jan-2009 01:00 android.hardware.cas@1.2-service
+    140  100755 (1)      0   2000   151928  1-Jan-2009 01:00 android.hardware.drm-service.clearkey
+    141  100755 (1)      0   2000   11144  1-Jan-2009 01:00 android.hardware.gatekeeper@1.0-service-qti
+    142  100755 (1)      0   2000   215504  1-Jan-2009 01:00 android.hardware.health-service.qti
+    143  100755 (1)      0   2000   697768  1-Jan-2009 01:00 android.hardware.identity-service.example
+    144  100755 (1)      0   2000   11456  1-Jan-2009 01:00 android.hardware.keymaster@4.0-service-qti
+    145  100755 (1)      0   2000   15508  1-Jan-2009 01:00 android.hardware.media.omx@1.0-service
+    146  100755 (1)      0   2000   33360  1-Jan-2009 01:00 android.hardware.power-service
+    147  100755 (1)      0   2000   24680  1-Jan-2009 01:00 android.hardware.security.keymint-service-qti
+    148  100755 (1)      0   2000   122704  1-Jan-2009 01:00 android.hardware.sensors@2.1-service.multihal
+    149  100755 (1)      0   2000   169192  1-Jan-2009 01:00 android.hardware.thermal@2.0-service.qti-v2
+    150  100755 (1)      0   2000   15248  1-Jan-2009 01:00 android.hardware.tv.cec@1.0-service
+    151  100755 (1)      0   2000   83464  1-Jan-2009 01:00 android.hardware.usb.gadget@1.1-service-qti
+    152  100755 (1)      0   2000   139144  1-Jan-2009 01:00 android.hardware.usb@1.2-service-qti
+    153  100755 (1)      0   2000   586608  1-Jan-2009 01:00 android.hardware.wifi@1.0-service
+    154  100755 (1)      0   2000   15776  1-Jan-2009 01:00 capabilityconfigstoretest
+    155  100755 (1)      0   2000   1739936  1-Jan-2009 01:00 hostapd
+    156  100755 (1)      0   2000   50440  1-Jan-2009 01:00 qconfigservice
+    157  100755 (1)      0   2000   15464  1-Jan-2009 01:00 rild
+    158  100755 (1)      0   2000   50856  1-Jan-2009 01:00 vendor.display.color@1.0-service
+    159  100755 (1)      0   2000   28064  1-Jan-2009 01:00 vendor.qti.esepowermanager@1.1-service
+    160  100755 (1)      0   2000   15808  1-Jan-2009 01:00 vendor.qti.hardware.alarm@1.0-service
+    161  100755 (1)      0   2000   15336  1-Jan-2009 01:00 vendor.qti.hardware.capabilityconfigstore@1.0-service
+    162  100755 (1)      0   2000   37952  1-Jan-2009 01:00 vendor.qti.hardware.display.allocator-service
+    163  100755 (1)      0   2000   567312  1-Jan-2009 01:00 vendor.qti.hardware.display.composer-service
+    164  100755 (1)      0   2000   33376  1-Jan-2009 01:00 vendor.qti.hardware.factory@1.0-service
+    165  100755 (1)      0   2000   24888  1-Jan-2009 01:00 vendor.qti.hardware.lights.service
+    166  100755 (1)      0   2000   77360  1-Jan-2009 01:00 vendor.qti.hardware.limits@1.2-service
+    167  100755 (1)      0   2000   20688  1-Jan-2009 01:00 vendor.qti.hardware.memtrack-service
+    168  100755 (1)      0   2000   42720  1-Jan-2009 01:00 vendor.qti.hardware.perf-hal-service
+    169  100755 (1)      0   2000   11104  1-Jan-2009 01:00 vendor.qti.hardware.qseecom@1.0-service
+    170  100755 (1)      0   2000   15848  1-Jan-2009 01:00 vendor.qti.hardware.qteeconnector@1.0-service
+    171  100755 (1)      0   2000   15216  1-Jan-2009 01:00 vendor.qti.hardware.sensorscalibrate@1.0-service
+    172  100755 (1)      0   2000   15248  1-Jan-2009 01:00 vendor.qti.hardware.servicetracker@1.2-service
+    173  100755 (1)      0   2000   11080  1-Jan-2009 01:00 vendor.qti.hardware.soter@1.0-service
+    174  100755 (1)      0   2000   29360  1-Jan-2009 01:00 vendor.qti.hardware.tui_comm@1.0-service-qti
+    175  100755 (1)      0   2000   20640  1-Jan-2009 01:00 vendor.qti.hardware.umd@1.0-service
+    176  100755 (1)      0   2000   20232  1-Jan-2009 01:00 vendor.qti.hardware.vibrator.service
+    177  100755 (1)      0   2000   19640  1-Jan-2009 01:00 vendor.qti.media.c2@1.0-service
+    178  100755 (1)      0   2000   46272  1-Jan-2009 01:00 vendor.qti.memory.pasrmanager@1.0-service
+    179  100755 (1)      0   2000   33000  1-Jan-2009 01:00 vendor.qti.psiclient@1.0-service
+    180  100755 (1)      0   2000   3294200  1-Jan-2009 01:00 wpa_supplicant
+

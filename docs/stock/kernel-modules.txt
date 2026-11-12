@@ -1,0 +1,447 @@
+# .ko modules shipped in the vendor_boot ramdisk
+lib/modules/arm_dsu_pmu.ko
+lib/modules/arm_smmu.ko
+lib/modules/bam_dma.ko
+lib/modules/bcl_pmic5.ko
+lib/modules/bcl_soc.ko
+lib/modules/boot_stats.ko
+lib/modules/bwmon.ko
+lib/modules/camcc-sm8250.ko
+lib/modules/cdsp-loader.ko
+lib/modules/cdsprm.ko
+lib/modules/cfg80211.ko
+lib/modules/clk-dummy.ko
+lib/modules/clk-qcom.ko
+lib/modules/clk-rpmh.ko
+lib/modules/cmd-db.ko
+lib/modules/core_hang_detect.ko
+lib/modules/coresight-csr.ko
+lib/modules/coresight-cti.ko
+lib/modules/coresight-dummy.ko
+lib/modules/coresight-funnel.ko
+lib/modules/coresight-hwevent.ko
+lib/modules/coresight.ko
+lib/modules/coresight-remote-etm.ko
+lib/modules/coresight-replicator.ko
+lib/modules/coresight-stm.ko
+lib/modules/coresight-tgu.ko
+lib/modules/coresight-tmc.ko
+lib/modules/coresight-tpda.ko
+lib/modules/coresight-tpdm.ko
+lib/modules/cpu_hotplug.ko
+lib/modules/cqhci.ko
+lib/modules/crypto-qti-common.ko
+lib/modules/crypto-qti-tz.ko
+lib/modules/dcc_v2.ko
+lib/modules/debugcc-sm8250.ko
+lib/modules/dispcc-sm8250.ko
+lib/modules/dwc3-msm.ko
+lib/modules/eud.ko
+lib/modules/frpc-adsprpc.ko
+lib/modules/fsa4480-i2c.ko
+lib/modules/gcc-sm8250.ko
+lib/modules/gdsc-regulator.ko
+lib/modules/glink_pkt.ko
+lib/modules/glink_probe.ko
+lib/modules/gpio5_pwm.ko
+lib/modules/gpucc-sm8250.ko
+lib/modules/hdcp_qseecom_dlkm.ko
+lib/modules/i2c-msm-geni.ko
+lib/modules/icc-bcm-voter.ko
+lib/modules/icc-debug.ko
+lib/modules/icc-rpmh.ko
+lib/modules/icc-test.ko
+lib/modules/igb.ko
+lib/modules/iommu-logger.ko
+lib/modules/kryo_arm64_edac.ko
+lib/modules/leds-qpnp-flash-v2.ko
+lib/modules/leds-qti-tri-led.ko
+lib/modules/llcc_perfmon.ko
+lib/modules/llcc-qcom.ko
+lib/modules/lt9611uxc.ko
+lib/modules/mdt_loader.ko
+lib/modules/mem_buf_dev.ko
+lib/modules/mem_buf.ko
+lib/modules/memlat.ko
+lib/modules/mem-offline.ko
+lib/modules/memory_dump_v2.ko
+lib/modules/mhi_dev_satellite.ko
+lib/modules/mhi_dev_uci.ko
+lib/modules/mhi.ko
+lib/modules/minidump.ko
+lib/modules/msm_dma_iommu_mapping.ko
+lib/modules/msm_drm.ko
+lib/modules/msm_ext_display.ko
+lib/modules/msm_geni_serial.ko
+lib/modules/msm_gpi.ko
+lib/modules/msm_hw_fence.ko
+lib/modules/msm_kgsl.ko
+lib/modules/msm_lmh_dcvs.ko
+lib/modules/msm_npu.ko
+lib/modules/msm_performance.ko
+lib/modules/msm-poweroff.ko
+lib/modules/msm_qmp.ko
+lib/modules/msm_sharedmem.ko
+lib/modules/msm_show_resume_irq.ko
+lib/modules/msm-tsens-driver.ko
+lib/modules/nb7vpq904m.ko
+lib/modules/npucc-sm8250.ko
+lib/modules/nvme-core.ko
+lib/modules/nvme.ko
+lib/modules/nvmem_qcom-spmi-sdam.ko
+lib/modules/nvmem_qfprom.ko
+lib/modules/pci-msm-drv.ko
+lib/modules/pdr_interface.ko
+lib/modules/phy-generic.ko
+lib/modules/phy-msm-snps-hs.ko
+lib/modules/phy-msm-ssusb-qmp.ko
+lib/modules/phy-qcom-ufs.ko
+lib/modules/phy-qcom-ufs-qmp-v4-crow.ko
+lib/modules/phy-qcom-ufs-qmp-v4-kalama.ko
+lib/modules/phy-qcom-ufs-qmp-v4-khaje.ko
+lib/modules/phy-qcom-ufs-qmp-v4.ko
+lib/modules/phy-qcom-ufs-qmp-v4-kona.ko
+lib/modules/phy-qcom-ufs-qmp-v4-lahaina.ko
+lib/modules/phy-qcom-ufs-qmp-v4-waipio.ko
+lib/modules/pinctrl-kona.ko
+lib/modules/pinctrl-msm.ko
+lib/modules/pinctrl-spmi-gpio.ko
+lib/modules/pinctrl-spmi-mpp.ko
+lib/modules/pwm-qti-lpg.ko
+lib/modules/qcom_aoss.ko
+lib/modules/qcom-cpufreq-hw-debug.ko
+lib/modules/qcom-cpufreq-hw.ko
+lib/modules/qcom_cpu_vendor_hooks.ko
+lib/modules/qcom-dcvs.ko
+lib/modules/qcom_dma_heaps.ko
+lib/modules/qcom_edac.ko
+lib/modules/qcom_glink.ko
+lib/modules/qcom_glink_smem.ko
+lib/modules/qcom_glink_spss.ko
+lib/modules/qcom_hwspinlock.ko
+lib/modules/qcom-i2c-pmic.ko
+lib/modules/qcom_iommu_debug.ko
+lib/modules/qcom_iommu_util.ko
+lib/modules/qcom_ipcc.ko
+lib/modules/qcom_ipc_lite.ko
+lib/modules/qcom_ipc_logging.ko
+lib/modules/qcom_llcc_pmu.ko
+lib/modules/qcom_lpm.ko
+lib/modules/qcom-pdc.ko
+lib/modules/qcom_pil_info.ko
+lib/modules/qcom-pmu-lib.ko
+lib/modules/qcom_q6v5.ko
+lib/modules/qcom_q6v5_pas.ko
+lib/modules/qcom_ramdump.ko
+lib/modules/qcom_rpmh.ko
+lib/modules/qcom-scm.ko
+lib/modules/qcom-smb1390-charger.ko
+lib/modules/qcom_smd.ko
+lib/modules/qcom_soc_wdt.ko
+lib/modules/qcom-spmi-adc5.ko
+lib/modules/qcom-spmi-adc-tm5.ko
+lib/modules/qcom-spmi-pmic.ko
+lib/modules/qcom-spmi-temp-alarm.ko
+lib/modules/qcom_spss.ko
+lib/modules/qcom_sysmon.ko
+lib/modules/qcom_tsens.ko
+lib/modules/qcom-vadc-common.ko
+lib/modules/qcom_va_minidump.ko
+lib/modules/qcom_wdt_core.ko
+lib/modules/qcom-wled.ko
+lib/modules/qdss_bridge.ko
+lib/modules/qmi_helpers.ko
+lib/modules/qnoc-kona.ko
+lib/modules/qnoc-qos.ko
+lib/modules/qpnp-amoled-regulator.ko
+lib/modules/qpnp-fg-gen4-main.ko
+lib/modules/qpnp-lcdb-regulator.ko
+lib/modules/qpnp-pbs.ko
+lib/modules/qpnp-pdphy.ko
+lib/modules/qpnp-power-on.ko
+lib/modules/qpnp-qnovo5-main.ko
+lib/modules/qpnp-revid.ko
+lib/modules/qpnp-smb5-main.ko
+lib/modules/qrng_dlkm.ko
+lib/modules/qrtr.ko
+lib/modules/qrtr-mhi.ko
+lib/modules/qrtr-smd.ko
+lib/modules/qseecom_dlkm.ko
+lib/modules/qti_cpufreq_cdev.ko
+lib/modules/qti_devfreq_cdev.ko
+lib/modules/qti-haptics.ko
+lib/modules/qti_qmi_cdev.ko
+lib/modules/qti_qmi_sensor.ko
+lib/modules/qti-regmap-debugfs.ko
+lib/modules/rdbg.ko
+lib/modules/redriver.ko
+lib/modules/refgen.ko
+lib/modules/regmap-spmi.ko
+lib/modules/rpmh-regulator.ko
+lib/modules/rproc_qcom_common.ko
+lib/modules/rq_stats.ko
+lib/modules/rtc-pm8xxx.ko
+lib/modules/sched-walt.ko
+lib/modules/sdhci-msm.ko
+lib/modules/secure_buffer.ko
+lib/modules/sensors_ssc.ko
+lib/modules/sg.ko
+lib/modules/slimbus.ko
+lib/modules/slim-qcom-ngd-ctrl.ko
+lib/modules/smcinvoke_dlkm.ko
+lib/modules/smem.ko
+lib/modules/smp2p.ko
+lib/modules/smp2p_sleepstate.ko
+lib/modules/snd-soc-tas5805m.ko
+lib/modules/snd-usb-audio-qmi.ko
+lib/modules/socinfo.ko
+lib/modules/soc_sleep_stats.ko
+lib/modules/spcom.ko
+lib/modules/spi-msm-geni.ko
+lib/modules/spmi-pmic-arb-debug.ko
+lib/modules/spmi-pmic-arb.ko
+lib/modules/sps_drv.ko
+lib/modules/spss_utils.ko
+lib/modules/stm_core.ko
+lib/modules/stm_ftrace.ko
+lib/modules/stm_p_ost.ko
+lib/modules/subsystem_sleep_stats.ko
+lib/modules/sync_fence.ko
+lib/modules/synx-driver.ko
+lib/modules/sysmon_subsystem_stats.ko
+lib/modules/thermal_pause.ko
+lib/modules/tz_log_dlkm.ko
+lib/modules/ufshcd-crypto-qti.ko
+lib/modules/ufs_qcom.ko
+lib/modules/usb_bam.ko
+lib/modules/usb_f_ccid.ko
+lib/modules/usb_f_cdev.ko
+lib/modules/usb_f_diag.ko
+lib/modules/usb_f_gsi.ko
+lib/modules/usb_f_qdss.ko
+lib/modules/usbpd.ko
+lib/modules/videocc-sm8250.ko
+
+# vermagic (first module per line)
+arm_dsu_pmu.ko: vermagic=5.15.148-gbfe94e95c709-dirty
+arm_smmu.ko: vermagic=5.15.148-gbfe94e95c709-dirty
+bam_dma.ko: vermagic=5.15.148-gbfe94e95c709-dirty
+bcl_pmic5.ko: vermagic=5.15.148-gbfe94e95c709-dirty
+bcl_soc.ko: vermagic=5.15.148-gbfe94e95c709-dirty
+boot_stats.ko: vermagic=5.15.148-gbfe94e95c709-dirty
+bwmon.ko: vermagic=5.15.148-gbfe94e95c709-dirty
+camcc-sm8250.ko: vermagic=5.15.148-gbfe94e95c709-dirty
+cdsp-loader.ko: vermagic=5.15.148-gbfe94e95c709-dirty
+cdsprm.ko: vermagic=5.15.148-gbfe94e95c709-dirty
+cfg80211.ko: vermagic=5.15.148-gbfe94e95c709-dirty
+clk-dummy.ko: vermagic=5.15.148-gbfe94e95c709-dirty
+clk-qcom.ko: vermagic=5.15.148-gbfe94e95c709-dirty
+clk-rpmh.ko: vermagic=5.15.148-gbfe94e95c709-dirty
+cmd-db.ko: vermagic=5.15.148-gbfe94e95c709-dirty
+core_hang_detect.ko: vermagic=5.15.148-gbfe94e95c709-dirty
+coresight-csr.ko: vermagic=5.15.148-gbfe94e95c709-dirty
+coresight-cti.ko: vermagic=5.15.148-gbfe94e95c709-dirty
+coresight-dummy.ko: vermagic=5.15.148-gbfe94e95c709-dirty
+coresight-funnel.ko: vermagic=5.15.148-gbfe94e95c709-dirty
+coresight-hwevent.ko: vermagic=5.15.148-gbfe94e95c709-dirty
+coresight.ko: vermagic=5.15.148-gbfe94e95c709-dirty
+coresight-remote-etm.ko: vermagic=5.15.148-gbfe94e95c709-dirty
+coresight-replicator.ko: vermagic=5.15.148-gbfe94e95c709-dirty
+coresight-stm.ko: vermagic=5.15.148-gbfe94e95c709-dirty
+coresight-tgu.ko: vermagic=5.15.148-gbfe94e95c709-dirty
+coresight-tmc.ko: vermagic=5.15.148-gbfe94e95c709-dirty
+coresight-tpda.ko: vermagic=5.15.148-gbfe94e95c709-dirty
+coresight-tpdm.ko: vermagic=5.15.148-gbfe94e95c709-dirty
+cpu_hotplug.ko: vermagic=5.15.148-gbfe94e95c709-dirty
+cqhci.ko: vermagic=5.15.148-gbfe94e95c709-dirty
+crypto-qti-common.ko: vermagic=5.15.148-gbfe94e95c709-dirty
+crypto-qti-tz.ko: vermagic=5.15.148-gbfe94e95c709-dirty
+dcc_v2.ko: vermagic=5.15.148-gbfe94e95c709-dirty
+debugcc-sm8250.ko: vermagic=5.15.148-gbfe94e95c709-dirty
+dispcc-sm8250.ko: vermagic=5.15.148-gbfe94e95c709-dirty
+dwc3-msm.ko: vermagic=5.15.148-gbfe94e95c709-dirty
+eud.ko: vermagic=5.15.148-gbfe94e95c709-dirty
+frpc-adsprpc.ko: vermagic=5.15.148-gbfe94e95c709-dirty
+fsa4480-i2c.ko: vermagic=5.15.148-gbfe94e95c709-dirty
+gcc-sm8250.ko: vermagic=5.15.148-gbfe94e95c709-dirty
+gdsc-regulator.ko: vermagic=5.15.148-gbfe94e95c709-dirty
+glink_pkt.ko: vermagic=5.15.148-gbfe94e95c709-dirty
+glink_probe.ko: vermagic=5.15.148-gbfe94e95c709-dirty
+gpio5_pwm.ko: vermagic=5.15.148-gbfe94e95c709-dirty
+gpucc-sm8250.ko: vermagic=5.15.148-gbfe94e95c709-dirty
+hdcp_qseecom_dlkm.ko: vermagic=5.15.148-gbfe94e95c709
+i2c-msm-geni.ko: vermagic=5.15.148-gbfe94e95c709-dirty
+icc-bcm-voter.ko: vermagic=5.15.148-gbfe94e95c709-dirty
+icc-debug.ko: vermagic=5.15.148-gbfe94e95c709-dirty
+icc-rpmh.ko: vermagic=5.15.148-gbfe94e95c709-dirty
+icc-test.ko: vermagic=5.15.148-gbfe94e95c709-dirty
+igb.ko: vermagic=5.15.148-gbfe94e95c709-dirty
+iommu-logger.ko: vermagic=5.15.148-gbfe94e95c709-dirty
+kryo_arm64_edac.ko: vermagic=5.15.148-gbfe94e95c709-dirty
+leds-qpnp-flash-v2.ko: vermagic=5.15.148-gbfe94e95c709-dirty
+leds-qti-tri-led.ko: vermagic=5.15.148-gbfe94e95c709-dirty
+llcc_perfmon.ko: vermagic=5.15.148-gbfe94e95c709-dirty
+llcc-qcom.ko: vermagic=5.15.148-gbfe94e95c709-dirty
+lt9611uxc.ko: vermagic=5.15.148-gbfe94e95c709
+mdt_loader.ko: vermagic=5.15.148-gbfe94e95c709-dirty
+mem_buf_dev.ko: vermagic=5.15.148-gbfe94e95c709-dirty
+mem_buf.ko: vermagic=5.15.148-gbfe94e95c709-dirty
+memlat.ko: vermagic=5.15.148-gbfe94e95c709-dirty
+mem-offline.ko: vermagic=5.15.148-gbfe94e95c709-dirty
+memory_dump_v2.ko: vermagic=5.15.148-gbfe94e95c709-dirty
+mhi_dev_satellite.ko: vermagic=5.15.148-gbfe94e95c709-dirty
+mhi_dev_uci.ko: vermagic=5.15.148-gbfe94e95c709-dirty
+mhi.ko: vermagic=5.15.148-gbfe94e95c709-dirty
+minidump.ko: vermagic=5.15.148-gbfe94e95c709-dirty
+msm_dma_iommu_mapping.ko: vermagic=5.15.148-gbfe94e95c709-dirty
+msm_drm.ko: vermagic=5.15.148-gbfe94e95c709
+msm_ext_display.ko: vermagic=5.15.148-gbfe94e95c709
+msm_geni_serial.ko: vermagic=5.15.148-gbfe94e95c709-dirty
+msm_gpi.ko: vermagic=5.15.148-gbfe94e95c709-dirty
+msm_hw_fence.ko: vermagic=5.15.148-gbfe94e95c709
+msm_kgsl.ko: vermagic=5.15.148-gbfe94e95c709
+msm_lmh_dcvs.ko: vermagic=5.15.148-gbfe94e95c709-dirty
+msm_npu.ko: vermagic=5.15.148-gbfe94e95c709-dirty
+msm_performance.ko: vermagic=5.15.148-gbfe94e95c709-dirty
+msm-poweroff.ko: vermagic=5.15.148-gbfe94e95c709-dirty
+msm_qmp.ko: vermagic=5.15.148-gbfe94e95c709-dirty
+msm_sharedmem.ko: vermagic=5.15.148-gbfe94e95c709-dirty
+msm_show_resume_irq.ko: vermagic=5.15.148-gbfe94e95c709-dirty
+msm-tsens-driver.ko: vermagic=5.15.148-gbfe94e95c709-dirty
+nb7vpq904m.ko: vermagic=5.15.148-gbfe94e95c709-dirty
+npucc-sm8250.ko: vermagic=5.15.148-gbfe94e95c709-dirty
+nvme-core.ko: vermagic=5.15.148-gbfe94e95c709-dirty
+nvme.ko: vermagic=5.15.148-gbfe94e95c709-dirty
+nvmem_qcom-spmi-sdam.ko: vermagic=5.15.148-gbfe94e95c709-dirty
+nvmem_qfprom.ko: vermagic=5.15.148-gbfe94e95c709-dirty
+pci-msm-drv.ko: vermagic=5.15.148-gbfe94e95c709-dirty
+pdr_interface.ko: vermagic=5.15.148-gbfe94e95c709-dirty
+phy-generic.ko: vermagic=5.15.148-gbfe94e95c709-dirty
+phy-msm-snps-hs.ko: vermagic=5.15.148-gbfe94e95c709-dirty
+phy-msm-ssusb-qmp.ko: vermagic=5.15.148-gbfe94e95c709-dirty
+phy-qcom-ufs.ko: vermagic=5.15.148-gbfe94e95c709-dirty
+phy-qcom-ufs-qmp-v4-crow.ko: vermagic=5.15.148-gbfe94e95c709-dirty
+phy-qcom-ufs-qmp-v4-kalama.ko: vermagic=5.15.148-gbfe94e95c709-dirty
+phy-qcom-ufs-qmp-v4-khaje.ko: vermagic=5.15.148-gbfe94e95c709-dirty
+phy-qcom-ufs-qmp-v4.ko: vermagic=5.15.148-gbfe94e95c709-dirty
+phy-qcom-ufs-qmp-v4-kona.ko: vermagic=5.15.148-gbfe94e95c709-dirty
+phy-qcom-ufs-qmp-v4-lahaina.ko: vermagic=5.15.148-gbfe94e95c709-dirty
+phy-qcom-ufs-qmp-v4-waipio.ko: vermagic=5.15.148-gbfe94e95c709-dirty
+pinctrl-kona.ko: vermagic=5.15.148-gbfe94e95c709-dirty
+pinctrl-msm.ko: vermagic=5.15.148-gbfe94e95c709-dirty
+pinctrl-spmi-gpio.ko: vermagic=5.15.148-gbfe94e95c709-dirty
+pinctrl-spmi-mpp.ko: vermagic=5.15.148-gbfe94e95c709-dirty
+pwm-qti-lpg.ko: vermagic=5.15.148-gbfe94e95c709-dirty
+qcom_aoss.ko: vermagic=5.15.148-gbfe94e95c709-dirty
+qcom-cpufreq-hw-debug.ko: vermagic=5.15.148-gbfe94e95c709-dirty
+qcom-cpufreq-hw.ko: vermagic=5.15.148-gbfe94e95c709-dirty
+qcom_cpu_vendor_hooks.ko: vermagic=5.15.148-gbfe94e95c709-dirty
+qcom-dcvs.ko: vermagic=5.15.148-gbfe94e95c709-dirty
+qcom_dma_heaps.ko: vermagic=5.15.148-gbfe94e95c709-dirty
+qcom_edac.ko: vermagic=5.15.148-gbfe94e95c709-dirty
+qcom_glink.ko: vermagic=5.15.148-gbfe94e95c709-dirty
+qcom_glink_smem.ko: vermagic=5.15.148-gbfe94e95c709-dirty
+qcom_glink_spss.ko: vermagic=5.15.148-gbfe94e95c709-dirty
+qcom_hwspinlock.ko: vermagic=5.15.148-gbfe94e95c709-dirty
+qcom-i2c-pmic.ko: vermagic=5.15.148-gbfe94e95c709-dirty
+qcom_iommu_debug.ko: vermagic=5.15.148-gbfe94e95c709-dirty
+qcom_iommu_util.ko: vermagic=5.15.148-gbfe94e95c709-dirty
+qcom_ipcc.ko: vermagic=5.15.148-gbfe94e95c709-dirty
+qcom_ipc_lite.ko: vermagic=5.15.148-gbfe94e95c709-dirty
+qcom_ipc_logging.ko: vermagic=5.15.148-gbfe94e95c709-dirty
+qcom_llcc_pmu.ko: vermagic=5.15.148-gbfe94e95c709-dirty
+qcom_lpm.ko: vermagic=5.15.148-gbfe94e95c709-dirty
+qcom-pdc.ko: vermagic=5.15.148-gbfe94e95c709-dirty
+qcom_pil_info.ko: vermagic=5.15.148-gbfe94e95c709-dirty
+qcom-pmu-lib.ko: vermagic=5.15.148-gbfe94e95c709-dirty
+qcom_q6v5.ko: vermagic=5.15.148-gbfe94e95c709-dirty
+qcom_q6v5_pas.ko: vermagic=5.15.148-gbfe94e95c709-dirty
+qcom_ramdump.ko: vermagic=5.15.148-gbfe94e95c709-dirty
+qcom_rpmh.ko: vermagic=5.15.148-gbfe94e95c709-dirty
+qcom-scm.ko: vermagic=5.15.148-gbfe94e95c709-dirty
+qcom-smb1390-charger.ko: vermagic=5.15.148-gbfe94e95c709-dirty
+qcom_smd.ko: vermagic=5.15.148-gbfe94e95c709-dirty
+qcom_soc_wdt.ko: vermagic=5.15.148-gbfe94e95c709-dirty
+qcom-spmi-adc5.ko: vermagic=5.15.148-gbfe94e95c709-dirty
+qcom-spmi-adc-tm5.ko: vermagic=5.15.148-gbfe94e95c709-dirty
+qcom-spmi-pmic.ko: vermagic=5.15.148-gbfe94e95c709-dirty
+qcom-spmi-temp-alarm.ko: vermagic=5.15.148-gbfe94e95c709-dirty
+qcom_spss.ko: vermagic=5.15.148-gbfe94e95c709-dirty
+qcom_sysmon.ko: vermagic=5.15.148-gbfe94e95c709-dirty
+qcom_tsens.ko: vermagic=5.15.148-gbfe94e95c709-dirty
+qcom-vadc-common.ko: vermagic=5.15.148-gbfe94e95c709-dirty
+qcom_va_minidump.ko: vermagic=5.15.148-gbfe94e95c709-dirty
+qcom_wdt_core.ko: vermagic=5.15.148-gbfe94e95c709-dirty
+qcom-wled.ko: vermagic=5.15.148-gbfe94e95c709-dirty
+qdss_bridge.ko: vermagic=5.15.148-gbfe94e95c709-dirty
+qmi_helpers.ko: vermagic=5.15.148-gbfe94e95c709-dirty
+qnoc-kona.ko: vermagic=5.15.148-gbfe94e95c709-dirty
+qnoc-qos.ko: vermagic=5.15.148-gbfe94e95c709-dirty
+qpnp-amoled-regulator.ko: vermagic=5.15.148-gbfe94e95c709-dirty
+qpnp-fg-gen4-main.ko: vermagic=5.15.148-gbfe94e95c709-dirty
+qpnp-lcdb-regulator.ko: vermagic=5.15.148-gbfe94e95c709-dirty
+qpnp-pbs.ko: vermagic=5.15.148-gbfe94e95c709-dirty
+qpnp-pdphy.ko: vermagic=5.15.148-gbfe94e95c709-dirty
+qpnp-power-on.ko: vermagic=5.15.148-gbfe94e95c709-dirty
+qpnp-qnovo5-main.ko: vermagic=5.15.148-gbfe94e95c709-dirty
+qpnp-revid.ko: vermagic=5.15.148-gbfe94e95c709-dirty
+qpnp-smb5-main.ko: vermagic=5.15.148-gbfe94e95c709-dirty
+qrng_dlkm.ko: vermagic=5.15.148-gbfe94e95c709
+qrtr.ko: vermagic=5.15.148-gbfe94e95c709-dirty
+qrtr-mhi.ko: vermagic=5.15.148-gbfe94e95c709-dirty
+qrtr-smd.ko: vermagic=5.15.148-gbfe94e95c709-dirty
+qseecom_dlkm.ko: vermagic=5.15.148-gbfe94e95c709
+qti_cpufreq_cdev.ko: vermagic=5.15.148-gbfe94e95c709-dirty
+qti_devfreq_cdev.ko: vermagic=5.15.148-gbfe94e95c709-dirty
+qti-haptics.ko: vermagic=5.15.148-gbfe94e95c709-dirty
+qti_qmi_cdev.ko: vermagic=5.15.148-gbfe94e95c709-dirty
+qti_qmi_sensor.ko: vermagic=5.15.148-gbfe94e95c709-dirty
+qti-regmap-debugfs.ko: vermagic=5.15.148-gbfe94e95c709-dirty
+rdbg.ko: vermagic=5.15.148-gbfe94e95c709-dirty
+redriver.ko: vermagic=5.15.148-gbfe94e95c709-dirty
+refgen.ko: vermagic=5.15.148-gbfe94e95c709-dirty
+regmap-spmi.ko: vermagic=5.15.148-gbfe94e95c709-dirty
+rpmh-regulator.ko: vermagic=5.15.148-gbfe94e95c709-dirty
+rproc_qcom_common.ko: vermagic=5.15.148-gbfe94e95c709-dirty
+rq_stats.ko: vermagic=5.15.148-gbfe94e95c709-dirty
+rtc-pm8xxx.ko: vermagic=5.15.148-gbfe94e95c709-dirty
+sched-walt.ko: vermagic=5.15.148-gbfe94e95c709-dirty
+sdhci-msm.ko: vermagic=5.15.148-gbfe94e95c709-dirty
+secure_buffer.ko: vermagic=5.15.148-gbfe94e95c709-dirty
+sensors_ssc.ko: vermagic=5.15.148-gbfe94e95c709-dirty
+sg.ko: vermagic=5.15.148-gbfe94e95c709-dirty
+slimbus.ko: vermagic=5.15.148-gbfe94e95c709-dirty
+slim-qcom-ngd-ctrl.ko: vermagic=5.15.148-gbfe94e95c709-dirty
+smcinvoke_dlkm.ko: vermagic=5.15.148-gbfe94e95c709
+smem.ko: vermagic=5.15.148-gbfe94e95c709-dirty
+smp2p.ko: vermagic=5.15.148-gbfe94e95c709-dirty
+smp2p_sleepstate.ko: vermagic=5.15.148-gbfe94e95c709-dirty
+snd-soc-tas5805m.ko: vermagic=5.15.148-gbfe94e95c709-dirty
+snd-usb-audio-qmi.ko: vermagic=5.15.148-gbfe94e95c709-dirty
+socinfo.ko: vermagic=5.15.148-gbfe94e95c709-dirty
+soc_sleep_stats.ko: vermagic=5.15.148-gbfe94e95c709-dirty
+spcom.ko: vermagic=5.15.148-gbfe94e95c709-dirty
+spi-msm-geni.ko: vermagic=5.15.148-gbfe94e95c709-dirty
+spmi-pmic-arb-debug.ko: vermagic=5.15.148-gbfe94e95c709-dirty
+spmi-pmic-arb.ko: vermagic=5.15.148-gbfe94e95c709-dirty
+sps_drv.ko: vermagic=5.15.148-gbfe94e95c709-dirty
+spss_utils.ko: vermagic=5.15.148-gbfe94e95c709-dirty
+stm_core.ko: vermagic=5.15.148-gbfe94e95c709-dirty
+stm_ftrace.ko: vermagic=5.15.148-gbfe94e95c709-dirty
+stm_p_ost.ko: vermagic=5.15.148-gbfe94e95c709-dirty
+subsystem_sleep_stats.ko: vermagic=5.15.148-gbfe94e95c709-dirty
+sync_fence.ko: vermagic=5.15.148-gbfe94e95c709
+synx-driver.ko: vermagic=5.15.148-gbfe94e95c709-dirty
+sysmon_subsystem_stats.ko: vermagic=5.15.148-gbfe94e95c709-dirty
+thermal_pause.ko: vermagic=5.15.148-gbfe94e95c709-dirty
+tz_log_dlkm.ko: vermagic=5.15.148-gbfe94e95c709
+ufshcd-crypto-qti.ko: vermagic=5.15.148-gbfe94e95c709-dirty
+ufs_qcom.ko: vermagic=5.15.148-gbfe94e95c709-dirty
+usb_bam.ko: vermagic=5.15.148-gbfe94e95c709-dirty
+usb_f_ccid.ko: vermagic=5.15.148-gbfe94e95c709-dirty
+usb_f_cdev.ko: vermagic=5.15.148-gbfe94e95c709-dirty
+usb_f_diag.ko: vermagic=5.15.148-gbfe94e95c709-dirty
+usb_f_gsi.ko: vermagic=5.15.148-gbfe94e95c709-dirty
+usb_f_qdss.ko: vermagic=5.15.148-gbfe94e95c709-dirty
+usbpd.ko: vermagic=5.15.148-gbfe94e95c709-dirty
+videocc-sm8250.ko: vermagic=5.15.148-gbfe94e95c709-dirty

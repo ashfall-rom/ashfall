@@ -1,0 +1,55 @@
+## /system/app
+   1136   40755 (2)      0      0    4096  1-Jan-2009 01:00 .
+     50   40755 (2)      0      0    4096  1-Jan-2009 01:00 ..
+   1137   40755 (2)      0      0    4096  1-Jan-2009 01:00 BasicDreams
+   1143   40755 (2)      0      0    4096  1-Jan-2009 01:00 Bluetooth
+   1152   40755 (2)      0      0    4096  1-Jan-2009 01:00 BluetoothMidiService
+   1158   40755 (2)      0      0    4096  1-Jan-2009 01:00 BookmarkProvider
+   1164   40755 (2)      0      0    4096  1-Jan-2009 01:00 CaptivePortalLogin
+   1170   40755 (2)      0      0    4096  1-Jan-2009 01:00 CertInstaller
+   1176   40755 (2)      0      0    4096  1-Jan-2009 01:00 CompanionDeviceManager
+   1182   40755 (2)      0      0    4096  1-Jan-2009 01:00 ExtShared
+   1188   40755 (2)      0      0    4096  1-Jan-2009 01:00 FactoryTest
+   1194   40755 (2)      0      0    4096  1-Jan-2009 01:00 GameAssistant
+   1200   40755 (2)      0      0    4096  1-Jan-2009 01:00 KeyChain
+   1206   40755 (2)      0      0    4096  1-Jan-2009 01:00 PacProcessor
+   1212   40755 (2)      0      0    4096  1-Jan-2009 01:00 PartnerBookmarksProvider
+   1218   40755 (2)      0      0    4096  1-Jan-2009 01:00 RPSettings
+   1224   40755 (2)      0      0    4096  1-Jan-2009 01:00 RsMapping
+   1230   40755 (2)      0      0    4096  1-Jan-2009 01:00 WallpaperBackup
+   1236   40755 (2)      0      0    4096  1-Jan-2009 01:00 rp3launcher
+
+## /system/priv-app
+   3755   40755 (2)      0      0    4096  1-Jan-2009 01:00 .
+     50   40755 (2)      0      0    4096  1-Jan-2009 01:00 ..
+   3756   40755 (2)      0      0    4096  1-Jan-2009 01:00 BackupRestoreConfirmation
+   3762   40755 (2)      0      0    4096  1-Jan-2009 01:00 BlockedNumberProvider
+   3768   40755 (2)      0      0    4096  1-Jan-2009 01:00 BuiltInPrintService
+   3778   40755 (2)      0      0    4096  1-Jan-2009 01:00 CalendarProvider
+   3784   40755 (2)      0      0    4096  1-Jan-2009 01:00 DocumentsUI
+   3790   40755 (2)      0      0    4096  1-Jan-2009 01:00 DownloadProvider
+   3796   40755 (2)      0      0    4096  1-Jan-2009 01:00 DownloadProviderUi
+   3802   40755 (2)      0      0    4096  1-Jan-2009 01:00 ExternalStorageProvider
+   3808   40755 (2)      0      0    4096  1-Jan-2009 01:00 FOTA
+   3814   40755 (2)      0      0    4096  1-Jan-2009 01:00 FusedLocation
+   3820   40755 (2)      0      0    4096  1-Jan-2009 01:00 InputDevices
+   3826   40755 (2)      0      0    4096  1-Jan-2009 01:00 IntentResolver
+   3832   40755 (2)      0      0    4096  1-Jan-2009 01:00 LiveWallpapersPicker
+   3838   40755 (2)      0      0    4096  1-Jan-2009 01:00 LocalTransport
+   3844   40755 (2)      0      0    4096  1-Jan-2009 01:00 ManagedProvisioning
+   3850   40755 (2)      0      0    4096  1-Jan-2009 01:00 MediaProviderLegacy
+   3856   40755 (2)      0      0    4096  1-Jan-2009 01:00 MtpService
+   3862   40755 (2)      0      0    4096  1-Jan-2009 01:00 MusicFX
+   3868   40755 (2)      0      0    4096  1-Jan-2009 01:00 NetworkStack
+   3874   40755 (2)      0      0    4096  1-Jan-2009 01:00 NetworkStackNext
+   3880   40755 (2)      0      0    4096  1-Jan-2009 01:00 PackageInstaller
+   3886   40755 (2)      0      0    4096  1-Jan-2009 01:00 ProxyHandler
+   3892   40755 (2)      0      0    4096  1-Jan-2009 01:00 SettingsProvider
+   3898   40755 (2)      0      0    4096  1-Jan-2009 01:00 SetupWizard
+   3904   40755 (2)      0      0    4096  1-Jan-2009 01:00 SharedStorageBackup
+   3910   40755 (2)      0      0    4096  1-Jan-2009 01:00 Shell
+   3916   40755 (2)      0      0    4096  1-Jan-2009 01:00 SoundPicker
+   3922   40755 (2)      0      0    4096  1-Jan-2009 01:00 StatementService
+   3928   40755 (2)      0      0    4096  1-Jan-2009 01:00 UserDictionaryProvider
+   3934   40755 (2)      0      0    4096  1-Jan-2009 01:00 VpnDialogs
+

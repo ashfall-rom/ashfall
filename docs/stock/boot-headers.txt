@@ -1,0 +1,67 @@
+path: /var/home/epickitrolaz/ashfall/firmware/img/lun4_boot_a.bin
+file_size: 100663296
+kind: boot
+header_version: 4
+kernel_size: 55667200
+ramdisk_size: 0
+header_size: 1584
+page_size: 4096
+cmdline: ''
+name: 
+os_version: 13.0.0
+os_patch_level: 0024-07
+extra_cmdline: 
+kernel_offset: 4096
+ramdisk_offset: 55672832
+ramdisk_type: None
+kernel: 55667200 bytes @ 4096 -> /var/home/epickitrolaz/ashfall/firmware/img/boot/kernel
+path: /var/home/epickitrolaz/ashfall/firmware/img/lun4_init_boot_a.bin
+file_size: 8388608
+kind: boot
+header_version: 4
+kernel_size: 0
+ramdisk_size: 2010376
+header_size: 1584
+page_size: 4096
+cmdline: ''
+name: 
+os_version: 13.0.0
+os_patch_level: 0024-07
+extra_cmdline: 
+kernel_offset: 4096
+ramdisk_offset: 4096
+ramdisk_type: lz4-legacy
+ramdisk: 2010376 bytes @ 4096 -> /var/home/epickitrolaz/ashfall/firmware/img/init_boot/ramdisk
+path: /var/home/epickitrolaz/ashfall/firmware/img/lun4_vendor_boot_a.bin
+file_size: 100663296
+kind: vendor_boot
+header_version: 4
+page_size: 4096
+kernel_addr: 32768
+ramdisk_addr: 16777216
+ramdisk_size: 9725209
+cmdline: 'lpm_levels.sleep_disabled=1 video=vfb:640x400,bpp=32,memsize=3072000 msm_rtb.filter=0x237 service_locator.enable=1 swiotlb=2048 loop.max_part=7 cgroup.memory=nokmem,nosocket reboot=panic_warm bootconfig buildvariant=user'
+tags_addr: 256
+name: 
+header_size: 2128
+dtb_size: 3184830
+dtb_addr: 32505856
+dtb_offset: 9732096
+vendor_ramdisk_table_size: 108
+vendor_ramdisk_table_entry_num: 1
+vendor_ramdisk_table_entry_size: 108
+bootconfig_size: 124
+ramdisk_fragments: 1
+  - {'size': 9725209, 'offset': 0, 'type': 1, 'name': ''}
+bootconfig_offset: 12922880
+bootconfig: 4 lines
+  androidboot.hardware=qcom
+  androidboot.memcg=1
+  androidboot.usbcontroller=a600000.dwc3
+  androidboot.load_modules_parallel=true
+ramdisk_offset: 4096
+kernel_offset: None
+ramdisk_type: lz4-legacy
+vendor_ramdisk: 9725209 bytes @ 4096 -> /var/home/epickitrolaz/ashfall/firmware/img/vendor_boot/vendor_ramdisk
+dtb: 3184830 bytes @ 9732096 -> /var/home/epickitrolaz/ashfall/firmware/img/vendor_boot/dtb
+bootconfig.txt -> /var/home/epickitrolaz/ashfall/firmware/img/vendor_boot/bootconfig.txt

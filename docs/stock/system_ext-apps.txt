@@ -1,0 +1,26 @@
+## /app
+   1162   40755 (2)      0      0    4096  1-Jan-2009 01:00 .
+      2   40755 (2)      0      0    4096  1-Jan-2009 01:00 ..
+   1163   40755 (2)      0      0    4096  1-Jan-2009 01:00 BluetoothDsDaService
+   1169   40755 (2)      0      0    4096  1-Jan-2009 01:00 GoogleExtShared
+   1175   40755 (2)      0      0    4096  1-Jan-2009 01:00 PerformanceMode
+   1181   40755 (2)      0      0    4096  1-Jan-2009 01:00 PowerSaveMode
+   1187   40755 (2)      0      0    4096  1-Jan-2009 01:00 WAPPushManager
+   1193   40755 (2)      0      0    4096  1-Jan-2009 01:00 colorservice
+   1195   40755 (2)      0      0    4096  1-Jan-2009 01:00 com.qualcomm.qti.services.secureui
+
+## /priv-app
+   2306   40755 (2)      0      0    4096  1-Jan-2009 01:00 .
+      2   40755 (2)      0      0    4096  1-Jan-2009 01:00 ..
+   2307   40755 (2)      0      0    4096  1-Jan-2009 01:00 GoogleFeedback
+   2313   40755 (2)      0      0    4096  1-Jan-2009 01:00 GoogleServicesFramework
+   2319   40755 (2)      0      0    4096  1-Jan-2009 01:00 Launcher3QuickStepEX
+   2325   40755 (2)      0      0    4096  1-Jan-2009 01:00 QtiWifiService
+   2331   40755 (2)      0      0    4096  1-Jan-2009 01:00 Settings
+   2340   40755 (2)      0      0    4096  1-Jan-2009 01:00 StorageManager
+   2346   40755 (2)      0      0    4096  1-Jan-2009 01:00 SystemUI
+   2352   40755 (2)      0      0    4096  1-Jan-2009 01:00 ThemePicker
+   2358   40755 (2)      0      0    4096  1-Jan-2009 01:00 WallpaperCropper
+   2364   40755 (2)      0      0    4096  1-Jan-2009 01:00 WfdService
+   2373   40755 (2)      0      0    4096  1-Jan-2009 01:00 com.qualcomm.location
+
