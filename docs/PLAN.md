@@ -30,8 +30,14 @@ First a self-built GSI, then a full device ROM.
 - **VINTF**: Android 17 framework only ships compatibility matrices for FCM
   level 7+. If the stock vendor manifest declares `target-level` < 7, expect the
   "internal problem" dialog / HAL issues.
-- **Kernel 4.19**: Android 17 netd/BPF expectations; the community tree carries
-  "Override kernel BPF version". EROFS unsupported on 4.19 -> GSI must be ext4.
+- **Kernel**: the STOCK kernel is **5.15.148 (android13-5.15 GKI)** with EROFS,
+  F2FS casefold, full BPF, cgroups, PSI, io_uring (see docs/stock-analysis.md,
+  PR #10). The 4.19 kernel and `ro.bpf.kver_override` belong to the community
+  device build only and do NOT apply to the GSI on stock vendor.
+- **Super space**: group `qti_dynamic_partitions_a` = 6.0 GiB. A GSI replaces
+  system_a and may delete stock product_a/system_ext_a (GSIs bundle them), giving
+  a ~4.2 GiB budget for system.img. **Decision: the GSI uses EROFS** (A17 default,
+  supported by stock 5.15), ext4 stays available as a fallback flag.
 - **Display** is natively portrait (needs rotation), gamepad is an MCU.
 
 ## Repository layout (CONTRACT)
