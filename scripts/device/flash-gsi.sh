@@ -5,7 +5,8 @@
 #   * refuses anything that is not a `kona` (SM8250) with an unlocked bootloader;
 #   * works through fastbootd (userspace fastboot), the only place logical
 #     partitions like `system` can be written;
-#   * touches only `system`, `vbmeta` and (with --wipe) `userdata`+`metadata`;
+#   * writes only `system`/`vbmeta`, deletes only the logical product_<slot>/
+#     system_ext_<slot> (for space) and erases userdata/metadata with --wipe;
 #   * hard-blocks the partitions from the guide's NEVER-flash list (§13);
 #   * computes the space budget of group `qti_dynamic_partitions_<slot>`
 #     (6.0 GiB; stock used ~4.6 GiB) and frees the stock product_<slot> first,
