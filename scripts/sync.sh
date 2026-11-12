@@ -19,6 +19,8 @@ set -euo pipefail
 HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 # shellcheck source=lib/common.sh
 . "$HERE/lib/common.sh"
+# shellcheck source=remote/lib.sh
+. "$HERE/remote/lib.sh"
 load_config
 
 JOB_NAME=sync
@@ -130,11 +132,8 @@ else
   echo "[sync] existing tree - refreshing manifest ($LINEAGE_BRANCH)"
 fi
 repo init -u $(printf %q "$LINEAGE_MANIFEST") -b $(printf %q "$LINEAGE_BRANCH") --git-lfs --depth=1
-mkdir -p .repo/local_manifests
-if compgen -G $(printf %q "$REMOTE_ROOT/manifests/*.xml") >/dev/null; then
-  cp -f $(printf %q "$REMOTE_ROOT/manifests/")*.xml .repo/local_manifests/
-  echo "[sync] local manifests: \$(ls .repo/local_manifests | tr '\n' ' ')"
-fi
+echo "[sync] mirroring local manifests (exact)"
+bash $(printf %q "$REMOTE_ROOT/bin/sync-manifests.sh") $(printf %q "$REMOTE_ROOT/manifests") $(printf %q "$REMOTE_SRC")
 $( ((INIT_ONLY)) && echo 'echo "[sync] --init-only: done"; exit 0' )
 echo "[sync] repo sync -c -j$JOBS --retry-fetches=$RETRIES --no-tags --no-clone-bundle --optimized-fetch --prune"
 repo sync -c -j$JOBS --retry-fetches=$RETRIES --no-tags --no-clone-bundle --optimized-fetch --prune
@@ -143,7 +142,10 @@ EOF
 )
 
 log "starting job '$JOB_NAME' (j=$JOBS, retries=$RETRIES) on $BUILD_HOST::$BUILD_BOX"
-ASH_JOB_LOG="$LOG_PATH" "$JOB_SH" start "$JOB_NAME" "$SYNC_CMD"
+ash_upload_file "$HERE/remote/manifests.sh" "$REMOTE_ROOT/bin/sync-manifests.sh"
+start_args=()
+[[ $FORCE -eq 1 ]] && start_args+=(--force)
+ASH_JOB_LOG="$LOG_PATH" "$JOB_SH" start "$JOB_NAME" "$SYNC_CMD" "${start_args[@]}"
 printf 'job:     %s\nlog:     %s\n' "$JOB_NAME" "$LOG_PATH"
 printf 'follow:  %s log %s -f\n' "$JOB_SH" "$JOB_NAME"
 

@@ -104,7 +104,11 @@ Details:
   `scripts/sync.sh` refuses to start a second job while one is running
   (`--force` overrides) and `--wait` still works on a running job.
 - `manifests/*.xml` from this repo is rsynced to `$REMOTE_ROOT/manifests` and
-  copied into `$REMOTE_SRC/.repo/local_manifests/` before every sync.
+  mirrored **exactly** into `$REMOTE_SRC/.repo/local_manifests/` before every
+  sync (`scripts/remote/manifests.sh`): files deleted here are also removed
+  there, so `repo` never keeps applying a stale project definition.
+- While a job is running, `scripts/sync.sh --force` restarts it (the old tmux
+  session is killed and a fresh sync starts); without `--force` it refuses.
 - The job name is `sync`; `scripts/remote/job.sh status sync` reports it.
 
 ## Remote jobs (`scripts/remote/job.sh`)
