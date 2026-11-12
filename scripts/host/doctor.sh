@@ -47,8 +47,8 @@ echo "hostname=$(hostname)"
 echo "kernel=$(uname -r)"
 echo "nproc=$(nproc)"
 echo "mem_gb=$(awk "/MemTotal/{printf \"%d\", \$2/1024/1024}" /proc/meminfo)"
-echo "disk_total=$(df -BG --output=size /var/home | tail -1 | tr -dc 0-9)"
-echo "disk_free=$(df -BG --output=avail /var/home | tail -1 | tr -dc 0-9)"
+echo "disk_total=$(df -BG --output=size $(printf %q "$REMOTE_ROOT") 2>/dev/null | tail -1 | tr -dc 0-9)"
+echo "disk_free=$(df -BG --output=avail $(printf %q "$REMOTE_ROOT") 2>/dev/null | tail -1 | tr -dc 0-9)"
 echo "distrobox=$(command -v distrobox >/dev/null && echo yes || echo no)"
 echo "podman=$(command -v podman >/dev/null && echo yes || echo no)"
 ' 2>/dev/null) || {
@@ -72,9 +72,9 @@ else
   failc "ram: ${H[mem_gb]:-?} GiB (AOSP needs >= 16 GiB; 32+ recommended)"
 fi
 if [[ ${H[disk_free]:-0} =~ ^[0-9]+$ ]] && ((H[disk_free] >= 200)); then
-  okc "disk: ${H[disk_free]} GiB free of ${H[disk_total]} GiB on /var/home"
+  okc "disk: ${H[disk_free]} GiB free of ${H[disk_total]} GiB on $REMOTE_ROOT"
 else
-  failc "disk: only ${H[disk_free]:-?} GiB free on /var/home (want >= 200 GiB: tree ~110 GiB + ccache/out)"
+  failc "disk: only ${H[disk_free]:-?} GiB free on $REMOTE_ROOT (want >= 200 GiB: tree ~110 GiB + ccache/out)"
 fi
 if [[ ${H[distrobox]:-no} == yes && ${H[podman]:-no} == yes ]]; then
   okc "distrobox + podman present on host (nothing installed on Silverblue)"
@@ -97,7 +97,7 @@ echo 'box=ok'
 missing=''
 for p in $PKGS; do dpkg-query -W -f='\${Status}' \"\$p\" 2>/dev/null | grep -q 'install ok installed' || missing=\"\$missing \$p\"; done
 echo \"missing_pkgs=\$missing\"
-echo \"repo=\$(command -v repo >/dev/null && repo --version 2>/dev/null | awk 'NR==2{print \$NF}' || echo missing)\"
+echo \"repo=\$(command -v repo >/dev/null && repo --version 2>/dev/null | awk 'NR==1{print \$NF}' || echo missing)\"
 missing_cmds=''
 for c in tmux flock ccache git-lfs rsync schedtool lzop pngcrush python3; do command -v \$c >/dev/null || missing_cmds=\"\$missing_cmds \$c\"; done
 echo \"missing_cmds=\$missing_cmds\"
@@ -110,7 +110,10 @@ echo \"src_exists=\$([ -d $(printf %q "$REMOTE_SRC") ] && echo yes || echo no)\"
 echo \"src_size=\$(du -sh $(printf %q "$REMOTE_SRC") 2>/dev/null | cut -f1 || echo 0)\"
 echo \"manifest=\$(git -C $(printf %q "$REMOTE_SRC")/.repo/manifests config --get branch.default.merge 2>/dev/null | sed 's|refs/heads/||' || echo unknown)\"
 echo \"projects=\$(find $(printf %q "$REMOTE_SRC")/.repo/projects -name '*.git' 2>/dev/null | wc -l)\"
-if flock -n $(printf %q "$REMOTE_TREE_LOCK") -c true 2>/dev/null; then echo 'lock=free'; else echo 'lock=held'; fi
+if [ ! -e $(printf %q "$REMOTE_TREE_LOCK") ]; then echo 'lock=none'
+elif flock -n $(printf %q "$REMOTE_TREE_LOCK") -c true 2>/dev/null; then echo 'lock=free'
+elif [ $? -eq 1 ]; then echo 'lock=held'
+else echo 'lock=unknown'; fi
 " 2>/dev/null) || true
 declare -A B=()
 while IFS='=' read -r k v; do
@@ -121,6 +124,8 @@ if [[ ${B[box]:-} == ok ]]; then
   okc "box '$BUILD_BOX' reachable (distrobox enter)"
 else
   failc "box '$BUILD_BOX' not reachable - run scripts/host/bootstrap.sh"
+  printf '\nsummary: %d failed, %d warnings\n' "$FAILS" "$WARNS"
+  exit 1
 fi
 
 if [[ -z ${B[missing_pkgs]:-} ]]; then
@@ -133,17 +138,21 @@ if [[ ${B[repo]:-missing} != missing && -n ${B[repo]:-} ]]; then
 else
   failc "repo launcher missing in box - run scripts/host/bootstrap.sh"
 fi
-if [[ -n ${B[missing_cmds]:-} ]]; then
-  failc "tools missing in box:${B[missing_cmds]}"
-else
-  okc "tmux/flock/ccache/git-lfs/rsync/schedtool/lzop/pngcrush/python3 present"
+if [[ ${B[box]:-} == ok ]]; then
+  if [[ -n ${B[missing_cmds]:-} ]]; then
+    failc "tools missing in box:${B[missing_cmds]}"
+  else
+    okc "tmux/flock/ccache/git-lfs/rsync/schedtool/lzop/pngcrush/python3 present"
+  fi
 fi
 if [[ -n ${B[git_name]:-} && -n ${B[git_email]:-} ]]; then
   okc "git identity: ${B[git_name]} <${B[git_email]}>"
 else
   warnc "git identity incomplete (name='${B[git_name]:-}' email='${B[git_email]:-}') - bootstrap.sh sets it"
 fi
-if [[ ${B[ccache_max]:-unknown} != unknown ]]; then
+if [[ ${B[box]:-} != ok ]]; then
+  :
+elif [[ ${B[ccache_max]:-unknown} != unknown ]]; then
   okc "ccache: $REMOTE_CCACHE max=${B[ccache_max]} used=${B[ccache_used]:-0}"
 else
   failc "ccache not configured - run scripts/host/bootstrap.sh"
@@ -152,7 +161,9 @@ fi
 # --------------------------------------------------------------------------
 # 3. Tree state + lock + sync job
 # --------------------------------------------------------------------------
-if [[ ${B[src_exists]:-no} == yes ]]; then
+if [[ ${B[box]:-} != ok ]]; then
+  :
+elif [[ ${B[src_exists]:-no} == yes ]]; then
   okc "tree: $REMOTE_SRC (${B[src_size]:-?}, ${B[projects]:-0} projects)"
   if [[ -n ${B[manifest]:-} ]]; then
     okc "manifest: ${B[manifest]} (${B[projects]:-0} projects checked out)"
@@ -162,18 +173,25 @@ if [[ ${B[src_exists]:-no} == yes ]]; then
 else
   warnc "tree: $REMOTE_SRC missing - run scripts/sync.sh"
 fi
-if [[ ${B[lock]:-free} == held ]]; then
-  okc "tree lock: held (a sync/build is running; other mutators will block)"
-else
-  okc "tree lock: free"
-fi
+case ${B[lock]:-unknown} in
+  held) okc "tree lock: held (a sync/build is running; other mutators will block)" ;;
+  free) okc "tree lock: free" ;;
+  none) okc "tree lock: no lock file yet (no sync/build has run)" ;;
+  *) warnc "tree lock: unknown (lock probe failed)" ;;
+esac
 
 if host_sh "test -d $(printf %q "$REMOTE_ROOT/jobs/sync")" >/dev/null 2>&1; then
   STATUS=$(box_sh "cat $(printf %q "$REMOTE_ROOT/jobs/sync/status") 2>/dev/null || echo unknown" | tail -1)
   EXIT=$(box_sh "cat $(printf %q "$REMOTE_ROOT/jobs/sync/exit") 2>/dev/null || echo -" | tail -1)
   LAST=$(box_sh "tail -n 3 $(printf %q "$REMOTE_ROOT/jobs/sync/log") 2>/dev/null" | tr '\n' ' ')
   case $STATUS in
-    running) okc "sync job: running (exit pending); last: ${LAST: -160}" ;;
+    running)
+      if box_sh "tmux has-session -t ashfall-sync 2>/dev/null" >/dev/null 2>&1; then
+        okc "sync job: running (exit pending); last: ${LAST: -160}"
+      else
+        warnc "sync job: status running but tmux session is gone (container restarted?) - re-run scripts/sync.sh"
+      fi
+      ;;
     done) okc "sync job: done (exit $EXIT); last: ${LAST: -160}" ;;
     failed) failc "sync job: failed (exit $EXIT); last: ${LAST: -200}" ;;
     *) warnc "sync job: $STATUS (exit $EXIT)" ;;

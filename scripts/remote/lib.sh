@@ -9,11 +9,13 @@
 ASH_REMOTE_LIB=1
 
 # ash_upload_file <local-file> <remote-absolute-path>
+# Atomic: decodes next to the destination and renames, so a running reader never
+# sees a truncated file (bash reads scripts incrementally).
 ash_upload_file() {
   local src=${1:?local file} dst=${2:?remote path} b64
   [[ -f $src ]] || die "ash_upload_file: no such local file: $src"
   b64=$(base64 -w0 "$src")
-  host_sh "mkdir -p $(printf %q "$(dirname "$dst")") && printf %s $(printf %q "$b64") | base64 -d > $(printf %q "$dst")"
+  host_sh "mkdir -p $(printf %q "$(dirname "$dst")") && printf %s $(printf %q "$b64") | base64 -d > $(printf %q "$dst.tmp.$$") && chmod 0755 $(printf %q "$dst.tmp.$$") && mv -f $(printf %q "$dst.tmp.$$") $(printf %q "$dst")"
 }
 
 # ash_upload_text <text> <remote-absolute-path>

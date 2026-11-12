@@ -32,19 +32,29 @@ log "build host: $BUILD_HOST  box: $BUILD_BOX  image: $BUILD_BOX_IMAGE  mode: $M
 
 host_sh 'command -v distrobox >/dev/null && command -v podman >/dev/null' >/dev/null ||
   die "distrobox/podman missing on $BUILD_HOST (Silverblue should ship them)"
-host_sh "mkdir -p $(printf %q "$REMOTE_ROOT")/{src,ccache,ws,artifacts,logs,firmware}" >/dev/null
-ok "remote layout under $REMOTE_ROOT ready"
+BOX_PRESENT=0
 
 if host_sh "distrobox list 2>/dev/null | cut -d'|' -f2 | tr -d ' ' | grep -qx $(printf %q "$BUILD_BOX")"; then
   ok "box '$BUILD_BOX' exists"
+  BOX_PRESENT=1
+elif [[ $MODE == check ]]; then
+  warn "box '$BUILD_BOX' missing (would: distrobox create --yes --name $BUILD_BOX --image $BUILD_BOX_IMAGE)"
 else
-  if [[ $MODE == check ]]; then
-    warn "box '$BUILD_BOX' missing (would: distrobox create --yes --name $BUILD_BOX --image $BUILD_BOX_IMAGE)"
-  else
-    log "creating box '$BUILD_BOX' from $BUILD_BOX_IMAGE"
-    host_sh "distrobox create --yes --name $(printf %q "$BUILD_BOX") --image $(printf %q "$BUILD_BOX_IMAGE") --additional-flags $(printf %q "--hostname $BUILD_BOX")" >&2
-    ok "box '$BUILD_BOX' created"
-  fi
+  log "creating box '$BUILD_BOX' from $BUILD_BOX_IMAGE"
+  host_sh "distrobox create --yes --name $(printf %q "$BUILD_BOX") --image $(printf %q "$BUILD_BOX_IMAGE") --additional-flags $(printf %q "--hostname $BUILD_BOX")" </dev/null >&2
+  ok "box '$BUILD_BOX' created"
+  BOX_PRESENT=1
+fi
+
+if [[ $BOX_PRESENT -eq 1 && $MODE == apply ]]; then
+  host_sh "mkdir -p $(printf %q "$REMOTE_ROOT")/{src,ccache,ws,artifacts,logs,firmware}" >/dev/null
+  ok "remote layout under $REMOTE_ROOT ready"
+fi
+
+if [[ $BOX_PRESENT -eq 0 ]]; then
+  warn "box missing - skipping in-box checks (nothing was changed)"
+  printf 'next: re-run without --check to create the box\n'
+  exit 0
 fi
 
 # The in-box setup script. Kept inline so bootstrap.sh is a single file that
@@ -83,7 +93,7 @@ fi
 
 # AOSP build tools not packaged by apt: Google's repo launcher.
 if command -v repo >/dev/null; then
-  echo "==> repo present: $(repo --version 2>/dev/null | awk 'NR==2{print $NF; exit}')"
+  echo "==> repo present: $(repo --version 2>/dev/null | awk 'NR==1{print $NF; exit}')"
 elif [[ $mode == check ]]; then
   echo "==> repo missing (would install to /usr/local/bin/repo)"
 else
@@ -111,13 +121,19 @@ if ! git config --global user.email >/dev/null 2>&1; then
 fi
 
 # ccache: size + compression, config stored in $ccache_dir/ccache.conf.
-mkdir -p "$ccache_dir"
-if [[ $mode != check ]]; then
+if [[ $mode == check ]]; then
+  echo "==> ccache: $ccache_dir (max_size=$ccache_size, compression=true; would configure)"
+elif [[ ! -d $ccache_dir ]]; then
+  mkdir -p "$ccache_dir"
   CCACHE_DIR=$ccache_dir ccache --set-config=max_size="$ccache_size" >/dev/null
   CCACHE_DIR=$ccache_dir ccache --set-config=compression=true >/dev/null
+  echo "==> ccache: $ccache_dir configured (max_size=$ccache_size)"
+else
+  CCACHE_DIR=$ccache_dir ccache --set-config=max_size="$ccache_size" >/dev/null
+  CCACHE_DIR=$ccache_dir ccache --set-config=compression=true >/dev/null
+  echo "==> ccache: $ccache_dir (max_size=$ccache_size)"
+  CCACHE_DIR=$ccache_dir ccache -s | sed 's/^/    /'
 fi
-echo "==> ccache: $ccache_dir"
-CCACHE_DIR=$ccache_dir ccache -s | sed 's/^/    /'
 
 # Build-host sanity: 64-bit multilib compiler + python.
 gcc -m32 -x c -c /dev/null -o /dev/null && echo "==> gcc -m32 ok"
@@ -129,9 +145,9 @@ REMOTE_TMP="$REMOTE_ROOT/tmp/bootstrap-box.sh"
 ash_upload_text "$BOX_SCRIPT" "$REMOTE_TMP"
 log "running in-box setup (apt/ccache/repo)"
 if [[ $MODE == check ]]; then
-  box_sh "bash $(printf %q "$REMOTE_TMP") check $(printf %q "$REMOTE_CCACHE") $(printf %q "$CCACHE_SIZE")" >&2
+  box_sh "bash $(printf %q "$REMOTE_TMP") check $(printf %q "$REMOTE_CCACHE") $(printf %q "$CCACHE_SIZE") </dev/null" >&2
 else
-  box_sh "bash $(printf %q "$REMOTE_TMP") apply $(printf %q "$REMOTE_CCACHE") $(printf %q "$CCACHE_SIZE")" >&2
+  box_sh "bash $(printf %q "$REMOTE_TMP") apply $(printf %q "$REMOTE_CCACHE") $(printf %q "$CCACHE_SIZE") </dev/null" >&2
 fi
 ok "bootstrap complete: box '$BUILD_BOX' ready"
 printf 'next: scripts/host/doctor.sh   then   scripts/sync.sh\n'

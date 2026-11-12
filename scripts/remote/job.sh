@@ -13,7 +13,7 @@
 #   scripts/remote/job.sh list
 #
 # State lives in $REMOTE_ROOT/jobs/<name>/ inside the box:
-#   cmd.sh  log  status (running|done|failed|killed)  exit  pid
+#   cmd.sh  log  status (starting|running|done|failed|killed)  exit  pid
 #   started_at  finished_at
 # Exit code of the command is captured in `exit`.
 #
@@ -27,6 +27,7 @@ HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 # shellcheck source=lib.sh
 . "$HERE/lib.sh"
 load_config
+need ssh base64
 
 JOB_PREFIX="ashfall-"
 RUNNER_REMOTE="$REMOTE_ROOT/bin/job-runner.sh"
@@ -48,6 +49,8 @@ name=${2:?job name}
 logfile=${3:-}
 d="$jobs/$name"
 mkdir -p "$d"
+# A previous run may have left `log` as a symlink to an external log file.
+rm -f "$d/log"
 printf '%s\n' "$$" >"$d/pid"
 printf 'running\n' >"$d/status"
 date -u +%Y-%m-%dT%H:%M:%SZ >"$d/started_at"
@@ -65,8 +68,9 @@ fi
 bash "$d/cmd.sh" >>"$logfile" 2>&1
 rc=$?
 echo "=== $(date -u +%Y-%m-%dT%H:%M:%SZ) job $name finished rc=$rc ===" >>"$logfile"
-printf '%s\n' "$rc" >"$d/exit"
 date -u +%Y-%m-%dT%H:%M:%SZ >"$d/finished_at"
+printf '%s\n' "$rc" >"$d/exit"
+# status is written last so `wait` can trust that `exit` already exists.
 if [ "$rc" -eq 0 ]; then printf 'done\n' >"$d/status"; else printf 'failed\n' >"$d/status"; fi
 RUNNER
   ash_upload_file "$tmp" "$RUNNER_REMOTE"
@@ -90,7 +94,7 @@ require_job() {
 cmd_start() {
   local name=${1:?job name} cmd=${2:?command} force=0
   [[ ${3:-} == --force ]] && force=1
-  [[ $name =~ ^[A-Za-z0-9._-]+$ ]] || die "invalid job name: $name (A-Za-z0-9._-)"
+  [[ $name =~ ^[A-Za-z0-9_-]+$ ]] || die "invalid job name: $name (use A-Za-z0-9_-)"
   if is_running "$name" && [[ $force -eq 0 ]]; then
     if box_sh "tmux has-session -t $(printf %q "${JOB_PREFIX}${name}") 2>/dev/null" >/dev/null 2>&1; then
       die "job '$name' is already running (use --force to restart)"
@@ -103,19 +107,27 @@ cmd_start() {
   printf '#!/usr/bin/env bash\nset -euo pipefail\n%s\n' "$cmd" >"$cmd_file"
   ash_upload_file "$cmd_file" "$REMOTE_ROOT/jobs/$name/cmd.sh"
   rm -f "$cmd_file"
+  # Clear stale state so the post-start probe cannot be satisfied by an old run.
+  box_sh "d=$(printf %q "$REMOTE_ROOT/jobs/$name"); mkdir -p \"\$d\"; rm -f \"\$d/status\" \"\$d/exit\" \"\$d/finished_at\" \"\$d/ptr\"; printf 'starting\n' >\"\$d/status\"" >/dev/null
   logfile=${ASH_JOB_LOG:-}
-  box_sh "set -e; tmux kill-session -t $(printf %q "${JOB_PREFIX}${name}") 2>/dev/null || true; tmux new-session -d -s $(printf %q "${JOB_PREFIX}${name}") -- bash $(printf %q "$RUNNER_REMOTE") $(printf %q "$REMOTE_ROOT/jobs") $(printf %q "$name") $(printf %q "$logfile")" >/dev/null
-  # tmux returns immediately; wait briefly so `status` is meaningful right away.
+  box_sh "set -e; tmux kill-session -t $(printf %q "${JOB_PREFIX}${name}") 2>/dev/null || true; tmux new-session -d -s $(printf %q "${JOB_PREFIX}${name}") -- bash $(printf %q "$RUNNER_REMOTE") $(printf %q "$REMOTE_ROOT/jobs") $(printf %q "$name") $(printf %q "$logfile") </dev/null" >/dev/null
+  # tmux returns immediately; wait briefly until the runner has marked the job.
+  local st=starting
   for _ in 1 2 3 4 5 6 7 8 9 10; do
-    [[ $(job_status "$name") == running ]] && break
+    st=$(job_status "$name")
+    [[ $st == running ]] && break
+    [[ $st == 'done' || $st == 'failed' ]] && break
     sleep 1
   done
-  local st
-  st=$(job_status "$name")
-  if [[ $st != 'running' ]] && [[ $st != 'done' ]]; then
-    warn "job '$name' $st right after start - log tail:"
+  if [[ $st == starting || $st == unknown ]]; then
+    warn "job '$name' did not start (status: $st) - log tail:"
     cmd_log "$name" -n 20 >&2 || true
-    die "job '$name' already $st - see log above"
+    die "job '$name' did not start"
+  fi
+  if [[ $st == failed ]]; then
+    warn "job '$name' failed immediately - log tail:"
+    cmd_log "$name" -n 20 >&2 || true
+    die "job '$name' failed"
   fi
   ok "job '$name' started: $st"
   printf 'log: %s\n' "${logfile:-$REMOTE_ROOT/jobs/$name/log}"
@@ -155,25 +167,56 @@ cmd_log() {
 }
 
 cmd_wait() {
-  local name=${1:?job name} timeout=${2:-0}
+  local name=${1:?job name} timeout=0
+  shift || true
+  while [[ $# -gt 0 ]]; do
+    case $1 in
+      --timeout) timeout=${2:?--timeout needs seconds}; shift 2 ;;
+      *) die "unknown argument for wait: $1" ;;
+    esac
+  done
+  [[ $timeout =~ ^[0-9]+$ ]] || die "--timeout must be a number of seconds"
   require_job "$name"
   log "waiting for job '$name' (status: $(job_status "$name")) - Ctrl-C stops waiting, the job keeps running"
-  if [[ $timeout -gt 0 ]]; then
-    box_sh "end=\$((SECONDS+$(printf %q "$timeout"))); while [ -d $(printf %q "$REMOTE_ROOT/jobs/$name") ] && [ ! -f $(printf %q "$REMOTE_ROOT/jobs/$name/exit") ] && [ \$SECONDS -lt \$end ]; do sleep 3; done; exit 0" >/dev/null
-  else
-    box_sh "while [ ! -f $(printf %q "$REMOTE_ROOT/jobs/$name/exit") ]; do sleep 3; done"
+  local st deadline=$((SECONDS + timeout))
+  while :; do
+    st=$(job_status "$name")
+    [[ $st == 'running' || $st == 'starting' ]] || break
+    if ! box_sh "tmux has-session -t $(printf %q "${JOB_PREFIX}${name}") 2>/dev/null" >/dev/null 2>&1; then
+      st=stale
+      break
+    fi
+    if ((timeout > 0)) && ((SECONDS >= deadline)); then
+      st=timedout
+      break
+    fi
+    sleep 5
+  done
+  printf 'job:    %s\nstatus: %s\n' "$name" "$st"
+  if [[ $st == timedout ]]; then
+    printf 'timed out after %ss (job still running on the host)\n' "$timeout"
+    return 2
   fi
-  local st rc
-  st=$(job_status "$name")
+  if [[ $st == stale ]]; then
+    warn "no tmux session for '$name' but status is not final - container restarted?"
+    return 1
+  fi
+  local rc
   rc=$(box_sh "cat $(printf %q "$REMOTE_ROOT/jobs/$name/exit") 2>/dev/null || echo -" | tail -1)
-  printf 'job:    %s\nstatus: %s\nexit:   %s\n' "$name" "$st" "$rc"
+  printf 'exit:   %s\n' "$rc"
   [[ $st == 'done' ]] && [[ $rc == 0 ]]
 }
 
 cmd_kill() {
   local name=${1:?job name}
   require_job "$name"
-  box_sh "tmux kill-session -t $(printf %q "${JOB_PREFIX}${name}") 2>/dev/null || true; d=$(printf %q "$REMOTE_ROOT/jobs/$name"); if [ ! -f \"\$d/exit\" ]; then printf '143\n' >\"\$d/exit\"; printf 'killed\n' >\"\$d/status\"; date -u +%Y-%m-%dT%H:%M:%SZ >\"\$d/finished_at\"; fi" >/dev/null
+  local st
+  st=$(job_status "$name")
+  if [[ $st != running ]]; then
+    warn "job '$name' is already '$st' - nothing to kill"
+    return 0
+  fi
+  box_sh "tmux kill-session -t $(printf %q "${JOB_PREFIX}${name}") 2>/dev/null || true; d=$(printf %q "$REMOTE_ROOT/jobs/$name"); if [ ! -f \"\$d/exit\" ]; then printf '143\n' >\"\$d/exit\"; date -u +%Y-%m-%dT%H:%M:%SZ >\"\$d/finished_at\"; printf 'killed\n' >\"\$d/status\"; fi" >/dev/null
   ok "job '$name' killed"
 }
 
