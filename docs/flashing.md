@@ -155,7 +155,7 @@ Sequence:
 4. **Space budget** -- `super` is split into two slot groups of 6.0 GiB
    (`qti_dynamic_partitions_a/_b`); stock uses ~4.6 GiB (`system` 1.39,
    `vendor` 1.78, `product` 0.875, `system_ext` 0.49, `vendor_dlkm` 0.065,
-   `system_dlkm` 0.0004, `odm` 0.001 GiB, from `docs/stock/super-lpdump.txt`).
+   `system_dlkm` 0.0004, `odm` 0.001 GiB; lpdump in PR #10, `feat/stock-fw-analysis`).
    The script computes
    `image + vendor + odm + product + system_ext + system_dlkm + vendor_dlkm`
    against the 6.0 GiB budget and prints the arithmetic. Android-sparse images
