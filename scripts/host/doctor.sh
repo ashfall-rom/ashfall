@@ -57,6 +57,11 @@ echo \"podman=\$(command -v podman >/dev/null && echo yes || echo no)\"" 2>/dev/
 declare -A H=()
 while IFS='=' read -r k v; do [[ -n $k ]] && H[$k]=$v; done <<<"$HOST_OUT"
 
+# df needs the actual path, so it is interpolated locally (not in the remote script).
+read -r DISK_TOTAL DISK_FREE <<<"$(host_sh "df -BG --output=size,avail $(printf %q "$REMOTE_ROOT") 2>/dev/null | tail -1" | tr -dc '0-9 ' | tr -s ' ')"
+H[disk_total]=$DISK_TOTAL
+H[disk_free]=$DISK_FREE
+
 okc "ssh $BUILD_HOST reachable (${H[hostname]:-?}, kernel ${H[kernel]:-?})"
 
 if [[ ${H[nproc]:-0} =~ ^[0-9]+$ ]] && ((H[nproc] >= 8)); then
