@@ -1,0 +1,28 @@
+# Retroid system-side packages: .189 vs .31
+
+## sha256
+RPSettings.apk         .31  dbc57ba67f38583e0477b5598b27eb004b43d5bced1428685a44353d6fa06ebe
+                       .189 e2ce2aaa64147c0bae89d28b09ddc8b4c7bb3f66360ecd0b4946d6405ecf83fe
+GameAssistant.apk      .31  0d40af0890e10db58e6c41806dc63a4bfcede8de4288f6bcf329b4e12dfb6d8f
+                       .189 71bdc917c0a40262996d7bd4e50ab1f1895bba2588f666cc4bb98805bc7e3123
+RsMapping.apk          .31  6a1f623dd366687e4a94e929a0ed2fcdb6255c586435ae7d1d3fca2e2d19f424
+                       .189 149a0807d10e92cbd500382319978ac37163c268fbe915bc2d6f240a412ac83b
+pservice               .31  34e9bd11bf0417ecf594e38d3605683797a9a347f2b3a20b8f71fc462b9f4f8f
+                       .189 f44773c8dbdc03904dc604d94c2a6837562d14c808eb6b52ff3b644b19817960
+mcuapp_firmware.bin    .31  c78555be711e6c3f8729f0a067b22c93532e7df2155ab9edbd1853e3e8e49e09
+                       .189 49be17bb24dd99b29b8fbaeb9a5a4e6e486aa77d23afba1f0f03fe9cbff3e06d
+init.qcom.usb.sh       .31  73d5b7488582915f39802dccacec5960c49e263675516c5be3a67d6015459505
+                       .189 ff24329451255503abf8361ddc7dcdc4d0e1edad6116bc8733f66cb0bff7015a
+
+## sizes
+file                          .31       .189
+RPSettings.apk            6577497    6418365
+GameAssistant.apk        14442685   14358147
+RsMapping.apk             3086291    3039418
+pservice                    17224      18024
+mcuapp_firmware.bin         17992      18656
+init.qcom.usb.sh             8876      13179
+
+## .189 MCU firmware versioninfo.txt
+apptime=20241101_175602
+appmd5sum=7aaa94ef55f1ba547f57614b3009b924

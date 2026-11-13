@@ -1,0 +1,81 @@
+# Fan / RGB interfaces: `.189` vs `.31` (Phase 5 reference)
+
+Values below were read from the RPSettings APKs (resources + smali constants), the vendor
+init rc and the DTBs. These are interface/behaviour notes, not copied code.
+
+## Fan (both `.31` and `.189`)
+
+Sysfs nodes:
+
+| node | meaning |
+|---|---|
+| `/sys/class/gpio5_pwm2/state` | 0/1 enable |
+| `/sys/class/gpio5_pwm2/duty` | duty in ns; period is 50,000 ns (`0xc350`, 20 kHz) |
+| `/sys/class/gpio5_pwm2/speed` | read-only tach (integer; `cat`) |
+| `/sys/class/gpio5_pwm2/en_backlight` | backlight enable (RPSettings, not the fan) |
+
+Modes (`array_fan_speed`): **Off, Quiet, Sport, High, Smart**. Values written:
+
+| mode | writes |
+|---|---|
+| Off | `state=0` |
+| Quiet | `state=1`, `duty=5000` (10%) |
+| Sport | `state=1`, `duty=25000` (50%) |
+| High | `state=1`, `duty=fan_speed`; `.31` default `25000`; `.189` additionally accepts 0..100 (%) mapped to `25000..35000` (50..70%) |
+| Smart | `state=1`, closed loop every 5 s (below) |
+
+Smart curve (same in `.31`/`.189` except the cold branch):
+
+| temperature | duty |
+|---|---|
+| < 5 °C | `.31`: 0 (off) / `.189`: 5000 (10%) |
+| 5..40 °C | 8000 (16%) |
+| 40..85 °C | `((T*1.51)-28)%` of 25000 (40 °C≈8100, 60 °C≈15650, 80 °C≈23200) |
+| ≥ 85 °C | 25000 (50%) |
+
+The loop tries thermal zones 0/1/3/4, hwmon and `cpu_temp` paths, uses the first readable
+value, and rewrites `duty` every 5000 ms.
+
+Driver:
+
+* `.31`: `gpio5_pwm.ko` in `vendor_dlkm`; DT node `gpio5-pwm` (`pm8150l_gpio6`).
+* `.189`: same DT node, but the driver is built into the 4.19 kernel (`gpio5_pwm2` strings
+  in the Image); `CONFIG_QTI_MAXIM_FAN_CONTROLLER=y` also exists for other boards.
+* Both init rc files `chmod 0666` `state`/`duty`/`speed`.
+
+=> **Fan is the same interface on both; Phase 5 can target the `.31` nodes directly.**
+
+## RGB / side LEDs
+
+### `.31` (our device)
+
+Sysfs nodes:
+
+```
+/sys/class/sn3112l/led/{enable,brightness,miniled_enable,vled_enable,blackvalue}
+/sys/class/sn3112r/led/{enable,brightness}
+/sys/class/leds/{red,green,blue}/brightness
+```
+
+* `enable` is `0`/`1`.
+* `brightness` takes `"<mode>-<r>:<g>:<b>"`, e.g. `1-43:224:216`; mode `1` is the static
+  colour path, and r/g/b are the colour channels multiplied by
+  `led_light_brightness_percent` (0..1).
+* Config keys: `left_joystick_light_enabled`, `right_joystick_light_enabled`,
+  `joystick_led_light_picker_color` (default `#2BE0D8,#2BE0D8`),
+  `led_light_brightness_percent` (default `1.0`).
+* Init chmods `sn3112l/r`, `leds/{red,green,blue}` and the fan nodes.
+
+### `.189`
+
+* DTBO: `htr3212l@3c` / `htr3212r@3c`, compatible `kona,htr3212l` / `kona,htr3212r`,
+  with `htr3212l,dv-en1` / `htr3212r,dv-en2`.
+* Kernel: HTR3212L/R driver built in; **no `sn3112` strings in the 4.19 Image**.
+* RPSettings still writes the `.31` `sn3112` paths (stale in `.189`); init still chmods
+  `sn3112` and adds `breath`, but drops the generic `leds/{red,green,blue}` chmods.
+* `.189` adds `joystick_handle_light_picker_color` (default `#2BE0D8`) and changes the
+  default `led_light_brightness_percent` to `0.5` (vs `1.0` in `.31`).
+
+=> On `.189` the proven LED controller is **htr3212**, and the live sysfs class must be
+enumerated before use. On our `.31` device only the `sn3112l/r` + `leds/{red,green,blue}`
+nodes exist. **Do not port `.189` LED node assumptions to AshFall.**

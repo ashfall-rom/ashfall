@@ -1,0 +1,23 @@
+payload_version=2 minor_version=0 manifest=134686B sig=267B data_start=134977
+partial_update=False max_timestamp=1764322122
+
+[dynamic_partition_metadata]
+  snapshot_enabled=True vabc_enabled=None cow_version=None vabc_compression_param=[]
+  group qti_dynamic_partitions: max_size=6438256640 (6.0GiB)
+    partitions (5): odm, product, system, system_ext, vendor
+
+[partitions]
+name                         size   ops types                    data
+boot                      96.0MiB    48 REPLACE,REPLACE_BZ,REPLACE_XZ 13.7MiB
+dtbo                       8.0MiB     4 REPLACE_BZ,REPLACE_XZ    142.0KiB
+odm                     1008.0KiB     1 REPLACE_XZ               206.7KiB
+product                  889.4MiB   445 REPLACE,REPLACE_BZ,REPLACE_XZ 358.0MiB
+system                     1.3GiB   684 REPLACE,REPLACE_BZ,REPLACE_XZ 714.9MiB
+system_ext               508.5MiB   255 REPLACE,REPLACE_BZ,REPLACE_XZ 142.5MiB
+vbmeta                     8.0KiB     1 REPLACE_XZ               2.8KiB
+vbmeta_system              4.0KiB     1 REPLACE_XZ               1.4KiB
+vendor                     1.8GiB   916 REPLACE,REPLACE_BZ,REPLACE_XZ 1.1GiB
+xbl                        3.3MiB     2 REPLACE_XZ               2.5MiB
+xbl_config                92.0KiB     1 REPLACE_XZ               16.3KiB
+
+11 partitions, 4.6GiB of image data

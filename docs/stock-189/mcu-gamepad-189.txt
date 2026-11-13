@@ -1,0 +1,50 @@
+# MCU / gamepad: `.189` vs `.31` (Phase 5 reference)
+
+Interface notes only; no copied code. Both firmwares use the same MCU architecture.
+
+## UART and services
+
+* MCU on `/dev/ttyHS1`, 115200 8N1.
+* Frame: `A5 D3 5A 3D | seq (u8) | cmd (u8) | len (u16 LE) | payload | xor`.
+  The stock init frame captured on `.31` is
+  `A5 D3 5A 3D 01 01 0A 00 05 01 00 00 00 05 00 00 00 01 0A`.
+* `pservice` (`/system/bin/pservice`) is started by the vendor init `common.rc`; it opens
+  `/dev/ttyHS1`, `/dev/rsinput`, `/dev/rscom`, `/dev/input`, `/dev/uinput` and
+  `/dev/rstouch`. The `rs_gpio` driver powers the MCU with the screen.
+* `RsMapping.apk` carries `lib/arm64-v8a/librsinput.so` (JNI). Package name hint:
+  `.31` uses `com.rp.mapping` in its activity strings, `.189` uses
+  `com.retroidpocket.rsmapping`.
+* `pservice` and `librsinput.so` hashes differ between `.31` and `.189`, but the frame
+  magic is present in both. Treat the wire format as stable and the command set as
+  versioned by the MCU firmware.
+
+## Calibration file
+
+* Path: `/mnt/vendor/persist/retrostation/joys` (the library also tries
+  `/mnt/vendor/nvcfg/retrostation/joys` and `/mnt/vendor/retrostation/joys`).
+* Plain text, one `key=float` per line, 16 keys:
+  `left_x_center`, `left_y_center`, `left_x_min`, `left_x_max`, `left_y_min`,
+  `left_y_max`, `right_x_center`, `right_y_center`, `right_x_min`, `right_x_max`,
+  `right_y_min`, `right_y_max`, `l2_min`, `l2_max`, `r2_min`, `r2_max`.
+* Read at boot by `librsinput` (`process_calibration_file` / `rsdev_read_factory_settings`);
+  a built-in default is used if the file is missing. The mapping app can rewrite it
+  (`setJoystickCalibrationData` / `updateCalibrationSetting`).
+* Same format and paths in `.31` and `.189`.
+
+## Differences in `.189`
+
+* Adds a touch calibration activity:
+  `am start -n com.retroidpocket.rsmapping/com.ro.mapping.activity.TouchCalibrationActivity`.
+* Adds `persist.mapping.gamepad.frame`, `get_joystick_frame` and
+  `classic_direction_convert_joystick`; `.31` has `joystick_to_direkey` /
+  `persist.sys.gamepad.type`.
+* MCU firmware `/vendor/firmware/mcuapp_firmware.bin`:
+  * `.31`: 17,992 B, sha256 `c78555be711e6c3f...`
+  * `.189`: 18,656 B, sha256 `49be17bb24dd99b2...`, `apptime=20241101_175602`
+* RPSettings keeps MCU-update entry points (`mcu request upgrade`, `updateMCU`,
+  `persist.sys.mcu.update`); a newer MCU firmware is therefore available in the `.189`
+  package even though AshFall stays on `.31`.
+
+=> AshFall's GSI-side replacement is still `ashfall-rp5-input`: the vendor starts
+`/system/bin/pservice`, which the GSI replaces, so the GSI must provide the MCU bridge and
+keep writing the same calibration file.

@@ -1,0 +1,15 @@
+# RPSettings sysfs string diff: .31 vs .189
+# Both APKs carry the same generic multi-platform table, so absence is not evidence.
+
+## Added in .189
+/sys/class/dp_control/dp_state/state
+/sys/class/qcom-haptics/user_vmax_mv
+/sys/class/qti-haptics/qti-haptics/vmax_mv
+/sys/class/sn3112l/led/version
+/sys/class/thermal/thermal_zone82/temp
+/sys/devices/platform/soc/soc
+/sys/devices/soc0/images
+
+## Only in .31
+
+## Common: 31 paths

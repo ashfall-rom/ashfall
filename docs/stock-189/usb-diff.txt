@@ -1,0 +1,75 @@
+# init.qcom.usb.sh: .31 vs .189 (key differences)
+
+-if [ "$(getprop persist.vendor.usb.config)" == "" -a "$(getprop ro.build.type)" != "user" ]; then
++if [ "$(getprop persist.vendor.usb.config)" == "" -a "$(getprop ro.build.type)" != "user" -a \
++	"$(getprop init.svc.vendor.usb-gadget-hal-1-0)" != "running" ]; then
+-	          setprop persist.vendor.usb.config diag,adb,serial_cdev
++	          setprop persist.vendor.usb.config diag,adb
+-	              "monaco")
+-		          setprop persist.vendor.usb.config diag,qdss,rmnet,adb
+-		      ;;
+-	              "msmnile" | "sm6150" | "trinket" | "lito" | "atoll" | "bengal" | "lahaina" | "holi" | "taro" | "kalama" | "crow")
++	              "msmnile")
++		               case "$soc_id" in
++			               "362" | "367")
++			                  setprop persist.vendor.usb.config diag,adb
++			               ;;
++			               *)
++			                  setprop persist.vendor.usb.config diag,serial_cdev,rmnet,dpl,qdss,adb
++			               ;;
++		               esac
++		      ;;
++	              "gen4")
++			  setprop persist.vendor.usb.config adb
++		      ;;
++	              "sm6150" | "trinket" | "lito" | "atoll" | "bengal" | "lahaina" | "holi")
++	              "monaco")
++		          setprop persist.vendor.usb.config diag,qdss,rmnet,adb
++		      ;;
+-# Add usb config for QCS8250
+-#echo "set qcs8250 USB config" > /dev/kmsg
++# Add usb config for QCS8250
++echo "set qcs8250 USB config" > /dev/kmsg
+-	machine_type=`cat /sys/devices/soc0/machine`
+-
+-	# Chip ID & serial are used for unique MSM identification in Product String
+-	# If not present, then omit them instead of using 0x00000000
+-	msm_chipid=`cat /sys/devices/soc0/nproduct_id`;
+-	if [ "$msm_chipid" != "" ]; then
+-		msm_chipid_hex=`printf _CID:%04X $msm_chipid`
+-	fi
+-
++	# Chip-serial is used for unique MSM identification in Product string
++	# If MSM serial number is not available, then keep it blank instead of 0x00000000
+-		msm_serial_hex=`printf _SN:%08X $msm_serial`
++		msm_serial_hex=`printf %08X $msm_serial`
+-	setprop vendor.usb.product_string "$machine_type-$soc_hwplatform$msm_chipid_hex$msm_serial_hex"
++	machine_type=`cat /sys/devices/soc0/machine`
++	setprop vendor.usb.product_string "$machine_type-$soc_hwplatform _SN:$msm_serial_hex"
+-		serialno="123456"
+-		echo "${serialno}" > /config/usb_gadget/g1/strings/0x409/serialnumber
++		serialno=1234567
++		echo "$serialno" > /config/usb_gadget/g1/strings/0x409/serialnumber
+-# Initialize UVC0 conifguration.
++# Initialize UVC conifguration.
+-	setprop vendor.usb.uvc.function.init 1
+-fi
+-
+-#
+-# Initialize multi uvc conifguration.
+-#
+-if [ "$(getprop ro.product.board)" == "kona" ]; then
+-for i in 1 2 3 4 5 6 7 8 9 10
+-do
+-	if [ -d /config/usb_gadget/g1/functions/uvc.$i ]; then
+-		cd /config/usb_gadget/g1/functions/uvc.$i
+-
+-		echo 1024 > streaming_maxpacket
+-		echo 0 > streaming_maxburst
+-		mkdir control/header/h
+-		ln -s control/header/h control/class/fs/
+-		ln -s control/header/h control/class/ss
+-
+
+# Summary: .189 guards the default composition on init.svc.vendor.usb-gadget-hal-1-0
+# being not running, changes the apq/msmnile defaults, and drops the extra kona UVC setup.

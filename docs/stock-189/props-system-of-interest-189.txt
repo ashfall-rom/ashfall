@@ -1,0 +1,17 @@
+# .189 system props relevant to AshFall
+ro.product.system.brand=qti
+ro.product.system.device=qssi
+ro.product.system.manufacturer=QUALCOMM
+ro.product.system.model=qssi system image for arm64
+ro.product.system.name=qssi
+ro.build.display.id=RP5_V1.0.0.189_20251128_174732_user
+ro.build.version.release=13
+ro.build.version.release_or_codename=13
+ro.build.version.release_or_preview_display=13
+debug.sf.enable_hwc_vds=1
+debug.sf.latch_unsignaled=1
+persist.sys.force_sw_gles=1
+ro.treble.enabled=true
+persist.panel.orientation=90
+persist.panel.rds.orientation=270
+ro.surface_flinger.running_without_sync_framework=true

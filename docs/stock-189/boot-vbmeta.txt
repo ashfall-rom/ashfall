@@ -1,0 +1,87 @@
+# .189 boot/vbmeta/dtbo metadata
+
+## boot header
+path: img/boot.img
+file_size: 100663296
+kind: boot
+header_version: 2
+kernel_size: 39606288
+kernel_addr: 32768
+ramdisk_size: 1149499
+ramdisk_addr: 16777216
+second_size: 0
+second_addr: 0
+tags_addr: 256
+page_size: 4096
+os_version: 11.0.0
+os_patch_level: 0023-09
+name:
+cmdline: 'console=ttyMSM0,115200n8 earlycon=msm_geni_serial,0xa90000 androidboot.hardware=qcom androidboot.console=ttyMSM0 androidboot.memcg=1 lpm_levels.sleep_disabled=1 video=vfb:640x400,bpp=32,memsize=3072000 msm_rtb.filter=0x237 service_locator.enable=1 androidboot.usbcontroller=a600000.dwc3 swiotlb=2048 loop.max_part=7 cgroup.memory=nokmem,nosocket reboot=panic_warm buildvariant=user'
+extra_cmdline:
+recovery_dtbo_size: 0
+recovery_dtbo_offset: 0
+header_size: 1660
+dtb_size: 1613312
+dtb_addr: 32505856
+kernel_offset: 4096
+ramdisk_offset: 39612416
+second_offset: 40763392
+
+## dtbo table
+dt_table: version=0 total_size=3764601 header_size=32 entry_size=32 count=14 page_size=4096
+  [0] size=258320 offset=480 id=0x00000000 rev=0x00000000
+  [1] size=257814 offset=258800 id=0x00000000 rev=0x00000000
+  [2] size=291422 offset=516614 id=0x00000000 rev=0x00000000
+  [3] size=291719 offset=808036 id=0x00000000 rev=0x00000000
+  [4] size=291293 offset=1099755 id=0x00000000 rev=0x00000000
+  [5] size=268512 offset=1391048 id=0x00000000 rev=0x00000000
+  [6] size=312598 offset=1659560 id=0x00000000 rev=0x00000000
+  [7] size=256795 offset=1972158 id=0x00000000 rev=0x00000000
+  [8] size=249741 offset=2228953 id=0x00000000 rev=0x00000000
+  [9] size=248828 offset=2478694 id=0x00000000 rev=0x00000000
+  [10] size=249616 offset=2727522 id=0x00000000 rev=0x00000000
+  [11] size=175113 offset=2977138 id=0x00000000 rev=0x00000000
+  [12] size=311370 offset=3152251 id=0x00000000 rev=0x00000000
+  [13] size=300980 offset=3463621 id=0x00000000 rev=0x00000000
+
+## vbmeta
+version=1.0 algorithm=2 flags=0x0 rollback_index=0 rollback_location=0
+release_string='avbtool 1.2.0' descriptors=2968B auth=576B aux=4032B
+public_key=1032B hash=32B signature=512B
+  descriptor chain: name='vbmeta_system' rollback_location=2 flags=0x0 key=520B
+  descriptor property: com.android.build.boot.fingerprint=qti/kona/kona:11/RKQ1.230824.001/RP511281803:user/release-keys
+  descriptor property: com.android.build.boot.os_version=11
+  descriptor property: com.android.build.boot.security_patch=2023-09-01
+  descriptor property: com.android.build.boot.security_patch=2023-09-01
+  descriptor property: com.android.build.recovery.fingerprint=qti/kona/kona:11/RKQ1.230824.001/RP511281803:user/release-keys
+  descriptor property: com.android.build.vendor.fingerprint=qti/kona/kona:11/RKQ1.230824.001/RP511281803:user/release-keys
+  descriptor property: com.android.build.vendor.os_version=11
+  descriptor property: com.android.build.vendor.security_patch=2023-09-01
+  descriptor property: com.android.build.vendor.security_patch=2023-09-01
+  descriptor property: com.android.build.odm.fingerprint=qti/kona/kona:11/RKQ1.230824.001/RP511281803:user/release-keys
+  descriptor property: com.android.build.odm.os_version=11
+  descriptor property: com.android.build.dtbo.fingerprint=qti/kona/kona:11/RKQ1.230824.001/RP511281803:user/release-keys
+  descriptor hash: partition=boot image_size=42377216 flags=0x0 digest=32B
+  descriptor hash: partition=dtbo image_size=3764601 flags=0x0 digest=32B
+  descriptor hash: partition=recovery image_size=57303040 flags=0x0 digest=32B
+  descriptor hashtree: (details skipped)
+  descriptor hashtree: (details skipped)
+
+## vbmeta_system
+version=1.0 algorithm=1 flags=0x0 rollback_index=1720137600 rollback_location=0
+release_string='avbtool 1.2.0' descriptors=1840B auth=320B aux=2368B
+public_key=520B hash=32B signature=256B
+  descriptor property: com.android.build.system.os_version=13
+  descriptor property: com.android.build.system.fingerprint=qti/qssi/qssi:13/TKQ1.240621.001/RP511281728:user/release-keys
+  descriptor property: com.android.build.system.security_patch=2024-07-05
+  descriptor property: com.android.build.system.security_patch=2024-07-05
+  descriptor property: com.android.build.product.os_version=13
+  descriptor property: com.android.build.product.fingerprint=qti/qssi/qssi:13/TKQ1.240621.001/RP511281728:user/release-keys
+  descriptor property: com.android.build.product.security_patch=2024-07-05
+  descriptor property: com.android.build.product.security_patch=2024-07-05
+  descriptor property: com.android.build.system_ext.os_version=13
+  descriptor property: com.android.build.system_ext.fingerprint=qti/qssi/qssi:13/TKQ1.240621.001/RP511281728:user/release-keys
+  descriptor property: com.android.build.system_ext.security_patch=2024-07-05
+  descriptor hashtree: (details skipped)
+  descriptor hashtree: (details skipped)
+  descriptor hashtree: (details skipped)
