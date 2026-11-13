@@ -3,6 +3,18 @@ service ashfall-rp5-input /system/bin/ashfall-rp5-input
     user system
     group system input uhid
     seclabel u:r:ashfall_rp5_input:s0
+    socket ashfall_input seqpacket 0660 system system
+
+# Calibration (phase 5): the stock factory file lives on /mnt/vendor/persist,
+# which a coredomain daemon may not read.  init copies it once per boot so the
+# daemon can use user -> factory copy -> built-in defaults (docs/phase5.md
+# §2.3).  The original file is never written by AshFall.
+on post-fs-data
+    mkdir /data/misc/ashfall 0770 system system
+    copy /mnt/vendor/persist/retrostation/joys /data/misc/ashfall/joys.factory
+    chown system system /data/misc/ashfall/joys.factory
+    chmod 0600 /data/misc/ashfall/joys.factory
+    restorecon_recursive /data/misc/ashfall
 
 # The MCU UART and /dev/uinput are available once /dev is up; running from
 # class core makes the gamepad usable before the first app starts.  If the

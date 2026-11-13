@@ -48,6 +48,15 @@ PRODUCT_PRODUCT_PROPERTIES += \
 # reason GSI_FILE_SYSTEM_TYPE does (product config is parsed first).
 # BOARD_SEPOLICY_DIRS += vendor/ashfall/sepolicy
 
+# Phase 5: SELinux for ashfall-hwd and the ashfall-rp5-input extensions.
+#
+# A GSI replaces /system and /system_ext but not the stock vendor partition, so
+# BOARD_SEPOLICY_DIRS (vendor policy) would never be flashed.  system_ext
+# policy is built by us and loaded together with the platform policy, so new
+# domains, sysfs types (genfs_contexts), file labels and property types live
+# there.  See aosp/vendor/ashfall/sepolicy/README.md.
+SYSTEM_EXT_PRIVATE_SEPOLICY_DIRS += vendor/ashfall/sepolicy
+
 # AshFall UI defaults and apps (see ui.mk, apps.mk).
 include vendor/ashfall/ui.mk
 include vendor/ashfall/apps.mk

@@ -1,0 +1,17 @@
+# AshFall RP5 file labels.
+#
+# Loaded from /system_ext/etc/selinux/system_ext_file_contexts, which the
+# build merges into file_contexts.bin for the image build and libselinux loads
+# at runtime, so labelling /system/bin from here is intentional (both daemons
+# ship on the GSI system image).
+
+# Daemons
+/system/bin/ashfall-hwd              u:object_r:ashfall_hwd_exec:s0
+/system/bin/ashfall-rp5-input        u:object_r:ashfall_rp5_input_exec:s0
+
+# Control socket created by init for ashfall-rp5-input
+/dev/socket/ashfall_input            u:object_r:ashfall_input_socket:s0
+
+# Calibration directory (joys = user calibration, joys.factory = init copy of
+# the factory file).  Created by init at post-fs-data.
+/data/misc/ashfall(/.*)?             u:object_r:ashfall_data_file:s0

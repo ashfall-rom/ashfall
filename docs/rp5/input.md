@@ -168,12 +168,12 @@ values (checked after the 2026-11-13 reflash), so the built-in defaults above
 are identical to the factory data.
 
 The file is labelled `u:object_r:mnt_vendor_file:s0`, and platform policy has
-a `coredomain` neverallow on `mnt_vendor_file:dir`, so under enforcing SELinux
-the daemon cannot `search` the parent directory and falls back to the
-defaults.  With the defaults equal to the factory values this is not a
-behavioural difference; on a permissive debug boot the file is read.  The
-sepolicy patch `dontaudit`s the expected denial so it does not spam the audit
-log.
+a `coredomain` neverallow on `mnt_vendor_file:dir`, so a system daemon may not
+read it.  Since phase 5 **init copies it once per boot** to
+`/data/misc/ashfall/joys.factory` (see §"Calibration, deadzones and the control
+socket"), and the daemon never opens `/mnt/vendor` itself.  The built-in
+defaults above are identical to the factory values, so every path (user file
+-> factory copy -> built-in defaults) gives the same numbers on a stock unit.
 
 ```
 left_x_center=125.0  left_x_min=-1134.0  left_x_max=1196.0
@@ -209,25 +209,118 @@ speaks the protocol; the missing piece was only the stock userspace bridge.
 
 * `ashfall_rp5_input.c` - daemon: opens `/dev/ttyHS1` (falls back to
   `/dev/rscom` for stock), sets 115200 8N1, sends the RP5 init frame, parses
-  `CMD_STATUS` frames, applies the factory calibration (read best-effort from
-  `/mnt/vendor/persist/retrostation/joys`; the built-in defaults above are
-  used when SELinux/the file does not allow it), and creates/feeds a uinput
-  gamepad named `AshFall RP5 Gamepad`.  It re-sends the init frame when the
-  MCU goes quiet and reopens the UART if it hangs up, so a screen off/on
-  cycle does not lose the gamepad.
+  `CMD_STATUS` frames, applies the calibration and the user deadzones, streams
+  raw samples to control-socket clients and creates/feeds a uinput gamepad
+  named `AshFall RP5 Gamepad`.  It re-sends the init frame when the MCU goes
+  quiet and reopens the UART if it hangs up, so a screen off/on cycle does not
+  lose the gamepad.
+* `calib.c` / `calib.h` - the stock `joys` format: 16 `key=float` lines,
+  validation, atomic user-file writes and the user -> factory copy -> default
+  load order.
+* `mapping.c` / `mapping.h` - raw MCU counts -> Android axes (the inverted ADC
+  direction from the stock converter) and the stick/trigger deadzones.
+* `control.c` / `control.h` - the `/dev/socket/ashfall_input` server
+  (`GET/SET/RESET CAL`, `RAW ON/OFF`).
+* `input.c` / `input.h` / `plat.c` / `plat.h` - shared state, logging and
+  property helpers.
 * `ashfall-rp5-input.rc` - runs the daemon as `system:system` with the
-  `input`/`uhid` groups from `class core`.
+  `input`/`uhid` groups from `class core`, creates the control socket
+  (`socket ashfall_input seqpacket 0660 system system`) and, at
+  `post-fs-data`, creates `/data/misc/ashfall` and copies the factory
+  calibration file out of `/mnt/vendor/persist`.
 * `Android.bp` - builds it into `/system/bin`.
 * `rp5/input.mk` - adds it to `PRODUCT_PACKAGES`.
 
-SELinux: a GSI can only extend **system** policy, not the stock vendor
-policy, so a small `system/sepolicy` patch adds the
-`ashfall_rp5_input` domain, labels the binary and `/dev/ttyHS1`:
-
-* `patches/system/sepolicy/0001-sepolicy-add-ashfall-rp5-input.patch`
+SELinux: a GSI replaces `system` and `system_ext` but not the stock vendor
+partition, so the policy lives in `aosp/vendor/ashfall/sepolicy/` wired through
+`SYSTEM_EXT_PRIVATE_SEPOLICY_DIRS` (see `ashfall_rp5_input.te`,
+`file_contexts`, `property_contexts`).  It defines the `ashfall_rp5_input`
+domain, labels the binary, `/dev/ttyHS1`, `/dev/socket/ashfall_input` and
+`/data/misc/ashfall`, and lets only `system_app` connect to the socket.
+Phase 5 replaced the old `patches/system/sepolicy/0001` patch with this
+policy directory (one source of truth, and it also covers `ashfall-hwd`).
 
 No framework patch and no stock binary/APK is required.  The daemon is
 Apache-2.0 source in this repository.
+
+## Calibration, deadzones and the control socket (phase 5)
+
+Contract: [`docs/phase5.md`](../phase5.md) §2.3.  Issue #60.
+
+### Files and load order
+
+| path | written by | contents |
+|---|---|---|
+| `/data/misc/ashfall/joys` | `ashfall-rp5-input` only (atomic replace via `joys.tmp` + `rename`) | user calibration |
+| `/data/misc/ashfall/joys.factory` | init, once per boot (`copy` in the service rc) | copy of the stock factory file |
+| built-in defaults | - | the factory values listed above |
+
+The daemon loads **user -> factory copy -> built-in defaults** and logs the
+source it used (`calibration: user file|factory copy|built-in defaults`).
+`/mnt/vendor/persist/retrostation/joys` is never written.
+
+Format (identical to stock):
+
+```
+left_x_center=125.0
+left_x_min=-1134.0
+left_x_max=1196.0
+... (16 lines: {left,right}_{x,y}_{min,center,max}, l2_min/max, r2_min/max)
+```
+
+Validation: sticks need `min < center < max`, values within +-20000 and a
+travel span of 100..40000 counts; triggers need `min < max`, values within
+0..65535 and a span of at least 50.  A malformed calibration is rejected as a
+whole (the previous one stays active).
+
+### Deadzones
+
+`persist.ashfall.pad.*`, applied in the daemon after calibration so every app
+and emulator benefits:
+
+| property | range | default | effect |
+|---|---|---|---|
+| `persist.ashfall.pad.deadzone_inner` | 0..30 % | 5 | radial deadzone; the remaining travel is rescaled to full |
+| `persist.ashfall.pad.deadzone_outer` | 0..20 % | 3 | the last N % of travel is compressed to full scale |
+| `persist.ashfall.pad.trigger_deadzone` | 0..30 % | 3 | trigger values below N % are 0, the rest is rescaled 0..255 |
+
+Values are re-read every 250 ms and applied without restarting the daemon.
+
+### Control socket
+
+`/dev/socket/ashfall_input`, created by init (`seqpacket`, `0660 system
+system`); one text command per packet, one reply per command:
+
+| command | reply |
+|---|---|
+| `GET CAL` | `OK <source> k=v k=v ...` (`source` = `user`, `factory`, `default`; all 16 keys) |
+| `SET CAL k=v ...` | `OK` after validation, atomic write and immediate apply, else `ERR <reason>` (all 16 keys required, unknown/duplicate keys rejected) |
+| `RESET CAL` | `OK`; deletes the user file and re-applies factory/default |
+| `RAW ON` / `RAW OFF` | `OK`; streams raw samples to that client |
+
+Raw sample format: `RAW lx ly rx ry l2 r2 buttons_hex` (raw MCU counts, no
+calibration or deadzone), at most 100 Hz per client.  Streaming stops by
+itself when the client disconnects or sends `RAW OFF`.
+
+Example (userdebug, as root):
+
+```sh
+printf 'GET CAL\n' | nc -U -q1 /dev/socket/ashfall_input
+```
+
+## Phase 5 test checklist (in addition to the one below)
+
+1. `adb shell getprop init.svc.ashfall-rp5-input` -> `running`;
+   `adb shell ls -lZ /data/misc/ashfall` shows `joys.factory` and the
+   `ashfall_data_file` label (or `u:object_r:ashfall_data_file:s0`).
+2. `GET CAL` returns `OK factory ...` with the values above.
+3. In the AshFall Parts tester, `RAW ON` shows live raw values; releasing the
+   sticks gives near-zero calibrated axes (deadzone) and trigger bars at 0.
+4. Calibration wizard: `SET CAL` with the collected values -> `OK`; sticks
+   re-centre exactly.  `RESET CAL` -> `OK`, back to the factory values.
+5. `adb shell setprop persist.ashfall.pad.deadzone_inner 15` -> small stick
+   movements are ignored in a gamepad tester within ~1 s (no restart).
+6. Enforcing build: `dmesg | grep avc` is clean after the above.
 
 ## Test checklist (after flashing)
 
@@ -253,7 +346,10 @@ Apache-2.0 source in this repository.
 
 ## Notes / follow-ups
 
-* Fan and RGB are phase 5 (#45) and are not touched here.
+* Fan and RGB are driven by `ashfall-hwd` in phase 5 (#60), see
+  [`docs/rp5/hw.md`](hw.md); this daemon does not touch those nodes.
+* The control socket, calibration files and deadzones are described in the
+  phase 5 section above.
 * The daemon does not remap buttons; `GameAssistant`/`RsMapping` per-game
   mapping is a separate UX feature.
 * If the stock `joys` calibration is missing or corrupt, the daemon falls back

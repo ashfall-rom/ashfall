@@ -1,0 +1,38 @@
+# AshFall RP5 hardware daemon: fan + stick lighting (docs/phase5.md §2).
+#
+# System-domain daemon (it runs from /system/bin and is a coredomain, so it may
+# not touch generic sysfs: private/coredomain.te neverallows sysfs:file for
+# coredomains).  The fan and LED attributes are therefore labelled with
+# dedicated types in genfs_contexts.
+
+type ashfall_hwd, domain;
+type ashfall_hwd_exec, system_file_type, exec_type, file_type;
+
+# Dedicated sysfs types for the fan and LED attributes (genfs_contexts).
+type ashfall_fan_sysfs, fs_type, sysfs_type;
+type ashfall_led_sysfs, fs_type, sysfs_type;
+
+typeattribute ashfall_hwd coredomain;
+
+init_daemon_domain(ashfall_hwd)
+
+# Thermal zones: /sys/class/thermal and /sys/devices/virtual/thermal are
+# labelled sysfs_thermal by the stock vendor policy.  Only reading is needed.
+allow ashfall_hwd sysfs_thermal:dir r_dir_perms;
+allow ashfall_hwd sysfs_thermal:lnk_file read;
+allow ashfall_hwd sysfs_thermal:file r_file_perms;
+
+# Fan: /sys/class/gpio5_pwm2/{state,duty,speed} (genfs_contexts entry for the
+# gpio5-pwm platform device).
+allow ashfall_hwd ashfall_fan_sysfs:dir r_dir_perms;
+allow ashfall_hwd ashfall_fan_sysfs:lnk_file read;
+allow ashfall_hwd ashfall_fan_sysfs:file rw_file_perms;
+
+# Stick LEDs: /sys/class/sn3112{l,r}/led/{enable,brightness}.
+allow ashfall_hwd ashfall_led_sysfs:dir r_dir_perms;
+allow ashfall_hwd ashfall_led_sysfs:lnk_file read;
+allow ashfall_hwd ashfall_led_sysfs:file rw_file_perms;
+
+# persist.ashfall.fan.* / persist.ashfall.led.* come from ashfall_props.te;
+# the screen state for persist.ashfall.led.screen_off is the framework's
+# debug.tracing.screen_state, which domain.te already grants to every domain.

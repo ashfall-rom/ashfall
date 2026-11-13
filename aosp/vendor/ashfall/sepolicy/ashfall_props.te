@@ -1,0 +1,23 @@
+# AshFall property types (docs/phase5.md §2).
+#
+# persist.ashfall.*  settings written by the AshFall Parts app (system_app,
+#                    sharedUserId android.uid.system) and read by both daemons.
+# ashfall.status.*   status published by ashfall_hwd and read by the app.
+#
+# The property_contexts file in this directory maps the prefixes:
+#   persist.ashfall.  -> ashfall_prop
+#   ashfall.status.   -> ashfall_status_prop
+
+type ashfall_prop, property_type;
+type ashfall_status_prop, property_type;
+
+# The UI is the only writer of the settings.
+set_prop(system_app, ashfall_prop)
+
+# Both daemons read the settings ...
+get_prop(ashfall_hwd, ashfall_prop)
+get_prop(ashfall_rp5_input, ashfall_prop)
+
+# ... and only ashfall_hwd writes the status values.
+set_prop(ashfall_hwd, ashfall_status_prop)
+get_prop(system_app, ashfall_status_prop)

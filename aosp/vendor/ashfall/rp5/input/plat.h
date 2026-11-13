@@ -1,0 +1,29 @@
+/*
+ * AshFall RP5 input daemon: small platform helpers (logging, properties,
+ * monotonic clock).
+ *
+ * Kept separate from the hw daemon's plat.c on purpose: the two binaries are
+ * independent, and this one needs no sysfs access at all.
+ *
+ * SPDX-License-Identifier: Apache-2.0
+ */
+#ifndef ASHFALL_INPUT_PLAT_H
+#define ASHFALL_INPUT_PLAT_H
+
+#include <stdbool.h>
+#include <stddef.h>
+#include <stdint.h>
+
+#define AH_LOG_INFO 4
+#define AH_LOG_WARN 5
+#define AH_LOG_ERROR 6
+
+void ah_log_set_tag(const char *tag);
+void ah_logf(int prio, const char *fmt, ...) __attribute__((format(printf, 2, 3)));
+
+int64_t ah_now_ms(void);
+
+int prop_get_str(const char *name, char *buf, size_t len);
+int prop_get_int(const char *name, int fallback);
+
+#endif /* ASHFALL_INPUT_PLAT_H */
