@@ -1,0 +1,260 @@
+# RP5 input (built-in gamepad) - issue #43
+
+## Summary
+
+The Retroid Pocket 5 gamepad is **not** a USB/HID device and its buttons do not
+come from the kernel `gpio-keys` device.  A small MCU samples the buttons, both
+sticks and both triggers and reports them over the **115200-baud UART on
+`/dev/ttyHS1`**.  Stock Android bridges that UART to `/dev/uinput` from the
+stock system image (`pservice` + `RsMapping`/`librsinput.so`).  A GSI replaces
+that system image, so the bridge disappears and Android never sees a gamepad
+input device.
+
+The fix is a small system-side daemon (`ashfall-rp5-input`) that speaks the
+same MCU protocol and creates a standard Android gamepad through uinput.  No
+stock binary or APK is reused; the protocol was recovered from the stock
+library and verified on the live device.
+
+## Stock data path (what a GSI loses)
+
+The stock system image contains these Retroid pieces:
+
+| piece | partition | role |
+|---|---|---|
+| `RsMapping.apk` | `/system/app` | mapping UI; ships `lib/arm64-v8a/librsinput.so` |
+| `GameAssistant.apk` | `/system/app` | per-game overlay/mapping UI |
+| `RPSettings.apk` | `/system/app` | fan/RGB/backlight settings |
+| `pservice` | `/system/bin` | renames `/dev/ttyHS1` to `/dev/rscom` at boot, exposes `/dev/rsinput`/`/dev/rscom` sockets and the `PServerBinder` service |
+
+`librsinput.so` contains the strings and symbols that identify the real path:
+
+```
+/dev/ttyHS1        (only pservice references it in the stock images)
+/dev/rscom         (pservice renames ttyHS1 here at boot)
+/dev/rsinput       (socket exposed by pservice)
+/dev/uinput        (event injection)
+mcupower 1 / mcupower 0
+/sys/devices/platform/rsgpio/driver_ctl
+/mnt/vendor/persist/retrostation/joys     (factory stick/trigger calibration)
+```
+
+In `pservice`'s `device_manager` the sequence is: `rename("/dev/ttyHS1",
+"/dev/rscom")`, then create the Unix sockets.  `librsinput.so`'s
+`reopen_uart_fd()` calls `uart_init("/dev/rscom", 115200)` and starts parsing
+frames.  The kernel side (`rs_gpio`) only provides the MCU power/GPIO control
+nodes (`/dev/rsgpio`, `/dev/rstouch`, `driver_ctl`); it does **not** create an
+input device.  Its power state follows the screen:
+
+```
+$ adb shell dmesg | grep mcu_power_control
+RP5 [mcu_power_control(457)]mcu_power_status=[1]   # screen on
+RP5 [mcu_power_control(457)]mcu_power_status=[2]   # screen off
+```
+
+On the GSI the device nodes are still present because the stock vendor image is
+kept:
+
+```
+$ adb shell ls -l /dev/ttyHS1 /dev/rsgpio /dev/uinput
+crw-rw-rw- 1 root root   495, 1 ... /dev/ttyHS1
+crw-rw-rw- 1 root root    10,124 ... /dev/rsgpio
+crw-rw---- 1 uhid uhid   10,223 ... /dev/uinput
+```
+
+but `pservice`, `RsMapping` and `librsinput.so` are gone, and there is no
+gamepad input device:
+
+```
+$ adb shell cat /proc/bus/input/devices
+N: Name="qpnp_pon" ...
+N: Name="gpio-keys" ...        # one key only (KEY 0x8000000000000)
+N: Name="qti-haptics" ...
+N: Name="fts_ts" ...           # touchscreen
+N: Name="kona-qrd-snd-card Headset Jack" ...
+N: Name="kona-qrd-snd-card Button Jack" ...
+```
+
+## MCU protocol (verified live)
+
+Frames are little-endian, length-prefixed and XOR-checksummed:
+
+```
+A5 D3 5A 3D | seq | cmd | len_lo len_hi | payload[len] | checksum
+```
+
+`checksum = XOR(bytes from seq through the last payload byte)`.
+
+The host starts the MCU with a "set parameters" command.  For the RP5 the
+device type is 5 (`rsdev_pid_detect()` maps `ro.product.model == "Retroid
+Pocket 5"` to 0x12 and `send_data_to_MCU()` maps that to type 5):
+
+```
+A5 D3 5A 3D 01 01 0A 00 05 01 00 00 00 05 00 00 00 01 0A
+             seq cmd len=10  data...                    checksum
+```
+
+After that the MCU streams `CMD_STATUS` (`cmd=0x02`) frames.  A captured,
+idle frame is:
+
+```
+A5 D3 5A 3D AD 02 0E 00 00 00 EF 05 05 06 8D 00 1A 00 46 00 0B 00 92
+             seq cmd len=14 keys  L2    R2    LX    LY    RX    RY   csum
+```
+
+14-byte status payload:
+
+| offset | type | meaning |
+|---|---|---|
+| 0..1 | u16 BE | 16 key bits (table below) |
+| 2..3 | u16 LE | left trigger raw (L2) |
+| 4..5 | u16 LE | right trigger raw (R2) |
+| 6..7 | s16 LE | left stick X |
+| 8..9 | s16 LE | left stick Y |
+| 10..11 | s16 LE | right stick X |
+| 12..13 | s16 LE | right stick Y |
+
+The key word is **big-endian** (`data[0]` is the high byte), while the analog
+values are little-endian.  The stock parser walks the key word from bit 15
+down to bit 0 against the default table at `librsinput.so + 0x2e82c`:
+
+| payload bit | Linux code | Android button |
+|---|---|---|
+| 15 | `BTN_B` (0x131) | B |
+| 14 | `BTN_A` (0x130) | A |
+| 13 | `BTN_Y` (0x134) | Y |
+| 12 | `BTN_X` (0x133) | X |
+| 11 | `ABS_HAT0X` (+) | D-pad right |
+| 10 | `ABS_HAT0X` (-) | D-pad left |
+| 9 | `ABS_HAT0Y` (+) | D-pad down |
+| 8 | `ABS_HAT0Y` (-) | D-pad up |
+| 7 | `KEY_BACK` (0x9e) | Android back |
+| 6 | `KEY_HOMEPAGE` (0xac) | Android home (`KEY_HOME` 0x66 maps to keyboard MOVE_HOME in Generic.kl) |
+| 5 | `BTN_THUMBR` (0x13e) | right stick click |
+| 4 | `BTN_THUMBL` (0x13d) | left stick click |
+| 3 | `BTN_START` (0x13b) | start |
+| 2 | `BTN_SELECT` (0x13a) | select |
+| 1 | `BTN_TR` (0x137) | R1 |
+| 0 | `BTN_TL` (0x136) | L1 |
+
+Analog mapping follows AOSP's `VirtualGamepad` convention:
+`LX -> ABS_X`, `LY -> ABS_Y`, `RX -> ABS_Z`, `RY -> ABS_RZ`,
+`L2 -> ABS_BRAKE` (Android `AXIS_LTRIGGER`), `R2 -> ABS_GAS`
+(Android `AXIS_RTRIGGER`).
+
+The MCU's ADC direction is opposite to Android's: both the stock
+`librsinput.so` converter (which multiplies the normalised value by
+-32767) and the mainline `rsinput` driver negate it, so the daemon emits
+`(center - raw)` rather than `(raw - center)`.  A small deadzone of 1500
+counts (~5 % of full travel) suppresses the calibration offset at rest.
+
+The D-pad is a special case.  The default table stores `BTN_DPAD_*` codes
+(0x220..0x223), but before injection the stock library calls
+`gamepad_codes_convert()`, which rewrites those events to
+`ABS_HAT0X`/`ABS_HAT0Y` (±1).  This is required because AOSP's `Generic.kl`
+has no `BTN_DPAD_*` entries; `ViewRootImpl` turns the HAT axes into
+`DPAD_*` navigation.  The daemon does the same conversion.
+
+The stock library also tells us the uinput IDs: `gp_create()` uses
+`vendor 0x2020`, `product 0x3001` for the normal ("Retroid Pocket
+Controller") mode on the RP5 (0x2022/0x3001 for the XInput mode).  The daemon
+uses 0x2020/0x3001, so `Generic.kl` and the generic joystick mapper apply;
+no stock keylayout is needed.  The old RP5-ROM keylayouts
+(`Vendor_2020_Product_0111/0112.kl`) belong to the other Retroid models
+(types 2/7) and are not used here.
+
+Factory calibration is stored in
+`/mnt/vendor/persist/retrostation/joys`; the live unit contains exactly these
+values (checked after the 2026-11-13 reflash), so the built-in defaults above
+are identical to the factory data.
+
+The file is labelled `u:object_r:mnt_vendor_file:s0`, and platform policy has
+a `coredomain` neverallow on `mnt_vendor_file:dir`, so under enforcing SELinux
+the daemon cannot `search` the parent directory and falls back to the
+defaults.  With the defaults equal to the factory values this is not a
+behavioural difference; on a permissive debug boot the file is read.  The
+sepolicy patch `dontaudit`s the expected denial so it does not spam the audit
+log.
+
+```
+left_x_center=125.0  left_x_min=-1134.0  left_x_max=1196.0
+left_y_center=31.0   left_y_min=-1146.0  left_y_max=1174.0
+right_x_center=82.0  right_x_min=-1121.0 right_x_max=1218.0
+right_y_center=-6.0  right_y_min=-1167.0 right_y_max=1192.0
+l2_min=92.0 l2_max=1266.0  r2_min=0.0 r2_max=1362.0
+```
+
+At rest the raw trigger values are *above* `l2_max`/`r2_max` (~1519/1541 on
+this unit) and pulling a trigger lowers them towards the minimum, so the
+daemon uses `(max - raw) / (max - min)` clamped to 0..255.
+
+### Live transcript
+
+Reading `/dev/ttyHS1` after sending the init frame (device running the GSI,
+2026-11-13):
+
+```
+$ printf '\245\323\132\075\001\001\012\000\005\001\000\000\000\005\000\000\000\001\012' > /dev/ttyHS1
+$ dd if=/dev/ttyHS1 bs=512 count=... | xxd
+00000000: a5d3 5a3d ad02 0e00 0000 ef05 0506 8d00  ..Z=............
+00000010: 1a00 4600 0b00 92a5 d35a 3dae 020e 0000  ..F......Z=.....
+...
+```
+
+This is the evidence that the MCU path works on the GSI as soon as a host
+speaks the protocol; the missing piece was only the stock userspace bridge.
+
+## Fix
+
+`aosp/vendor/ashfall/rp5/input/`:
+
+* `ashfall_rp5_input.c` - daemon: opens `/dev/ttyHS1` (falls back to
+  `/dev/rscom` for stock), sets 115200 8N1, sends the RP5 init frame, parses
+  `CMD_STATUS` frames, applies the factory calibration (read best-effort from
+  `/mnt/vendor/persist/retrostation/joys`; the built-in defaults above are
+  used when SELinux/the file does not allow it), and creates/feeds a uinput
+  gamepad named `AshFall RP5 Gamepad`.  It re-sends the init frame when the
+  MCU goes quiet and reopens the UART if it hangs up, so a screen off/on
+  cycle does not lose the gamepad.
+* `ashfall-rp5-input.rc` - runs the daemon as `system:system` with the
+  `input`/`uhid` groups from `class core`.
+* `Android.bp` - builds it into `/system/bin`.
+* `rp5/input.mk` - adds it to `PRODUCT_PACKAGES`.
+
+SELinux: a GSI can only extend **system** policy, not the stock vendor
+policy, so a small `system/sepolicy` patch adds the
+`ashfall_rp5_input` domain, labels the binary and `/dev/ttyHS1`:
+
+* `patches/system/sepolicy/0001-sepolicy-add-ashfall-rp5-input.patch`
+
+No framework patch and no stock binary/APK is required.  The daemon is
+Apache-2.0 source in this repository.
+
+## Test checklist (after flashing)
+
+1. `adb shell getevent -pl` or `adb shell dumpsys input | grep -i gamepad`
+   shows `AshFall RP5 Gamepad`.
+2. In a gamepad tester app or `adb shell getevent -l /dev/input/eventX`:
+   * A/B/X/Y -> `BTN_SOUTH`/`BTN_EAST`/`BTN_NORTH`/`BTN_WEST`;
+   * D-pad -> `ABS_HAT0X`/`ABS_HAT0Y` (Android `AXIS_HAT_X/Y` →
+     `DPAD_UP`/`DOWN`/`LEFT`/`RIGHT`);
+   * L1/R1 -> `BTN_TL`/`BTN_TR`;
+   * Start/Select -> `BTN_START`/`BTN_SELECT`;
+   * stick clicks -> `BTN_THUMBL`/`BTN_THUMBR`;
+   * Back/Home -> `KEY_BACK`/`KEY_HOMEPAGE`.
+3. Left stick -> `ABS_X`/`ABS_Y`, right stick -> `ABS_Z`/`ABS_RZ`;
+   both re-center when released.
+4. L2/R2 -> `ABS_BRAKE`/`ABS_GAS` (Android `AXIS_LTRIGGER`/`AXIS_RTRIGGER`),
+   resting at 0 and reaching full scale.
+5. Screen off/on (the MCU power is cycled by `rs_gpio`): the gamepad still
+   works after wake; the daemon re-sends the init frame if the MCU asks for
+   it.
+6. Reboot: the service starts automatically (`adb shell getprop
+   init.svc.ashfall-rp5-input` -> `running`).
+
+## Notes / follow-ups
+
+* Fan and RGB are phase 5 (#45) and are not touched here.
+* The daemon does not remap buttons; `GameAssistant`/`RsMapping` per-game
+  mapping is a separate UX feature.
+* If the stock `joys` calibration is missing or corrupt, the daemon falls back
+  to the values above, so the sticks are still usable.

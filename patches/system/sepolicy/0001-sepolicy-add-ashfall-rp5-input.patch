@@ -1,0 +1,59 @@
+From 1d61183c347bfd977c661a0ae3e8ad635504d423 Mon Sep 17 00:00:00 2001
+From: AshFall <ashfall@localhost>
+Date: Fri, 13 Nov 2026 15:23:31 +0000
+Subject: [PATCH] sepolicy: add ashfall RP5 gamepad input daemon
+
+---
+ private/ashfall_rp5_input.te | 22 ++++++++++++++++++++++
+ private/file_contexts        |  2 ++
+ 2 files changed, 24 insertions(+)
+ create mode 100644 private/ashfall_rp5_input.te
+
+diff --git a/private/ashfall_rp5_input.te b/private/ashfall_rp5_input.te
+new file mode 100644
+index 0000000..3fa49cd
+--- /dev/null
++++ b/private/ashfall_rp5_input.te
+@@ -0,0 +1,22 @@
++# AshFall RP5 built-in gamepad bridge.
++#
++# The RP5 gamepad is sampled by an MCU on the 115200-baud UART at
++# /dev/ttyHS1 and injected through /dev/uinput.  On stock Android this is
++# done by the stock system image (pservice/RsMapping), which a GSI replaces.
++type ashfall_rp5_input, domain;
++type ashfall_rp5_input_exec, system_file_type, exec_type, file_type;
++
++typeattribute ashfall_rp5_input coredomain;
++
++init_daemon_domain(ashfall_rp5_input)
++
++# MCU UART (labelled serial_device in file_contexts) and the uinput node.
++allow ashfall_rp5_input serial_device:chr_file rw_file_perms;
++allow ashfall_rp5_input uhid_device:chr_file rw_file_perms;
++
++# Factory calibration is best-effort: /mnt/vendor is labelled mnt_vendor_file
++# and platform policy neverallows coredomain directory search there, so the
++# read is expected to fail under enforcing.  Silence the audit log; the
++# daemon falls back to the built-in RP5 defaults.
++dontaudit ashfall_rp5_input mnt_vendor_file:dir search;
++dontaudit ashfall_rp5_input mnt_vendor_file:file { getattr open read };
+diff --git a/private/file_contexts b/private/file_contexts
+index 56977a1..f5b9652 100644
+--- a/private/file_contexts
++++ b/private/file_contexts
+@@ -207,6 +207,7 @@
+ /dev/tty		u:object_r:owntty_device:s0
+ /dev/tty[0-9]*		u:object_r:tty_device:s0
+ /dev/ttyS[0-9]*		u:object_r:serial_device:s0
++/dev/ttyHS1		u:object_r:serial_device:s0
+ /dev/ttyUSB[0-9]*	u:object_r:usb_serial_device:s0
+ /dev/ttyACM[0-9]*	u:object_r:usb_serial_device:s0
+ /dev/tun		u:object_r:tun_device:s0
+@@ -372,6 +373,7 @@
+ /system/bin/profcollectctl          u:object_r:profcollectd_exec:s0
+ /system/bin/storaged                u:object_r:storaged_exec:s0
+ /system/bin/virtual_touchpad        u:object_r:virtual_touchpad_exec:s0
++/system/bin/ashfall-rp5-input       u:object_r:ashfall_rp5_input_exec:s0
+ /system/bin/virtual_camera          u:object_r:virtual_camera_exec:s0
+ /system/bin/hw/android\.frameworks\.bufferhub@1\.0-service    u:object_r:fwk_bufferhub_exec:s0
+ /system/bin/hw/android\.system\.suspend-service               u:object_r:system_suspend_exec:s0
