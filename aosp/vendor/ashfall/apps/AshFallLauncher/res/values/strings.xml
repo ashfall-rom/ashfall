@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Copyright (C) 2026 The AshFall Project. Apache-2.0. -->
+<resources>
+    <string name="app_name">AshFall</string>
+    <string name="settings">Settings</string>
+    <string name="hint_bar">A  Open      B  Back      L1 / R1  Page      Start  Options      Select  Settings</string>
+    <string name="loading_apps">Loading apps\u2026</string>
+    <string name="no_apps">No apps found</string>
+    <string name="focused_none">AshFall</string>
+    <string name="battery_percent">%1$d%%</string>
+
+    <string name="menu_open">Open</string>
+    <string name="menu_app_info">App info</string>
+    <string name="menu_uninstall">Uninstall</string>
+    <string name="menu_hint">A  Select      B  Close</string>
+    <string name="menu_uninstall_failed">Couldn\u2019t uninstall %1$s</string>
+
+    <string name="cd_previous_page">Previous page</string>
+    <string name="cd_next_page">Next page</string>
+    <string name="cd_settings">Open Settings</string>
+    <string name="cd_wifi">Wi-Fi status</string>
+    <string name="wifi_connected">Wi-Fi connected</string>
+    <string name="wifi_off">Wi-Fi not connected</string>
+    <string name="cd_battery">Battery status</string>
+    <string name="cd_app_icon">Icon of %1$s</string>
+
+    <string name="launch_failed">Couldn\u2019t open %1$s</string>
+    <string name="app_info_unavailable">No app details available for %1$s</string>
+</resources>

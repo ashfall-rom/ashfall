@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Copyright (C) 2026 The AshFall Project. Apache-2.0. -->
+<resources>
+    <!-- Low-glare, high-contrast surface for a handheld played in the dark. -->
+    <color name="background_top">#FF0C1016</color>
+    <color name="background_bottom">#FF121A24</color>
+    <color name="surface">#FF171F2B</color>
+    <color name="surface_strong">#FF202A39</color>
+    <color name="divider">#FF243041</color>
+
+    <color name="text_primary">#FFE9EEF6</color>
+    <color name="text_secondary">#FF9AA7BA</color>
+    <color name="text_muted">#FF6C7A8E</color>
+
+    <!-- Warm ember accent, carried over from the stock launcher's #f24646. -->
+    <color name="accent">#FFF24646</color>
+    <color name="accent_soft">#33F24646</color>
+    <color name="ok">#FF8FD3A0</color>
+    <color name="warning">#FFF24646</color>
+
+    <color name="tile_focused">#FF232E3E</color>
+    <color name="tile_pressed">#FF1A2230</color>
+    <color name="transparent">#00000000</color>
+
+    <color name="icon_background">#FF0C1016</color>
+    <color name="dialog_scrim">#B3000000</color>
+</resources>
