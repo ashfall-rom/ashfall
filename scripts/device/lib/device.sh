@@ -12,6 +12,8 @@
 #   DEV_BOX=ashfall-dev
 #   DEV_BOX_IMAGE=docker.io/library/ubuntu:24.04
 #   DEV_BOX_PACKAGES="adb fastboot usbutils"
+#   FB_RETRY=3                  # getvar retries (flaky ABL)
+#   FB_TRANSITION_TIMEOUT=180   # per-step mode-transition wait, in seconds
 
 DEV_BOX=${DEV_BOX:-ashfall-dev}
 DEV_BOX_IMAGE=${DEV_BOX_IMAGE:-docker.io/library/ubuntu:24.04}
@@ -155,6 +157,80 @@ dev_resolve_serial() {
   fi
   [[ -n ${DEV_SERIAL:-} ]] || die "no device found via adb/fastboot on $BUILD_HOST (check USB cable + mode)"
   printf '%s\n' "$DEV_SERIAL"
+}
+
+# --- mode transitions --------------------------------------------------------
+# The RP5's ABL (observed 2026-11-13) rejects
+#   fastboot reboot fastboot -> FAILED (remote: 'unknown command')
+# so fastbootd is only reachable through the stock recovery:
+#   bootloader -> fastboot reboot recovery -> adb state 'recovery'
+#              -> adb reboot fastboot -> getvar is-userspace == yes
+# From Android/recovery/sideload, `adb reboot fastboot` goes there directly.
+FB_TRANSITION_TIMEOUT=${FB_TRANSITION_TIMEOUT:-180}
+
+# dev_wait_mode <mode> [timeout-seconds]: poll dev_mode until it reports <mode>.
+# Returns 0 on success, non-zero on timeout, ambiguity or 'none'. The last
+# observed mode is left in DEV_MODE_LAST for the caller's error message.
+dev_wait_mode() {
+  local want=$1 timeout=${2:-$FB_TRANSITION_TIMEOUT} m deadline
+  DEV_MODE_LAST=none
+  deadline=$((SECONDS + timeout))
+  while :; do
+    m=$(dev_mode || true)
+    DEV_MODE_LAST=${m:-none}
+    [[ $m == "$want" ]] && return 0
+    [[ $m == ambiguous ]] && return 1
+    ((SECONDS < deadline)) || return 1
+    sleep 2
+  done
+}
+
+# ensure_fastbootd: put the device into fastbootd (userspace fastboot) and
+# verify it before returning. Every wait is bounded by FB_TRANSITION_TIMEOUT;
+# on a timeout it dies with the last observed mode (fail closed) instead of
+# letting a caller write to the wrong mode.
+ensure_fastbootd() {
+  local m timeout=$FB_TRANSITION_TIMEOUT
+  DEV_MODE_LAST=none
+  [[ -n ${DEV_SERIAL:-} ]] || DEV_SERIAL=$(dev_resolve_serial)
+  m=$(dev_mode)
+  case $m in
+    fastbootd)
+      ok "already in fastbootd"
+      return 0
+      ;;
+    android|recovery|sideload)
+      printf '\n==> %s -> fastbootd (adb)\n    + adb reboot fastboot\n' "$m"
+      dev_adb reboot fastboot ||
+        die "adb reboot fastboot failed in mode '$m'; check the USB connection and 'adb devices'"
+      ;;
+    unauthorized)
+      die "adb is unauthorized: accept the USB debugging prompt on the RP5, then re-run"
+      ;;
+    offline)
+      die "adb device is offline: re-plug the USB cable (or hard power-off 15 s), then re-run"
+      ;;
+    fastboot)
+      printf "\n==> bootloader -> stock recovery (this ABL rejects 'fastboot reboot fastboot')\n"
+      printf '    + fastboot reboot recovery\n'
+      dev_fastboot reboot recovery ||
+        die "fastboot reboot recovery failed; check 'fastboot devices' (flaky bootloader: hard power-off 15 s and retry)"
+      if ! dev_wait_mode recovery "$timeout"; then
+        die "device did not show up as adb 'recovery' after waiting up to ${timeout}s from 'fastboot reboot recovery' (last mode: ${DEV_MODE_LAST}); the RP5's 'No command' screen is normal -- check the cable, then 'adb devices'"
+      fi
+      ok "stock recovery reachable (adb state: recovery)"
+      printf '\n==> recovery -> fastbootd (adb)\n    + adb reboot fastboot\n'
+      dev_adb reboot fastboot ||
+        die "adb reboot fastboot failed from recovery; check 'adb devices' (state must be 'recovery')"
+      ;;
+    *)
+      die "cannot reach fastbootd from mode '$m' (connect the RP5 in Android, recovery or the bootloader)"
+      ;;
+  esac
+  if ! dev_wait_mode fastbootd "$timeout"; then
+    die "device did not enter fastbootd (is-userspace: yes) after waiting up to ${timeout}s (last mode: ${DEV_MODE_LAST}); check the screen, then hard power-off 15 s and retry"
+  fi
+  ok "fastbootd reachable (is-userspace: yes)"
 }
 
 # dev_fastboot <args...>: read-only fastboot against $DEV_SERIAL

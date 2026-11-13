@@ -12,7 +12,15 @@
 # Erasing userdata/metadata (--wipe) is allowed; flashing them is not.
 #
 # Runs in the bootloader's fastboot (NOT fastbootd), all adb/fastboot calls via
-# the build host's ashfall-dev container.
+# the build host's ashfall-dev container. Every image here is a PHYSICAL
+# partition: `super` is the 12 GiB physical partition (guide §8.3 flashes it as
+# `fastboot flash super lun0_super.bin` from the bootloader), so no step needs
+# fastbootd. The dynamic/logical partitions inside super only matter to
+# flash-gsi.sh. This script deliberately refuses fastbootd instead of rebooting
+# the device on its own.
+#
+# Userdata erase is fast on this device (0.09 s observed 2026-11-13); the
+# guide's older ~351 s figure does not apply here.
 #
 # Usage:
 #   scripts/device/restore-stock.sh [options]
@@ -26,7 +34,7 @@
 #   --no-super          skip the 12 GiB super image (keeps current system)
 #   --no-splash         skip splash
 #   --wipe              erase userdata + metadata (needed if /data is unusable;
-#                       userdata erase takes ~6 minutes)
+#                       userdata erase is seconds on this device)
 #   --set-active a|b    mark this slot active (default: leave as is)
 #   --reboot            reboot to Android when done (default: stay in fastboot)
 #   --skip-size-check   do not verify image sizes against partition sizes
@@ -255,7 +263,7 @@ print_plan() {
     fi
   done
   if ((WIPE)); then
-    printf '\n  erase userdata (slow, ~6 min) + erase metadata\n'
+    printf '\n  erase userdata (observed 0.09 s on 2026-11-13) + erase metadata\n'
   fi
   [[ -n $SET_ACTIVE ]] && printf '  set-active %s\n' "$SET_ACTIVE"
   ((REBOOT)) && printf '  reboot\n'
@@ -293,7 +301,7 @@ for entry in "${PLAN[@]}"; do
 done
 
 if ((WIPE)); then
-  printf '\n==> erase userdata (slow)\n    + fastboot erase userdata\n'
+  printf '\n==> erase userdata (seconds on this device)\n    + fastboot erase userdata\n'
   fb erase userdata || { warn "erase userdata failed"; fails=$((fails + 1)); }
   printf '\n==> erase metadata\n    + fastboot erase metadata\n'
   fb erase metadata || { warn "erase metadata failed"; fails=$((fails + 1)); }
