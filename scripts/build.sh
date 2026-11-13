@@ -565,8 +565,8 @@ for f in \
   "$PRODUCT_OUT/system/build.prop" \
   "$PRODUCT_OUT/installed-files.txt" \
   "$PRODUCT_OUT/installed-files.json" \
-  "$PRODUCT_OUT/obj/PACKAGING/systemimage_intermediates/system_image_info.txt" \
-  "$PRODUCT_OUT/obj/PACKAGING/systemimage_intermediates/file_list.txt" \
+  "$PRODUCT_OUT/obj/PACKAGING/system_intermediates/system_image_info.txt" \
+  "$PRODUCT_OUT/obj/PACKAGING/system_intermediates/file_list.txt" \
   "$PRODUCT_OUT/vbmeta.img"
 do
   [[ -f $f ]] || continue
