@@ -573,6 +573,30 @@ do
   cp -f "$f" "$ASH_ARTIFACT_DIR/$(basename "$f")"
 done
 
+# The GSI forces product/system_ext under /system, and Android 17 keeps their
+# build.prop at <partition>/etc/build.prop. ro.ashfall.version/build.id live in
+# the *product* one, so collect them under distinct names and verify they made
+# it into the image.
+ASHFALL_VERSION_IN_IMAGE=""
+for part in product system_ext; do
+  src="$PRODUCT_OUT/system/$part/etc/build.prop"
+  [[ -f $src ]] || continue
+  cp -f "$src" "$ASH_ARTIFACT_DIR/$part-build.prop"
+  info "collected $part build.prop ($src)"
+done
+PRODUCT_PROPS="$PRODUCT_OUT/system/product/etc/build.prop"
+if [[ -f $PRODUCT_PROPS ]]; then
+  ASHFALL_VERSION_IN_IMAGE=$(sed -n 's/^ro\.ashfall\.version=//p' "$PRODUCT_PROPS" | head -n1)
+  ASHFALL_BUILD_ID_IN_IMAGE=$(sed -n 's/^ro\.ashfall\.build\.id=//p' "$PRODUCT_PROPS" | head -n1)
+  info "image props: ro.ashfall.version=${ASHFALL_VERSION_IN_IMAGE:-<missing>} ro.ashfall.build.id=${ASHFALL_BUILD_ID_IN_IMAGE:-<missing>}"
+  [[ -n $ASHFALL_VERSION_IN_IMAGE ]] ||
+    die "ro.ashfall.version is missing from $PRODUCT_PROPS (product makefiles not applied?)"
+  grep -q 'product/etc/build.prop' "$PRODUCT_OUT/installed-files.txt" 2>/dev/null ||
+    warn "product/etc/build.prop is not in installed-files.txt; the image may not carry the AshFall props"
+else
+  warn "no $PRODUCT_PROPS; product partition properties were not generated"
+fi
+
 # Independent proof of the filesystem, not just the make variable: read the
 # superblock magic (ext4: 0xEF53 at +1080, EROFS: 0xE0F5E1E2 at +1024). This
 # does not depend on file(1)'s magic database.
@@ -601,7 +625,7 @@ IMGFS
 IMG_SIZE=$(stat -c %s "$ASH_ARTIFACT_DIR/system.img")
 IMG_GIB=$(awk -v b="$IMG_SIZE" 'BEGIN { printf "%.2f", b / 1073741824 }')
 IMG_FS=$(image_fs "$ASH_ARTIFACT_DIR/system.img")
-IMG_TYPE=$(file -b "$ASH_ARTIFACT_DIR/system.img" 2>/dev/null || echo 'file(1) unavailable')
+IMG_TYPE=$(file -b "$ASH_ARTIFACT_DIR/system.img" 2>/dev/null || echo "$IMG_FS (file(1) not installed)")
 info "system.img: $IMG_FS, ${IMG_GIB} GiB ($IMG_SIZE bytes)"
 info "file(1): $IMG_TYPE"
 [[ $IMG_FS == "$ASH_SYSTEM_FS" ]] ||
@@ -656,6 +680,7 @@ BUILD_END=$(date +%s)
   echo "image_size_check=$IMAGE_SIZE_CHECK"
   echo "system_img_sha256=$(cut -d' ' -f1 "$ASH_ARTIFACT_DIR/system.img.sha256")"
   echo "system_img_type=$IMG_TYPE"
+  echo "ro_ashfall_version_in_image=${ASHFALL_VERSION_IN_IMAGE:-}"
 } > "$ASH_ARTIFACT_DIR/build-info.txt"
 
 command -v ccache >/dev/null 2>&1 && ccache --show-stats >> "$ASH_ARTIFACT_DIR/build-info.txt" || true
