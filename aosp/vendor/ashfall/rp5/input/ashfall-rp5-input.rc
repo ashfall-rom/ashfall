@@ -1,0 +1,9 @@
+service ashfall-rp5-input /system/bin/ashfall-rp5-input
+    class core
+    user system
+    group system input uhid
+    seclabel u:r:ashfall_rp5_input:s0
+
+# The MCU UART and /dev/uinput are available once /dev is up; running from
+# class core makes the gamepad usable before the first app starts.  If the
+# service exits it is restarted by init with the usual crash backoff.

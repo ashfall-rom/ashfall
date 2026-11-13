@@ -1,0 +1,20 @@
+// AshFall RP5 built-in gamepad bridge.
+//
+// The RP5 gamepad is an MCU on /dev/ttyHS1; stock Android bridges it to
+// /dev/uinput from the (replaced) stock system image.  This tiny daemon does
+// the same job for the GSI.
+cc_binary {
+    name: "ashfall-rp5-input",
+    srcs: ["ashfall_rp5_input.c"],
+    cflags: [
+        "-Wall",
+        "-Wextra",
+        "-Wno-unused-parameter",
+    ],
+    shared_libs: [
+        "liblog",
+    ],
+    init_rc: ["ashfall-rp5-input.rc"],
+    compile_multilib: "64",
+    vendor: false,
+}
