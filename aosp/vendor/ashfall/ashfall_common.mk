@@ -48,4 +48,7 @@ PRODUCT_PRODUCT_PROPERTIES += \
 # reason GSI_FILE_SYSTEM_TYPE does (product config is parsed first).
 # BOARD_SEPOLICY_DIRS += vendor/ashfall/sepolicy
 
+# RP5 hardware support (phase 4): display, input, usb - see rp5/rp5.mk.
+include vendor/ashfall/rp5/rp5.mk
+
 # Shared (GSI + device) system properties go above this line.

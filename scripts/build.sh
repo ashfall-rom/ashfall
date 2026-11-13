@@ -32,7 +32,7 @@ JOBS=""
 VARIANT=""
 PRODUCT=""
 DO_XZ=0
-FS="erofs"
+FS="ext4"
 DRY_RUN=0
 BUILD_ID=""
 FETCH_ID=""
@@ -50,8 +50,8 @@ Build options:
   --jobs N           parallel jobs (default: BUILD_JOBS from config, else nproc)
   --variant V        build variant (default: GSI_VARIANT, userdebug)
   --product P        product (default: GSI_PRODUCT, ashfall_gsi_arm64)
-  --fs erofs|ext4    system.img filesystem (default: erofs; ext4 is the
-                     fallback for kernels without EROFS)
+  --fs ext4|erofs    system.img filesystem (default: ext4 - the stock RP5
+                     first-stage fstab only mounts ext4 system, issue #39)
   --xz               also produce system.img.xz in the artifact directory
   --build-id ID      explicit build id (default: <utc>-<product>-<variant>-<sha>)
   --dry-run          print the plan (paths, lunch release, commands) and exit;
