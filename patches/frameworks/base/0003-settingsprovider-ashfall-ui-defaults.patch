@@ -1,0 +1,110 @@
+From bbd516fd5101643ec4a125f8bd37796a90fbccb2 Mon Sep 17 00:00:00 2001
+From: AshFall UI <ui@ashfall.local>
+Date: Fri, 13 Nov 2026 18:15:45 +0000
+Subject: [PATCH 2/2] SettingsProvider: AshFall UI defaults for the RP5
+
+Seed two LineageOS system settings on first boot / database upgrade:
+
+  navigation_bar_hint=0  hide the gestural navigation hint. On this
+                         landscape handheld the hint is the stashed
+                         Launcher3 taskbar handle drawn over app content;
+                         with it hidden the nav-bar window reports a zero
+                         navigationBars inset and apps use the full height,
+                         while the bottom gesture area and edge back
+                         gestures keep working (docs/ui.md).
+  enable_taskbar=0       keep the large-screen (>=600dp wide) taskbar,
+                         bubble bar and pinned-app strip disabled.
+
+SettingsProvider only seeds a hardcoded key list and these LineageOS
+keys are not part of it, so add a version 236 -> 237 migration. It only
+inserts when the key is absent, so an explicit user choice is preserved.
+The values come from res/values/defaults.xml and can be overlaid by a
+product if needed.
+
+Fixes #51
+---
+ .../SettingsProvider/res/values/defaults.xml  | 16 ++++++++
+ .../providers/settings/SettingsProvider.java  | 38 ++++++++++++++++++-
+ 2 files changed, 53 insertions(+), 1 deletion(-)
+
+diff --git a/frameworks/base/packages/SettingsProvider/res/values/defaults.xml b/frameworks/base/packages/SettingsProvider/res/values/defaults.xml
+index 580dce2..42ef36f 100644
+--- a/frameworks/base/packages/SettingsProvider/res/values/defaults.xml
++++ b/frameworks/base/packages/SettingsProvider/res/values/defaults.xml
+@@ -355,4 +355,20 @@
+ 
+     <!-- Default for Settings.Global.AIRPLANE_MODE_SYNC -->
+     <bool name="def_airplane_mode_sync_enabled">true</bool>
++
++    <!--
++        AshFall (RP5 landscape handheld): LineageSettings.System.NAVIGATION_BAR_HINT.
++        0 hides the gestural navigation hint. On this device the hint is the stashed
++        Launcher3 taskbar handle, which is drawn over app content at the bottom of a
++        1920x1080 landscape screen. Gesture navigation (edge back, bottom home) is
++        unaffected: the handle window only reports a zero navigationBars inset.
++    -->
++    <integer name="def_navigation_bar_hint">0</integer>
++
++    <!--
++        AshFall: LineageSettings.System.ENABLE_TASKBAR. 0 keeps the large-screen
++        (>=600dp wide) LineageOS taskbar, its bubble bar and pinned-app strip
++        disabled; the device is a small landscape handheld, not a tablet.
++    -->
++    <integer name="def_enable_taskbar">0</integer>
+ </resources>
+diff --git a/frameworks/base/packages/SettingsProvider/src/com/android/providers/settings/SettingsProvider.java b/frameworks/base/packages/SettingsProvider/src/com/android/providers/settings/SettingsProvider.java
+index 8ddd167..b086bfe 100644
+--- a/frameworks/base/packages/SettingsProvider/src/com/android/providers/settings/SettingsProvider.java
++++ b/frameworks/base/packages/SettingsProvider/src/com/android/providers/settings/SettingsProvider.java
+@@ -4403,7 +4403,13 @@ public class SettingsProvider extends ContentProvider {
+ 
+         @VisibleForTesting
+         final class UpgradeController {
+-            private static final int SETTINGS_VERSION = 236;
++            private static final int SETTINGS_VERSION = 237;
++
++            // AshFall: LineageOS navigation settings seeded by the version 236 -> 237
++            // migration below. Their defaults live in res/values/defaults.xml so a
++            // product can overlay them (see docs/ui.md).
++            private static final String SETTING_NAVIGATION_BAR_HINT = "navigation_bar_hint";
++            private static final String SETTING_ENABLE_TASKBAR = "enable_taskbar";
+ 
+             private final int mUserId;
+             private final int mDeviceId;
+@@ -7085,6 +7091,36 @@ public class SettingsProvider extends ContentProvider {
+                     currentVersion = 236;
+                 }
+ 
++                // Version 237: AshFall defaults for the RP5 landscape handheld (docs/ui.md):
++                //   * navigation_bar_hint=0 hides the gestural navigation hint, which on this
++                //     device is the stashed Launcher3 taskbar handle drawn over app content.
++                //     Gesture navigation keeps working: the handle window reports a zero
++                //     navigationBars inset but still provides the bottom gesture area.
++                //   * enable_taskbar=0 keeps the large-screen (>=600dp wide) tablet taskbar,
++                //     its bubble bar and pinned-app strip disabled.
++                // Existing values are preserved, so a user toggle is never overwritten.
++                if (currentVersion == 236) {
++                    if (systemSettings.getSettingLocked(SETTING_NAVIGATION_BAR_HINT).isNull()) {
++                        systemSettings.insertSettingOverrideableByRestoreLocked(
++                                SETTING_NAVIGATION_BAR_HINT,
++                                Integer.toString(
++                                        resources.getInteger(R.integer.def_navigation_bar_hint)),
++                                null /* tag */,
++                                true /* makeDefault */,
++                                SettingsState.SYSTEM_PACKAGE_NAME);
++                    }
++                    if (systemSettings.getSettingLocked(SETTING_ENABLE_TASKBAR).isNull()) {
++                        systemSettings.insertSettingOverrideableByRestoreLocked(
++                                SETTING_ENABLE_TASKBAR,
++                                Integer.toString(
++                                        resources.getInteger(R.integer.def_enable_taskbar)),
++                                null /* tag */,
++                                true /* makeDefault */,
++                                SettingsState.SYSTEM_PACKAGE_NAME);
++                    }
++                    currentVersion = 237;
++                }
++
+                 // vXXX: Add new settings above this point.
+ 
+                 if (currentVersion != newVersion) {
