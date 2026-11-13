@@ -69,6 +69,10 @@ First a self-built GSI, then a full device ROM.
   patch, overlay, build) MUST hold `REMOTE_TREE_LOCK` (`box_sh_locked`).
 - Builds always start from a clean state: `repo forall -c 'git reset --hard; git clean -fdq'`
   on patched projects -> overlay `aosp/` -> apply `patches/` -> build.
+- **Builds are run by the orchestrator only**, one at a time (`scripts/build.sh`,
+  `BUILD_JOBS=12`). soong analysis alone peaks at ~46 GB RSS on the 62 GB host
+  (+32 GB zram). Workers push their branch and report "ready to build"; they never
+  run build.sh themselves unless their brief explicitly says so.
 - Long jobs (sync, build) run detached in tmux on the host with a log under
   `REMOTE_LOGS`; never block an SSH session for hours.
 - The RP5 is USB-connected to the build host. fastboot/adb run there.
