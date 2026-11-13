@@ -8,8 +8,8 @@
 #   persist.ashfall.  -> ashfall_prop
 #   ashfall.status.   -> ashfall_status_prop
 
-type ashfall_prop, property_type;
-type ashfall_status_prop, property_type;
+system_internal_prop(ashfall_prop)
+system_internal_prop(ashfall_status_prop)
 
 # The UI is the only writer of the settings.
 set_prop(system_app, ashfall_prop)
