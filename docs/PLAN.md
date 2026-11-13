@@ -36,8 +36,15 @@ First a self-built GSI, then a full device ROM.
   device build only and do NOT apply to the GSI on stock vendor.
 - **Super space**: group `qti_dynamic_partitions_a` = 6.0 GiB. A GSI replaces
   system_a and may delete stock product_a/system_ext_a (GSIs bundle them), giving
-  a ~4.2 GiB budget for system.img. **Decision: the GSI uses EROFS** (A17 default,
-  supported by stock 5.15), ext4 stays available as a fallback flag.
+  a ~4.2 GiB budget for system.img. **Decision (revised 2026-11-13): the GSI is
+  ext4.** The stock kernel supports EROFS, but the stock first-stage fstab (vendor_boot)
+  only lists `system` as ext4, so an EROFS system cannot mount (issue #39: init panics
+  with "Invalid ext4 superblock ... Failed to mount /system").
+- **Fastbootd**: the RP5 ABL rejects `fastboot reboot fastboot`; fastbootd is reached
+  via `fastboot reboot recovery` + `adb reboot fastboot` (issue #38, scripts handle it).
+- **Debugging boot crashes**: panics go to Qualcomm crash-dump mode (05c6:900e);
+  `scripts/device/ramdump.sh` extracts the kernel log. `/dev/kmsg` is rate-limited, so
+  boot once via `fastboot boot` with `printk.devkmsg=on` (issue #39).
 - **Display** is natively portrait (needs rotation), gamepad is an MCU.
 
 ## Repository layout (CONTRACT)
