@@ -192,7 +192,7 @@ public final class LauncherSettingsActivity extends Activity {
                 this::applyGradientEnd);
         gradientEndCustom = addCustomColorRow(endColumn,
                 () -> Appearance.load(this).gradientEnd, this::applyGradientEnd);
-        gradientColumns.addView(startColumn, weightParams(1, 12));
+        gradientColumns.addView(startColumn, weightParams(1, 24));
         gradientColumns.addView(endColumn, weightParams(1, 0));
         gradientBox.addView(gradientColumns);
 
@@ -361,8 +361,8 @@ public final class LauncherSettingsActivity extends Activity {
             swatch.setColor(colors[i]);
             swatch.setAccent(accent);
             LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
-                    Ui.dp(this, 40), Ui.dp(this, 40));
-            params.setMargins(0, 0, Ui.dp(this, 8), 0);
+                    Ui.dp(this, 38), Ui.dp(this, 38));
+            params.setMargins(0, 0, Ui.dp(this, 6), 0);
             swatch.setOnClickListener(view -> listener.onColor(swatch.getColor()));
             target.add(swatch);
             allSwatches.add(swatch);
@@ -379,8 +379,8 @@ public final class LauncherSettingsActivity extends Activity {
         swatch.setAccent(accent);
         swatch.setOnClickListener(view -> openPicker(current.get(), listener));
         LinearLayout.LayoutParams swatchParams = new LinearLayout.LayoutParams(
-                Ui.dp(this, 40), Ui.dp(this, 40));
-        swatchParams.setMargins(0, 0, Ui.dp(this, 8), 0);
+                Ui.dp(this, 38), Ui.dp(this, 38));
+        swatchParams.setMargins(0, 0, Ui.dp(this, 6), 0);
         customRow.addView(swatch, swatchParams);
         allSwatches.add(swatch);
 
