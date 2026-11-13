@@ -1,0 +1,12 @@
+# `.189` VINTF/FCM summary
+
+* Vendor manifest: `target-level="5"` (Android 11), 109 `<hal>` entries across 25
+  manifest files (66 in the main manifest).
+* Vendor device compatibility matrix: requires `system-sdk` / `vendor-ndk` **30**.
+* Vendor props: `ro.vendor.build.version.release=11`, `ro.vendor.build.version.sdk=30`,
+  `ro.vndk.version=30`, `ro.product.first_api_level=30`, `ro.board.api_level=30`.
+* `.31` for comparison: `target-level="7"`, VNDK 33, API 33.
+
+Android 17 ships framework compatibility matrices for levels 7, 8, 202404, 202504, 202604
+and 202704. There is **no level-5 matrix**, so an A17 GSI on `.189`'s Android 11 vendor is
+outside the tested/supported VINTF envelope (the HALs themselves are mostly level-5 HIDL).

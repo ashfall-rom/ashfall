@@ -13,10 +13,13 @@
 #   community/** (A17 device tree's key files + FETCH-STATUS.txt),
 #   fcm-report.md (vendor manifest vs Android 17 matrices).
 #
-# Usage: scripts/firmware/inspect.sh [--out DIR] [--no-community] [--no-fcm]
+# Usage: scripts/firmware/inspect.sh [--workdir DIR] [--out DIR]
+#                                    [--no-community] [--no-fcm]
 #
-# Runs remotely (build host) and rsyncs the result back to DIR (default
-# docs/stock). NO binary images are written into the repo.
+# --workdir selects the extracted-firmware root (default: $REMOTE_FIRMWARE), so
+# a second firmware staged under a different directory can be inspected without
+# replacing the .31 tree. Runs remotely (build host) and rsyncs the result back
+# to DIR (default docs/stock). NO binary images are written into the repo.
 set -euo pipefail
 
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
@@ -33,6 +36,7 @@ Usage: $(basename "$0") [options]
 Collect the stock-firmware facts needed by docs/stock-analysis.md.
 
 Options:
+  --workdir DIR    extracted-firmware root (default: $REMOTE_FIRMWARE)
   --out DIR        local output directory (default: $ASH_ROOT/docs/stock)
   --no-community   skip fetching the community A17 device tree files
   --no-fcm         skip the Android 17 compatibility-matrix comparison
@@ -50,10 +54,12 @@ FW_SLOT=${FW_SLOT:-_a}
 # --------------------------------------------------------------------------
 if [[ ${ASH_FW_REMOTE:-0} != 1 ]]; then
   OUT=$ASH_ROOT/docs/stock
+  WORKDIR=$REMOTE_FIRMWARE
   DO_COMMUNITY=1
   DO_FCM=1
   while [[ $# -gt 0 ]]; do
     case $1 in
+      --workdir) WORKDIR=$2; shift 2 ;;
       --out) OUT=$2; shift 2 ;;
       --no-community) DO_COMMUNITY=0; shift ;;
       --no-fcm) DO_FCM=0; shift ;;
@@ -61,10 +67,11 @@ if [[ ${ASH_FW_REMOTE:-0} != 1 ]]; then
       *) die "unknown argument: $1 (try --help)" ;;
     esac
   done
+  FW_REPORT=$WORKDIR/report
   need rsync
   ws=$(ws_push) || die "could not push checkout to the build host"
   log "collecting stock facts on $BUILD_HOST ($ws)"
-  remote="--remote --slot $(printf %q "$FW_SLOT")"
+  remote="--remote --slot $(printf %q "$FW_SLOT") --workdir $(printf %q "$WORKDIR")"
   [[ $DO_COMMUNITY == 1 ]] && remote+=" --community"
   [[ $DO_FCM == 1 ]] && remote+=" --fcm"
   # shellcheck disable=SC2029  # intentional: expanded locally
@@ -85,13 +92,19 @@ while [[ $# -gt 0 ]]; do
   case $1 in
     --remote) shift ;;
     --slot) SLOT=$2; shift 2 ;;
+    --workdir) REMOTE_FIRMWARE=$2; shift 2 ;;
     --community) DO_COMMUNITY=1; shift ;;
     --fcm) DO_FCM=1; shift ;;
     *) die "unknown remote argument: $1" ;;
   esac
 done
-FW_SLOT=$SLOT
+FW_IMG=$REMOTE_FIRMWARE/img
+FW_SUPER=$FW_IMG/super
+FW_RAMDISK=$FW_IMG/vendor_ramdisk
 FW_VENDOR_DUMP=$FW_IMG/vendordump
+FW_LOG=$REMOTE_FIRMWARE/logs
+FW_REPORT=$REMOTE_FIRMWARE/report
+FW_SLOT=$SLOT
 
 [[ -f $FW_SUPER/vendor${FW_SLOT}.img ]] || die "run scripts/firmware/extract.sh first"
 [[ -d $FW_VENDOR_DUMP/vendor ]] || die "vendor text dump missing; run scripts/firmware/extract.sh"
