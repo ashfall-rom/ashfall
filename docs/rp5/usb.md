@@ -138,7 +138,10 @@ List of devices attached
 
 `dumpsys usb` then reports `current_functions_applied=true` and
 `kernel_state=CONFIGURED`. The experiment is transient (`svc` does not touch
-`persist.*`); the device was left on the framework default afterwards.
+`persist.*`); it only changes the current function selection and a reboot
+restores the persisted default. It was run on GSI build
+`20261113-140720-ashfall_gsi_arm64-userdebug-10ea9f70738e` (commit `10ea9f7`)
+before the host reboot.
 
 ## Fix
 
