@@ -44,8 +44,8 @@ the complete state of the project as left by the first orchestrator session.
 - SoC SM8250 "kona", Adreno 650, 8/12 GB RAM, UFS (KIOXIA), A/B, dynamic partitions,
   super 12 GiB, group `qti_dynamic_partitions_a` 6.0 GiB (stock used 4.6 GiB: system 1.39,
   vendor 1.78, product 0.875, system_ext 0.486 GiB, + odm, system_dlkm, vendor_dlkm).
-- **Stock kernel 5.15.148-android13-8 GKI** (EROFS, F2FS, BPF, cgroups ok). The 4.19 kernel
-  belongs only to the community Ayn8250Dev tree. Boot header v4 (vendor_boot), init_boot.
+- **Stock kernel 5.15.148-android13-8 GKI** (EROFS, F2FS, BPF, cgroups ok). Retail firmware
+  (.34-.189) uses 4.19 + an A11 vendor instead; the pre-release .31 is the only 5.15/A13 build (see 7). Boot header v4 (vendor_boot), init_boot.
 - Vendor: Android 13, API 33, VNDK 33, VINTF target-level 7 (A17 accepts it).
 - **Stock first-stage fstab mounts system as ext4 only -> GSI must be ext4** (EROFS GSI
   panicked: "Invalid ext4 superblock ... Failed to mount /system", issue #39).
@@ -144,40 +144,27 @@ Not working / open: fan + RGB (#45, phase 5), launcher (#52).
 - #48 flash-gsi serial auto-detect with stale wireless adb entries.
 - #45 fan + RGB (phase 5).
 
-## 7. CURRENT STEP: firmware update .31 -> .189 (agreed plan with user)
-Why: the GSI uses everything except /system from stock (kernel, vendor, dtbo, Qualcomm fw);
-retail fixes (.152 audio/charging, docks, MCU fw?) live there; .189 is very likely the
-final RP5 firmware (RP5 discontinued 2026-09-14). Full .189 image is not publicly available
-(user searched); only TheGammaSqueeze .31 dump exists. Retail versions seen: .91, .106,
-.152, .167/.168/.169, .189. User's unit originally shipped/ran V1.0.0.189 before a brick.
-Steps:
-1. DONE: GSI snapshot saved (`/root/archive/ashfall-gsi-on-fw31-snapshot.tgz`), calib saved.
-2. DONE: stock .31 restored to slot A with the one-session script
-   `/var/home/epickitrolaz/ashfall/jobs/restore/run.sh` (started via
-   `setsid nohup distrobox enter --name ashfall-dev --no-tty -- sh run.sh > log.txt`),
-   EXIT=0, userdata erase 351 s; booted stock Android (USB 18d1:4ee1 MTP).
-3. NOW: user does minimal setup + enables USB debugging (Build number x7, USB debugging,
-   accept prompt). Then capture `adb logcat` (all buffers) while the user runs
-   Settings -> System -> Retroid Pocket FOTA -> Check version (possibly several hops);
-   record the download URLs (incremental packages are only useful as documentation; a full
-   package with payload.bin could be extracted directly).
-4. After it reports .189 and boots once (likely on slot b): user enters EDL (unplug, power
-   off 15 s, hold Vol Up + Vol Down and plug USB; screen stays black; 05c6:9008). Read all
-   SOFTWARE partitions with edl in container `ashfall-edl` (firehose loader
-   `prog_ufs_firehose_sm8250_lite_lp5.elf` is NOT extracted yet - extract it from the .31
-   archive in `/var/home/epickitrolaz/ashfall/firmware/dl/` with 7z, see guide §7.5): boot/init_boot/
-   vendor_boot/dtbo/vbmeta/vbmeta_system for BOTH slots, super, recovery, and the firmware
-   set (aop cmnlib cmnlib64 devcfg dsp featenabler hyp imagefv keymaster modem multiimgoem tz
-   uefisecapp qupfw multiimgqti xbl xbl_config abl), sha256 everything. NEVER read/write
-   userdata or touch device-unique partitions (guide §13). Store under
-   `/var/home/epickitrolaz/ashfall/firmware-189/`. Anti-rollback: once on .189, assume no
-   way back to .31 Qualcomm firmware.
-5. Worker: re-run scripts/firmware/{extract,inspect}.sh against .189 (parameterise the
-   firmware dir), diff vs .31 (fstab ext4?, init.qcom.usb.sh, VINTF, kernel version/config,
-   MCU protocol / RsMapping+librsinput changes, fan/RGB nodes, props), write
-   docs/stock-analysis-189.md; update config (STOCK_FW_*), restore script for .189.
-6. Flash AshFall on .189 with --wipe (flash-gsi.sh; slot = active slot after FOTA), user
-   retests the section-5 checklist. Then phase 5 per user's spec.
+## 7. Firmware base: DECIDED - stay on pre-release .31 (2026-11-13)
+- Online FOTA on .31 says "latest version": .31 uses a dead ADUPS product
+  (`ro.fota.productId=1723789976` -> "project does not exist"). Retail project is
+  `1731375894` (`ro.fota.device=RP5_A133`). Protocol + package table: `docs/firmware/fota.md`,
+  client `scripts/firmware/fota-check.py` (#55/#56).
+- The official FULL `1.0.0.189` OTA was downloaded and verified:
+  `/root/archive/fota/rp5-ota/1.0.0.168-full-1.0.0.189.zip` (sha256 80f16fd5...4148f), plus
+  small deltas and the retail `.34` factory QFIL `/root/archive/fota/RP5_20241118.7z`
+  (**never flash it unmodified: rewrites GPT, persist, devinfo, xbl/abl**).
+- **Retail firmware (.34 ... .189) is a different branch: kernel 4.19.157, boot header v2,
+  Android 11 vendor (SDK/VNDK 30, VINTF target-level 5).** The lineage-24.0 tree only ships
+  framework compatibility matrices 7, 8, 202404+, so A17 cannot run on it. The .189 OTA also
+  rewrites xbl/xbl_config (possible one-way anti-rollback) and reformats /metadata (data loss).
+  Details: issue #57 "SAFETY CHECK" comment and `docs/stock-analysis-189.md`.
+- The pre-release .31 (5.15 GKI, A13 vendor, FCM 7) is the right base for A17. **Decision
+  (user): stay on .31, do not install .189.** The .189 package is kept only as reference for
+  Retroid's system-side fan/RGB/MCU behaviour (Phase 5).
+- State: AshFall GSI (build `20261113-181817-...-2703f2c67af5`) re-flashed on .31 slot a with
+  wipe and booted (2026-11-13 ~21:55 UTC). The user needs to redo setup; retest checklist §5.
+- Note: right after a wiped first boot, `adb shell` can answer "error: closed" for a few
+  minutes; `adb kill-server` + retry fixed it.
 
 ## 8. Lessons / gotchas
 - /dev/kmsg is rate-limited (10 lines/5 s): to see init errors boot once via
