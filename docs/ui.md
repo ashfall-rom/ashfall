@@ -1,21 +1,28 @@
-# AshFall UI: keyguard swipe and system bars on the RP5
+# AshFall UI: keyguard, system bars and home transitions on the RP5
 
 Phase-4 `ui` worker. Covers issues **#50** (keyguard unlock swipe only registers
-when perfectly vertical) and **#51** (no visible gesture pill / navigation bar or
-taskbar, gestures kept). Written against v0.1.0-gsi (build `20261113-163514`) on
-the RP5: 1920x1080 landscape, 360 dpi, stock Android 13 vendor, LineageOS 24.0
+when perfectly vertical), **#51/#63** (no visible gesture pill / navigation bar
+or taskbar, gestures kept) and **#64** (seamless HOME with the third-party
+AshFall launcher). Written against v0.1.0-gsi (build `20261113-163514`) on the
+RP5: 1920x1080 landscape, 360 dpi, stock Android 13 vendor, LineageOS 24.0
 (Android 17) GSI.
 
-Both fixes follow the `docs/PLAN.md` preference order. #50 cannot be done with an
-overlay or property (see 1.5), so it is a small `frameworks/base` patch; #51 is a
-settings-provider default, also carried as a `frameworks/base` patch because
-SettingsProvider only seeds a hardcoded list of keys (see 2.4).
+Both original fixes follow the `docs/PLAN.md` preference order. #50 cannot be
+done with an overlay or property (see 1.5), so it is a small `frameworks/base`
+patch. #51/#63 is a `LineageSettingsProvider` default (the two keys are
+LineageSettings, not AOSP Settings - see 2.4), plus one build-time SetupWizard
+overlay because setup writes the hint itself. This document also covers #64,
+the seamless HOME transition with the third-party AshFall launcher (section 3).
 
 | File | Purpose |
 |---|---|
 | `patches/frameworks/base/0002-systemui-tune-falsing-for-landscape-handheld.patch` | #50: SystemUI falsing thresholds |
-| `patches/frameworks/base/0003-settingsprovider-ashfall-ui-defaults.patch` | #51: `navigation_bar_hint=0`, `enable_taskbar=0` defaults |
-| `aosp/vendor/ashfall/ui.mk` | documents both hooks (no generated content) |
+| `patches/lineage-sdk/0001-lineagesettings-provider-ashfall-navigation-defaults.patch` | #51/#63: `navigation_bar_hint=0`, `enable_taskbar=0` defaults and the 24 -> 25 DB migration |
+| `aosp/vendor/ashfall/overlay/no-rro/packages/apps/SetupWizard/app/src/main/res/layout/setup_navigation.xml` | #63: setup's "hide gesture hint" switch defaults to on |
+| `patches/packages/apps/Launcher3/0001-launcher3-keep-external-display-taskbar.patch` | #63: only the primary display follows `enable_taskbar=0` |
+| `patches/frameworks/base/0003-settingsprovider-keep-settings-version.patch` | keeps the AOSP settings DB version at 237 after removing the old seed |
+| `patches/frameworks/base/0004-wm-shell-instant-third-party-home.patch` | #64: no default task-open animation for a third-party HOME |
+| `aosp/vendor/ashfall/ui.mk` | overlay wiring and the list of hooks |
 | `docs/ui.md` | this document |
 
 ## 1. #50 - unlock swipe is direction/length sensitive
@@ -183,7 +190,10 @@ the transient taskbar - pinned-app strip, bubble bar and the stashed handle (the
 "navigation hint" pill) - and the handle window is the 24 dp strip at the bottom
 that the user sees drawn over app content. The `Taskbar` window for `displayId=2`
 (the separate 1280x720 virtual/second display, port 130) is a different, full
-48 dp navigation bar; it is intentionally left alone.
+48 dp navigation bar; it is intentionally left alone. `enable_taskbar` is a
+single global key, so a Launcher3 patch keeps that external-display taskbar
+enabled even when the primary display follows the product default `0` (it is
+that display's only navigation bar).
 
 `TaskbarStashController` reads `LineageSettings.System.NAVIGATION_BAR_HINT`:
 with the hint enabled the stashed height is `taskbar_stashed_size`; with it
@@ -208,6 +218,14 @@ reverted with `settings delete system ...`:
 | display 0 `systemGestures` sides (back) | 67 px left/right | 67 px left/right |
 | display 2 taskbar (port 130) | `fillx108` | `fillx108` (untouched) |
 
+Correction after #63: this experiment used the AOSP `settings` CLI, which
+writes `Settings.System`. Launcher3 actually reads `LineageSettings.System`
+(`content://lineagesettings`), so the setting change described here cannot be
+what made the handle disappear; the A/B was confounded by the launcher churn
+described below. The *end state* observed (a 0-height taskbar window, zero
+`navigationBars` inset, full-height apps) is still valid, but it is reached by
+the LineageSettings values in section 2.3, not by `settings put system`.
+
 Gesture checks with the settings applied (all passed):
 
 * back: Settings root -> tap "Network & internet" (`com.android.settings/.SubSettings`)
@@ -230,46 +248,77 @@ applied; later A/B attempts were confounded by a Launcher3 process that kept
 creating a 0-height nav window after the churn. The final confirmation is the
 post-flash checklist below.
 
-### 2.3 Fix
+### 2.3 Fix as shipped (#63): seed LineageSettingsProvider, not the AOSP table
 
-`patches/frameworks/base/0003-settingsprovider-ashfall-ui-defaults.patch` seeds
-both settings from the SettingsProvider:
+`navigation_bar_hint` and `enable_taskbar` are `LineageSettings.System` keys: they
+live in `lineagesettings.db` and are served by
+`lineage-sdk/packages/LineageSettingsProvider`, not by the AOSP
+`SettingsProvider`. The old #51 patch wrote them into the AOSP `system` table,
+which is why `settings get system navigation_bar_hint` returned `0` while
+`content query --uri content://lineagesettings/system` still had the pill value.
+Two changes are needed, because two different code paths write the key:
 
-* `SETTINGS_VERSION` 236 -> 237, with a migration block that inserts
-  `navigation_bar_hint=0` and `enable_taskbar=0` **only when the key is absent**,
-  so an explicit user choice is never overwritten;
-* the values come from new `R.integer.def_navigation_bar_hint` /
-  `R.integer.def_enable_taskbar` resources in SettingsProvider's
-  `res/values/defaults.xml` (both `0`), so a product can overlay them later;
-* the migration runs on every user's settings database and therefore also fixes
-  an existing `/data` (the keys do not exist on the current image - `settings get
-  system navigation_bar_hint` returns `null`), not just a freshly wiped install.
+1. **Provider defaults and migration** -
+   `patches/lineage-sdk/0001-lineagesettings-provider-ashfall-navigation-defaults.patch`:
+   * fresh database: `LineageDatabaseHelper.loadSystemSettings()` inserts
+     `navigation_bar_hint=0` and `enable_taskbar=0`, with the values from new
+     `R.integer.def_navigation_bar_hint` / `def_enable_taskbar` resources in
+     `res/values/defaults.xml`;
+   * existing database: `DATABASE_VERSION` 24 -> 25. The migration replaces
+     `navigation_bar_hint` with `0` once (see below) and inserts
+     `enable_taskbar=0` only when the key is absent. `enable_taskbar` is written
+     only by the user-facing toggle, so an explicit choice is preserved.
+   * after this, Launcher3's `SettingsCache`, the Settings/LineageParts toggle
+     and SetupWizard all read the same provider.
 
-Every consumer of these keys (Launcher3's `SettingsCache`, the Settings toggle
-`gesture_navigation_settings.xml`, SetupWizard) then sees the same value, so the
-switch in Settings shows "off" instead of disagreeing with the effective state.
+   The one-time hint reset is deliberate: the SetupWizard always wrote
+   `navigation_bar_hint=1` (its "hide gesture hint" switch is unchecked by
+   default and `onNextPressed()` writes `if (hideHint) 0 else 1`), including on
+   installs where the user never touched the setting. That write is the `1`
+   seen in #63. Lowering the database version instead of migrating would make
+   the provider recreate the database, so this is a normal Lineage versioned
+   migration (the same pattern Lineage uses for its own default changes).
 
-### 2.4 Why SettingsProvider and not an overlay
+2. **SetupWizard default** -
+   `aosp/vendor/ashfall/overlay/no-rro/packages/apps/SetupWizard/app/src/main/res/layout/setup_navigation.xml`:
+   the "hide gesture hint" `MaterialSwitch` now starts checked, so a fresh
+   install writes `navigation_bar_hint=0` at the end of setup instead of running
+   over the new provider default with `1`. The overlay is statically merged
+   (see `aosp/vendor/ashfall/ui.mk`), not a runtime RRO: Lineage enables
+   `PRODUCT_ENFORCE_RRO_TARGETS := *`, and a layout is not a resource a runtime
+   overlay should be replacing here.
 
-These are not framework resources; Launcher3 resolves them via
-`LineageSettings.System.getInt()` with a default supplied by its Dagger
-`SETTINGS_ENABLED_BY_DEFAULT` set. SettingsProvider only seeds defaults for a
-hardcoded key list in `DatabaseHelper` (and that class is frozen/deprecated), so
-a LineageOS key cannot get a database default from an overlay or a `PRODUCT_*`
-variable. Options considered:
+3. **External display** -
+   `patches/packages/apps/Launcher3/0001-launcher3-keep-external-display-taskbar.patch`:
+   `enable_taskbar` is one global LineageSettings key, but the second display's
+   taskbar is its navigation bar. `TaskbarActivityContext` now only honours the
+   switch on the primary display; a secondary/external display keeps its taskbar
+   (the stock behaviour), as before.
 
-* patch Launcher3's `SettingsModule` to drop the two URIs from the
-  default-true set - works, but leaves the Settings app toggles showing "on" for
-  an "off" state, and does not help the SetupWizard, which writes the hint value
-  at the end of setup;
-* `PRODUCT_PACKAGE_OVERLAYS` on SettingsProvider - cannot add a default for an
-  unknown key;
-* an init service running `settings put` at boot - would need a new SELinux
-  domain/permissions for calling the settings provider, and races Launcher3.
+The old `patches/frameworks/base/0003-settingsprovider-ashfall-ui-defaults.patch`
+is replaced by
+`0003-settingsprovider-keep-settings-version.patch`. It no longer seeds the AOSP
+table, but keeps `SETTINGS_VERSION = 237` and consumes `236 -> 237` as a no-op:
+devices flashed with the previous build already have their AOSP settings
+database at 237, and either lowering the version or leaving a version without a
+migration step makes `UpgradeController` drop and recreate the whole settings
+database.
 
-A versioned SettingsProvider migration is the supported mechanism and is the
-same pattern AOSP uses for its own new settings (for example
-`Settings.Secure.TEXT_SHOW_PASSWORD_TOUCH`).
+### 2.4 Why this mechanism and not the alternatives
+
+* **Launcher3 patch** (remove the two URIs from `SETTINGS_ENABLED_BY_DEFAULT`):
+  only changes Launcher3's fallback; the provider, LineageParts and SetupWizard
+  would still disagree about the value, and SetupWizard writes `1` explicitly.
+* **AOSP SettingsProvider** (the old #51 patch): wrong database. Nothing on this
+  device reads the AOSP `navigation_bar_hint` row.
+* **Runtime RRO for SetupWizard**: with `PRODUCT_ENFORCE_RRO_TARGETS := *` the
+  overlay becomes an RRO APK; static product overlays are the supported way to
+  replace a layout resource at build time, and the `no-rro` prefix is already
+  the Lineage convention for that (see `vendor/lineage/overlay/no-rro`).
+* **init service running `settings put` at boot**: needs a new SELinux domain
+  and races SetupWizard/Launcher3; a provider migration is the supported path.
+* **LineageSettingsProvider defaults only**: correct for fresh `/data`, but
+  SetupWizard overwrites the hint during setup. Hence the overlay above.
 
 ### 2.5 Not in scope
 
@@ -279,7 +328,98 @@ taskbar, and is being replaced by the AshFall launcher (#52); this change only
 stops Trebuchet from drawing the taskbar, the bubble bar and the gesture handle.
 Launcher3QuickStep stays the recents provider.
 
-## 3. Runtime knobs (no rebuild)
+## 3. #64 - seamless HOME with the AshFall launcher
+
+### 3.1 Symptom
+
+Going home from an app (gesture or gamepad Home) showed the outgoing app and
+AshFall side by side for ~0.6 s; Launcher3's old home task could be seen behind
+menus opened during the transition. The launcher worker captured
+`ShellRecents: RecentsTransitionHandler.startAnimation: no controller found`,
+followed by `DefaultTransitionHandler` animating the home task, and
+`OverviewComponentObserver.mIsHomeAndOverviewSame=false`. Setting
+`transition_animation_scale=0` removed it, which proves it is the shell's
+task-open animation, not app code.
+
+### 3.2 Root cause
+
+With a third-party default HOME, Quickstep's `OverviewComponentObserver` takes
+the fallback path (`mIsHomeAndOverviewSame=false`, overview =
+`RecentsActivity`). Starting home is a normal activity start of a task whose
+activity type is `ACTIVITY_TYPE_HOME`, so no Quickstep remote animation owns the
+transition and `RecentsTransitionHandler` has no controller. The shell's
+`DefaultTransitionHandler` then loads the generic AOSP task-open animations:
+
+* `task_open_enter.xml`: the incoming home task translates from `105%` to `0`;
+* `task_open_exit.xml`: the outgoing app translates from `0` to `-105%`;
+* both 500 ms, i.e. the app and home are both on screen while they cross.
+
+`FallbackSwipeHandler` passes `ActivityOptions.makeCustomAnimation(context, 0,
+0)` for the home intent, but a custom animation only applies to activity-level
+changes, and only to a task-level change when `overrideTaskTransition` is set
+(it is not here). The home launch is a task-level `TRANSIT_OPEN`, so the generic
+task-open enter/exit animations still run; the outgoing app (and the stale
+Launcher3 home task in the home root task) still get the exit animation. Gamepad
+Home goes through `ActivityTaskManager` directly and does not even get that
+override.
+
+### 3.3 Chosen fix: instant switch, scoped to a third-party home
+
+`patches/frameworks/base/0004-wm-shell-instant-third-party-home.patch` adds a
+check in `DefaultTransitionHandler.startAnimation()`: if the transition opens a
+task whose activity type is `ACTIVITY_TYPE_HOME` and whose top activity is not
+`com.android.launcher3`, finish the transition immediately (apply the start
+transaction, call the finish callback, return). This is exactly the outcome of
+`transition_animation_scale=0` for that one transition, without touching the
+device-wide setting.
+
+Why this approach:
+
+* the transition is the common point for gesture Home, gamepad Home and any
+  other home launch; one small check covers all of them;
+* it removes *both* halves of the animation (home enter and app exit), which is
+  what the interaction needs - zeroing only the home side still slides the app
+  out for 500 ms;
+* recents is a different transition (`ACTIVITY_TYPE_RECENTS`, handled by
+  Quickstep's remote animation / `RecentsTransitionHandler`), so the fallback
+  recents keeps working;
+* if Launcher3 is the default home (e.g. a user selects it), the package check
+  keeps its normal animation;
+* the issue explicitly accepts "a clean, system-like home animation **or** an
+  instant switch"; an instant switch is the minimal, robust option and does not
+  depend on the fallback overview's internals.
+
+### 3.4 Alternatives rejected
+
+* **Patch Quickstep's third-party-home path** (make the fallback animation
+  target the real role holder): the fallback path is built around a
+  `RecentsAnimation`/gesture contract for `RecentsActivity` and a home animation
+  factory that assumes the home surfaces are part of the shell transition
+  (`FallbackSwipeHandler`, `AbsSwipeUpHandler`, `OverviewComponentObserver`,
+  `FallbackHomeAnimationFactory`). Making a foreign home part of that contract
+  is a much larger change with a real risk of breaking fallback recents, and it
+  would need several device iterations to tune.
+* **Remove Launcher3's HOME candidacy** (manifest): `OverviewComponentObserver`
+  resolves its own primary home intent in its constructor and dereferences
+  `info.activityInfo.name` without a null check, so removing `CATEGORY_HOME`
+  crashes Quickstep unless that code is patched too. It also does not remove a
+  Launcher3 home task that already exists on an upgraded `/data`, and it changes
+  recents component resolution. Not minimal and not needed once the transition
+  does not show that task.
+* **`transition_animation_scale=0` in product defaults**: device-wide, disables
+  every animation, not acceptable.
+
+### 3.5 What must keep working (device verification)
+
+* gesture and gamepad Home reach AshFall with no side-by-side frame and no old
+  Launcher3 surface;
+* swipe up and hold still opens Launcher3QuickStep's fallback recents
+  (`RecentsActivity`), and swiping a task away works;
+* edge back gestures and gamepad Back still work;
+* `dumpsys activity activities` after Home shows AshFall resumed and no visible
+  Launcher3 task.
+
+## 4. Runtime knobs (no rebuild)
 
 ```sh
 # falsing (SystemUI restart required: the classifiers read them in their constructors)
@@ -287,26 +427,51 @@ device_config put systemui brightline_falsing_distance_vertical_fling_threshold_
 device_config put systemui brightline_falsing_zigzag_y_primary_deviance 0.3
 device_config delete systemui brightline_falsing_distance_vertical_fling_threshold_in
 
-# system bars (Launcher3 restart or reboot to re-read)
-settings put system navigation_bar_hint 0     # hide the gesture handle
-settings put system enable_taskbar 0          # disable the large-screen taskbar
-settings delete system navigation_bar_hint     # back to the build default
+# system bars: LineageSettings, not AOSP Settings (Launcher3 restart or reboot)
+# read
+adb shell content query --uri content://lineagesettings/system \
+    --where "name='navigation_bar_hint' OR name='enable_taskbar'"
+# write (userdebug shell has WRITE_SETTINGS; the value key is "value")
+adb shell content call --uri content://lineagesettings/system \
+    --method PUT_system --arg navigation_bar_hint --extra value:s:0
+adb shell content call --uri content://lineagesettings/system \
+    --method PUT_system --arg enable_taskbar --extra value:s:0
+# delete (back to the provider default; needs a Launcher3 restart/reboot)
+adb shell content call --uri content://lineagesettings/system \
+    --method DELETE_system --arg navigation_bar_hint
 ```
 
-## 4. Build verification request
+The old build also left an AOSP `system` row (`settings get system
+navigation_bar_hint`); it is unused by the UI and can be ignored or deleted.
+
+## 5. Build verification request
 
 `scripts/build.sh` (orchestrator, serial). Expected in the build output:
 
-* both patches apply with `git am --3way` (`patches.sh apply`) - they were
-  generated from the pristine tree blobs and apply cleanly to a copy of
-  `frameworks/base`;
-* `SettingsProvider` compiles with the new `R.integer.def_navigation_bar_hint` /
-  `def_enable_taskbar` resources and `SETTINGS_VERSION = 237`;
-* SystemUI compiles (only two `static final float` defaults changed);
-* nothing installs into `system/usr/idc` etc. - this change adds no files to the
-  image, only code changes.
+* `patches.sh apply` applies the series with `git am --3way`:
+  `frameworks/base` 0002/0003/0004, `lineage-sdk` 0001 and
+  `packages/apps/Launcher3` 0001. All patches were generated against the
+  manifest revision blobs;
+* `LineageSettingsProvider` compiles with `DATABASE_VERSION = 25`, the new
+  `R.integer.def_navigation_bar_hint` / `def_enable_taskbar` resources and the
+  `loadNavigationBarSettings()` migration;
+* `SettingsProvider` still compiles with `SETTINGS_VERSION = 237` (the AOSP
+  seed is gone);
+* `WindowManagerShell` compiles with the new `ACTIVITY_TYPE_HOME` import and
+  `isThirdPartyHomeTransition()` (no new dependency);
+* `Launcher3` (Quickstep) compiles with the one-line
+  `TaskbarActivityContext.mIsTaskbarEnabled` change (the external-display
+  taskbar is not tied to the primary-display switch);
+* the SetupWizard overlay is statically merged: after the build,
+  `aapt2 dump xmltree` (or `unzip -p`) of
+  `system_ext/priv-app/LineageSetupWizard/LineageSetupWizard.apk` shows
+  `android:checked=true` on `@id/hide_navigation_hint`; there is no new RRO APK
+  for `org.lineageos.setupwizard` in `/product/overlay`;
+* `vendor/ashfall/ui.mk` is included by `ashfall_common.mk`, so
+  `PRODUCT_PACKAGE_OVERLAYS` / `PRODUCT_ENFORCE_RRO_EXCLUDED_OVERLAYS` contain
+  `vendor/ashfall/overlay/no-rro` in the product config.
 
-## 5. Test checklist (after flashing, no wipe needed)
+## 6. Test checklist (after flashing, no wipe needed)
 
 1. Unlock: on the lock screen, swipe up **slightly diagonally** (10-30 deg off
    vertical) from the lower third with a normal thumb motion - it unlocks.
@@ -314,10 +479,11 @@ settings delete system navigation_bar_hint     # back to the build default
    rejected (intentional diagonal protection).
 2. Pocket protection sanity: cover the proximity sensor area / put the device in
    a pocket and brush the screen - a short accidental swipe must not unlock.
-3. `adb shell settings get system navigation_bar_hint` -> `0` and
-   `adb shell settings get system enable_taskbar` -> `0` (also after an OTA
-   without wiping /data). Settings -> System -> Buttons -> Gesture navigation
-   shows "Navigation hint" **off**.
+3. `adb shell content query --uri content://lineagesettings/system --where
+   "name='navigation_bar_hint' OR name='enable_taskbar'"` -> both `0`, on a
+   fresh `/data` and on an upgrade without wiping (the migration only touches
+   the hint; `enable_taskbar` stays if it was already set). Settings -> System
+   -> Buttons -> Gesture navigation shows "Navigation hint" **off**.
 4. No pill/handle at the bottom of the screen, on the launcher and inside apps.
 5. No large-screen taskbar/bubble bar/pinned-app strip appears when swiping up
    from the bottom.
@@ -328,4 +494,18 @@ settings delete system navigation_bar_hint     # back to the build default
    shows a zero-size `navigationBars` source on display 0).
 8. Toggling Settings -> "Navigation hint" on brings the pill back (proves the
    default is a value, not a disabled feature).
-9. The second display (port 130, 1280x720) is unchanged.
+9. #64: from a fullscreen app, gamepad Home and the bottom-up home gesture reach
+   AshFall with no side-by-side frame. A screen recording (or
+   `adb shell screenrecord --time-limit 3 /data/local/tmp/home.mp4` + frame
+   extraction) shows no outgoing app and AshFall together, and logcat has no
+   `task_open_enter`/`TransitionAnimationHelper` animation for the home task.
+10. `adb shell dumpsys activity activities` after Home: AshFall is resumed; no
+    Launcher3 task is visible (`visible=false` is fine).
+11. Swipe up and hold opens the fallback recents (`com.android.launcher3/
+    .uioverrides.QuickstepLauncher` or the fallback `RecentsActivity`), tasks can
+    be swiped away and selected.
+12. A playing game keeps working: gamepad Home then reopening the game from
+    recents returns to it; gamepad Back still leaves it.
+13. The second display (port 130, 1280x720) is unchanged: it still has its
+    48 dp taskbar/navigation bar even though the primary display does not
+    (`dumpsys window` shows a `Taskbar` window for that display).
