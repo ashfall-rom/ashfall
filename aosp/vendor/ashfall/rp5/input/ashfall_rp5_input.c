@@ -71,7 +71,7 @@ static const uint16_t mcu_keymap[16] = {
     BTN_START,      /* bit 3  */
     BTN_THUMBL,     /* bit 4  */
     BTN_THUMBR,     /* bit 5  */
-    KEY_HOME,       /* bit 6  */
+    KEY_HOMEPAGE,   /* bit 6: Android HOME (Generic.kl 172); KEY_HOME (102) is keyboard MOVE_HOME */
     KEY_BACK,       /* bit 7  */
     0,              /* bit 8  - D-pad up: ABS_HAT0Y */
     0,              /* bit 9  - D-pad down: ABS_HAT0Y */

@@ -128,7 +128,7 @@ down to bit 0 against the default table at `librsinput.so + 0x2e82c`:
 | 9 | `ABS_HAT0Y` (+) | D-pad down |
 | 8 | `ABS_HAT0Y` (-) | D-pad up |
 | 7 | `KEY_BACK` (0x9e) | Android back |
-| 6 | `KEY_HOME` (0x66) | Android home |
+| 6 | `KEY_HOMEPAGE` (0xac) | Android home (`KEY_HOME` 0x66 maps to keyboard MOVE_HOME in Generic.kl) |
 | 5 | `BTN_THUMBR` (0x13e) | right stick click |
 | 4 | `BTN_THUMBL` (0x13d) | left stick click |
 | 3 | `BTN_START` (0x13b) | start |
@@ -240,7 +240,7 @@ Apache-2.0 source in this repository.
    * L1/R1 -> `BTN_TL`/`BTN_TR`;
    * Start/Select -> `BTN_START`/`BTN_SELECT`;
    * stick clicks -> `BTN_THUMBL`/`BTN_THUMBR`;
-   * Back/Home -> `KEY_BACK`/`KEY_HOME`.
+   * Back/Home -> `KEY_BACK`/`KEY_HOMEPAGE`.
 3. Left stick -> `ABS_X`/`ABS_Y`, right stick -> `ABS_Z`/`ABS_RZ`;
    both re-center when released.
 4. L2/R2 -> `ABS_BRAKE`/`ABS_GAS` (Android `AXIS_LTRIGGER`/`AXIS_RTRIGGER`),
