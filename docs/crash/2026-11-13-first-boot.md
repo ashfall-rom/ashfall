@@ -8,59 +8,54 @@ EROFS, 1.63 GiB, sha256 `bfca6e0f…3925`), flashed to `system_a` + stock
 erased, slot a; `product_a`/`system_ext_a` (stock) left in place; the GSI ships
 `skip_mount.cfg` for `/product` and `/system_ext`.
 
-## TL;DR
+## TL;DR — root cause confirmed
 
-* RAM was captured read-only from the PBL's Sahara memory-debug mode
-  (USB `05c6:900e`) before anything reset the device. Dump + recovered log are
-  on the build host under
-  `/var/home/epickitrolaz/ashfall/crash/20261113-141536/`.
-* The kernel ring holds **405 records** (seq 0…404, ~28 KiB of a 256 KiB
-  `log_buf_len=256K` buffer, never wrapped). It ends with:
+The first-stage init cannot mount `/system` because the stock fstab only
+accepts **ext4** and `system_a` holds an **EROFS** image:
 
-  ```
-  Kernel panic - not syncing: Attempted to kill init! exitcode=0x00007f00
-  ...
-  msm_watchdog 17c10000.qcom,wdt: Causing a QCOM Apps Watchdog bite!
-  ```
+```
+init: [libfs_mgr]Created logical partition system_a on device /dev/block/dm-2
+init: DSU not detected, proceeding with normal boot
+init: [libfs_avb]Invalid hash size:
+init: [libfs_avb]Failed to verify vbmeta digest
+init: [libfs_avb]Returning avb_handle with status: VerificationDisabled
+init: Top-level vbmeta is disabled, skip Hashtree setup for /system
+init: [libfs_mgr]Invalid ext4 superblock on '/dev/block/dm-2'
+init: Failed to mount /system: File exists
+init: Failed to mount required partitions early ...
+Kernel panic - not syncing: Attempted to kill init! exitcode=0x00007f00
+```
 
-  `0x7f00` is `exit_group(127)` (status 127, **no signal**), i.e. PID 1 `init`
-  exited deliberately — this is not a kernel oops and not a SIGSEGV/SIGABRT.
-* The log stops **immediately after `init: init first stage started!` +
-  the eight `init: Loading module …` lines + one `Loaded kernel module`**:
-  exactly **10** `/dev/kmsg` writes from init. Everything init logged after
-  that was discarded by the kernel's per-fd `/dev/kmsg` ratelimit
-  (`printk.devkmsg=ratelimit`, burst 10 per 5 s), so the FATAL line that
-  explains 127 is **not in the dump** and absence of fs_mgr/SELinux messages
-  proves nothing.
-* Therefore this report does **not** guess a root cause. It documents the
-  capture, the verified panic, and the next diagnostic step: a RAM-only
-  `fastboot boot` of `boot-debug.img` with `printk.devkmsg=on` (built below).
+That excerpt comes from the **second** dump
+(`~/ashfall/crash/20261113-140314/`), taken after a RAM-only
+`fastboot boot boot-debug.img` with `printk.devkmsg=on` (see §5). The first
+dump (`~/ashfall/crash/20261113-141536/`) stopped 10 init messages in because
+of the `/dev/kmsg` ratelimit; §4 explains why that one could not name a cause.
 
-## 1. How the dump was taken (read-only)
+Fix (orchestrator): rebuild `system.img` as ext4 (or override the fstab entry
+for `system`) and repeat the boot test.
 
-The device panicked at ~13:1x UTC after `fastboot reboot`, the panic path bit
+## 1. How the dumps were taken (read-only)
+
+The device panicked at ~13:1x UTC after `fastboot reboot`; the panic path bit
 the Qualcomm app watchdog (`msm_watchdog … Causing a QCOM Apps Watchdog bite!`)
 and the PBL re-enumerated as `05c6:900e`, keeping RAM (battery-backed).
-
-Everything below is a **read**; no `edl w/e`, no firehose programming, no
-`edl reset`, and the device was not power-cycled.
+Nothing was written, erased, programmed or reset to capture it.
 
 1. Build host (`epickitrolaz@100.66.37.14`, Fedora Silverblue 45, bare metal,
-   not a VM) showed `Bus 001 Device 014: ID 05c6:900e QUSB_BULK_SN:64ADE251`
-   at **USB 2.0 high speed (480 Mbit/s)** and **no** `qcserial`/`option`/
-   `usb_wwan` module loaded.
+   not a VM) showed `05c6:900e QUSB_BULK_SN:64ADE251` at **USB 2.0 high speed**
+   and **no** `qcserial`/`option`/`usb_wwan` module loaded.
 2. A dedicated rootless podman box `ashfall-edl` (Ubuntu 24.04 + bkerler/edl
-   in `/opt/edlenv`) was used. Two **container-local** edits were needed
+   in `/opt/edlenv`) is used. Two **container-local** edits are required
    (`scripts/device/ramdump.sh` applies both):
-   * `usblib.py`: 900e does not expose a serial string descriptor, so pyusb's
-     `dev.serial_number` raises `ValueError: The device has no langid` during
-     enumeration and edl aborts before reading the Sahara hello.
-   * `sahara.py`: edl's memory-debug path ends with `cmd_reset()`; that call is
-     removed so the device stays in 900e after the dump.
+   * `usblib.py`: 900e exposes no serial string descriptor, so pyusb raises
+     `ValueError: The device has no langid` during enumeration and edl aborts
+     before reading the Sahara hello.
+   * `sahara.py`: edl's memory-debug path ends with `cmd_reset()`; that call
+     is removed so the device stays in 900e after the dump.
 3. **Host prerequisite (approved change, needs root once).** The usbfs node is
    `root:root 0664` and podman is rootless, so the container cannot open it
-   (the kernel's `usbfs` ioctl path requires `FMODE_WRITE`). Installed on the
-   build host:
+   (the kernel's `usbfs` ioctl path requires `FMODE_WRITE`):
 
    ```
    /etc/udev/rules.d/51-ashfall-qcom.rules
@@ -69,11 +64,12 @@ Everything below is a **read**; no `edl w/e`, no firehose programming, no
    ```
 
    `sudo udevadm control --reload-rules && sudo udevadm trigger
-   --subsystem-match=usb`; afterwards `/dev/bus/usb/001/014` is
-   `crw-rw-rw-`. `chmod 666` also works but only until re-enumeration.
-4. `edl memorydump` (plain, **not** `--debugmode`; `--debugmode` enabled DEBUG
-   logging and produced a 17 GB log for a 8 GiB dump) wrote 40 regions in
-   ~4 min. The DDR regions are a **linear physical map**, no interleaving:
+   --subsystem-match=usb`; afterwards `/dev/bus/usb/001/014` is `crw-rw-rw-`.
+   `chmod 666` also works but only until re-enumeration.
+4. `edl memorydump` (plain, **not** `--debugmode`) wrote 40 regions in ~4 min.
+   `--debugmode` is a trap: it enables DEBUG logging, which produced a 17 GB
+   `logs/log.txt` for an 8 GiB dump (deleted; the region table was kept).
+   The DDR regions are a **linear physical map**, no interleaving:
 
    | file | physical range |
    |---|---|
@@ -90,7 +86,7 @@ Everything below is a **read**; no `edl w/e`, no firehose programming, no
 `scripts/device/printk_extract.py` finds the boot banner (`Linux version …`)
 in the DDR files, verifies the 8-byte record header in front of it, and walks
 the chain by looking for the next `seq+1` header at an 8-byte aligned offset.
-Record layout observed in this dump:
+Record layout observed in these dumps:
 
 ```
 u32 id     = 0xfffe0000 | seq      (seq increments by one per record)
@@ -98,31 +94,32 @@ u32 zero
 char text[]                        (may contain '\n', NUL padded, 8-byte aligned)
 ```
 
-The chain starts at `DDRCS0_0.BIN` offset `0x23522060`
-(phys `0xa3522060`) with the banner as `seq 0` and ends at
-`0x23528d90` with the watchdog bite as `seq 404`; seq is contiguous, so
-the reconstructed order is exact. The full text is committed as
-[`2026-11-13-first-boot-log.txt`](2026-11-13-first-boot-log.txt).
+The chains start with the banner as `seq 0`, so the reconstructed order is
+exact. Full text of both boots is committed:
 
-Two properties worth knowing before reading the log:
+* [`2026-11-13-first-boot-log.txt`](2026-11-13-first-boot-log.txt) — first
+  dump, 405 records, `DDRCS0_0.BIN` offset `0x23522060` (phys `0xa3522060`),
+  panic at seq 193, last record seq 404.
+* [`2026-11-13-debug-boot-log.txt`](2026-11-13-debug-boot-log.txt) — debug
+  boot dump, 576 records, panic at seq 355.
+
+Two properties worth knowing before reading the logs:
 
 * **No timestamps.** The ring stores the raw record text; printk timestamps
   only exist in the console/devkmsg rendering. The `[   12.345678]` prefix
-  expected in a dmesg is *not* in RAM. (The small panic copy in a
-  `msm_rtb`-style buffer at `DDRCS0_0` offset `0x2351d218` is also
-  timestamp-free.)
+  expected in a dmesg is *not* in RAM.
 * **2-character tail repeat.** Every record's text is followed by a repeat of
   its last two characters before the newline (`…initialized` is stored as
   `…initializeded`). The extractor strips it only when `text[-2:] ==
-  text[-4:-2]`, so genuine doubles survive. Cause unknown; it is present in all
-  405 records and does not affect ordering.
+  text[-4:-2]`, so genuine doubles survive. Cause unknown; it is present in
+  every record and does not affect ordering.
 
-A second and third `Linux version 5.15.148` occurrence (`DDRCS0_1` @
+Second and third `Linux version 5.15.148` occurrences (`DDRCS0_1` @
 `0x106a5a08`, `DDRCS1_1` @ `0x27bb…`) are **kernel rodata** copies (adjacent
-strings are `initcall`, `int (void)`), not rings: this dump contains exactly
+strings are `initcall`, `int (void)`), not rings: each dump contains exactly
 one usable printk ring.
 
-## 3. The panic, verbatim
+## 3. The panic, verbatim (first dump)
 
 ```
     0 Linux version 5.15.148-android13-8-gbfe94e95c709-dirty (build-user@build-host) (Android (8508608, based on r450784e) clang version 14.0.7 …) #1 SMP PREEMPT Sat Oct 26 10:02:37 UTC 2024
@@ -147,8 +144,6 @@ one usable printk ring.
    91 qrng_dlkm: loading out-of-tree module taints kernel.
    92 qtee shmbridge registered default bridge with size 4194304 bytes
    93 shmbridge is enabled
-…
-  162  sda: sda1 sda2 sda3 sda4 sda5 sda6 sda7 sda8 sda9 sda10 sda11 sda12 sda13 sda14 sda15 sda16 sda17 sda18 sda19 sda20 sda21 sda22 sda23
 …
   192 sd 0:0:0:4: [sde] Attached SCSI disk
   193 Kernel panic - not syncing: Attempted to kill init! exitcode=0x00007f00
@@ -176,56 +171,32 @@ one usable printk ring.
   404 msm_watchdog 17c10000.qcom,wdt: Causing a QCOM Apps Watchdog bite!
 ```
 
-The `do_group_exit` frame confirms the userspace `exit_group(127)` path;
-everything after record 193 is the panic itself (CPU stop traces, ftrace dump,
-UFS dump, kernel offset, watchdog bite). `Kernel Offset: 0x28b2e00000` explains
-why the kernel image/rodata (banner, `panic` format strings, `erofs_*` symbols)
-live around phys `0xa1b…`/`0x21a…` rather than at `0x80080000`.
+`Kernel Offset: 0x28b2e00000` explains why the kernel image/rodata (banner,
+`panic` format strings, `erofs_*` symbols) live around phys `0xa1b…`/`0x21a…`
+rather than at `0x80080000`.
 
-## 4. What the log does and does not prove
+## 4. The ratelimit lesson (why the first dump was not enough)
 
-**Proven**
+The first dump contains only **10** `/dev/kmsg` writes from init — exactly the
+default devkmsg burst (`printk.devkmsg=ratelimit`, 10 messages per 5 s per
+open fd). First-stage init `dup2()`s `/dev/kmsg` onto stdout/stderr once, so
+everything after the tenth message — the module summary, every `[libfs_mgr]`
+line, `selinux_setup`, the second stage and the `LOG(FATAL)` — was discarded
+before it ever reached the ring. No `… suppressed due to ratelimiting` notice
+appears because init died inside the same 5 s window.
 
-* The stock 5.15 GKI kernel boots, brings up PMIC/UFS, mounts the initramfs
-  from `init_boot`, and runs first-stage `init` (`init=/init`).
-* First-stage init loads kernel modules (`qcom_ipcc`, `qcom_hwspinlock`,
-  `qcom_cpu_vendor_hooks`, `cmd-db`, `nvmem_qcom-spmi-sdam`,
-  `qcom-cpufreq-hw`, `icc-debug`, `qnoc-qos`) and the two DLKM taints.
-* The kernel is healthy at panic time: the panic is raised by the *kernel's
-  PID-1 guard* because PID 1 exited, not by a fault in a driver. UFS
-  enumeration (`sda`…`sde`) is still completing in parallel.
-* The reset into 900e is the watchdog bite from the panic path, consistent
-  with `reboot=panic_warm`.
+Consequences, learned the hard way:
 
-**Not proven (and cannot be from this dump)**
+* Absence of SELinux/fs_mgr/AVB messages in a ring dump is **not evidence**
+  that those steps did not run or fail.
+* Do not blame `BSP`/fstab/policy/version skew from a silent ring. One
+  RAM-only boot with `printk.devkmsg=on` turns a hypothesis into a fact (§5).
+* `exitcode=0x7f00` is `exit_group(127)` with **no signal**: init's fatal path
+  (`InitAborter` → `InitFatalReboot`) exits the process instead of aborting,
+  so "no signal" is expected once the reason is a `LOG(FATAL)` in first stage.
+  Only the FATAL *text* identifies the cause; the exit status does not.
 
-* *Why* init exited 127. Only **10** `/dev/kmsg` writes from init are in the
-  ring — exactly the default devkmsg burst (`10` messages / `5` s per open
-  fd). First-stage init `dup2()`s `/dev/kmsg` onto stdout/stderr once
-  (`first_stage_init.cpp`), so the module summary, all `[libfs_mgr]` mount
-  lines, `selinux_setup`, the second-stage `init` and any `LOG(FATAL)` were
-  ratelimited away. No `… suppressed due to ratelimiting` notice appears
-  because init died inside the same 5 s window.
-* Which stage failed. The first stage's last act is `execv("/system/bin/init",
-  {"selinux_setup"})`; the A17 second stage then runs from `/system` and
-  re-execs `second_stage`. The ring cannot tell whether mount, sepolicy or the
-  A13→A17 hand-off failed.
-* `exit_group(127)` with **no signal** is unusual: in AOSP/Lineage `init`, the
-  `_exit(127)` sites (`first_stage_console.cpp`, `service.cpp`,
-  `snapuserd_transition.cpp`, `util.cpp::ForkExec`) are all in **forked
-  children**, while PID 1 `LOG(FATAL)` goes through `InitAborter` →
-  `InitFatalReboot(SIGABRT)` (which would show `0x00000006`). So the 127 points
-  at a helper/exec path rather than a plain `LOG(FATAL)` in PID 1 — another
-  reason to capture the unratelimited log instead of inferring.
-
-One earlier-boot fragment is worth noting but is **not** evidence about this
-boot: a console buffer leftover in `DDRCS0_1` at offset `103152971`
-(phys `0x10625fd4b`) contains `<6>init: [libfs_mgr]Invalid ext4 superbl…`
-(with the `<6>` console prefix, so it is console output, not ring text). It
-shows that on some earlier boot fs_mgr probed a partition as ext4 and found no
-ext4 superblock — relevant because our `system_a` is EROFS.
-
-## 5. Next diagnostic step: RAM-boot with unratelimited init logs
+## 5. The debug boot that named the cause
 
 Built from the **stock** `boot_a` (`firmware/img/lun4_boot_a.bin`) without
 touching the tree or the device:
@@ -240,7 +211,7 @@ touching the tree or the device:
 | only change | boot-header cmdline field (`0x2c`–`0x47`): `printk.devkmsg=on loglevel=8` (28 bytes differ vs stock; every other header byte is identical) |
 
 Repack recipe (mkbootimg/unpack_bootimg copied out of the synced tree to
-`/tmp/bt2`, tree read-only):
+`/tmp/bt2`; tree read-only):
 
 ```bash
 python3 unpack_bootimg.py --boot_img firmware/img/lun4_boot_a.bin --out /tmp/bt2/out
@@ -250,68 +221,49 @@ python3 mkbootimg.py --header_version 4 --os_version 13.0.0 --os_patch_level 202
 python3 unpack_bootimg.py --boot_img crash/boot-debug.img   # verify: same sizes/cmdline
 ```
 
-Use (RAM only, **nothing is flashed**):
+Use (RAM only, **nothing is flashed**; the flashed
+`vendor_boot`/`init_boot`/`system` stay untouched):
 
 ```bash
-# leave 900e first (dump + log are already saved; this is the point of no return)
+# leave 900e first (the dumps are saved; this is the point of no return)
 edl reset                                # or power-cycle with Vol- held
 fastboot boot /var/home/epickitrolaz/ashfall/crash/boot-debug.img
+# on the next panic the device returns to 900e; then:
+scripts/device/ramdump.sh                # preflight + read-only dump + extraction
 ```
 
 For header v4 the bootloader merges the boot image cmdline into the
-`vendor_boot` cmdline, so `printk.devkmsg=on` reaches the kernel while the
-flashed `vendor_boot`/`init_boot` stay untouched; `loglevel=8` only affects
-console verbosity. Expected: the same panic, but the ring now contains init's
-`[libfs_mgr]`, `selinux_setup`, second-stage and `LOG(FATAL)` lines, plus the
-`… suppressed due to ratelimiting` counter is gone. Then re-dump with:
+`vendor_boot` cmdline. The second dump's record 11 confirms it worked:
 
-```bash
-scripts/device/ramdump.sh              # container + read-only dump + extraction
+```
+... loop.max_part=7 cgroup.memory=nokmem,nosocket reboot=panic_warm bootconfig
+buildvariant=user printk.devkmsg=on loglevel=8 msm_drm.dsi_display0=... rootwait ro init=/init ...
 ```
 
-If the boot image cmdline is ignored (still only 10 init lines), the fallback is
-to put the same two tokens into the `vendor_boot` bootconfig (needs a write, so
-orchestrator decision).
+and the ring grew from 405 to **576** records, with the full first-stage mount
+sequence present. That is how the chain in the TL;DR was recovered (records
+337–355 of `2026-11-13-debug-boot-log.txt`).
 
-## 6. Top 3 candidate fixes (ranked; all still need the unratelimited log)
+## 6. Diagnosis and fix
 
-1. **Match the init stage versions (stock A13 `init_boot` vs A17 `/system`).**
-   *Evidence:* the first stage is the stock A13 init from `init_boot` (module
-   list `/lib/modules/*.ko`, A13 first-stage wording); the second stage is our
-   A17 `/system/bin/init`. First stage ends with
-   `execv("/system/bin/init", {"selinux_setup"})`; the panic is PID 1 exiting
-   right at that transition, and no A17 init message ever appears.
-   *Fix:* flash the `init_boot.img` from the same LineageOS 24 build (or
-   `fastboot boot` a v3-style image carrying a matching first stage) so both
-   stages speak the same `init.rc`/property/`snapuserd` protocol.
-   *Risk:* a write; needs a matching `vbmeta`/AVB decision.
+1. `super`/logical partitions are created correctly (`system_a` →
+   `/dev/block/dm-2`), so `--disable-verification` and the super metadata are
+   fine. AVB reports `VerificationDisabled` and skips Hashtree, as intended.
+2. fs_mgr then uses the **fs type from the stock A13 fstab** for `system`:
+   `ext4`. Our `system.img` is **EROFS** → `Invalid ext4 superblock on
+   '/dev/block/dm-2'` → `Failed to mount /system` → first stage
+   `LOG(FATAL) << "Failed to mount required partitions early ..."` → PID 1
+   fatal path → panic → watchdog bite → 900e.
+3. **Fix:** rebuild the GSI system image as ext4 (drop the EROFS image
+   type/compression for `system`), or supply an fstab/bootconfig override
+   that describes `system` as `erofs`, then repeat the boot test. Keep the
+   debug boot available: it is the cheapest way to see the next failure if
+   the ext4 image trips something else (e.g. size budget, sepolicy).
 
-2. **EROFS vs the stock A13 fstab (fs_mgr sees `ext4`).**
-   *Evidence:* our `system.img` is EROFS, while the earlier-boot console
-   fragment shows `init: [libfs_mgr]Invalid ext4 superblock`; the stock A13
-   `fstab.qcom` describes `system` as ext4 and first-stage mount uses the
-   fstab's fs type.
-   *Fix:* rebuild with `BOARD_SYSTEMIMAGE_FILE_SYSTEM_TYPE=ext4` (or ship an
-   fstab/bootconfig override for `system`), then re-test with the debug boot.
-   *Caveat:* a plain mount failure normally ends in `LOG(FATAL)`→SIGABRT
-   (`0x600`), not `0x7f00`, so this alone does not explain the exit code.
-
-3. **A17 system sepolicy against the A13 vendor image.**
-   *Evidence:* stock `vendor_a`/`vendor_dlkm` are A13; the GSI brings A17
-   platform policy and `skip_mount.cfg` for `/product`,`/system_ext`. A
-   `SetupSelinux` failure is a `LOG(FATAL)` and would be invisible here for the
-   same ratelimit reason. `SELinux: Could not load policy` does not appear in
-   the ring (expected — suppressed).
-   *Fix / discriminating test:* boot `boot-debug.img` once with
-   `androidboot.selinux=permissive` appended (bootconfig) to separate policy
-   from mount failures; if it proceeds, align the policy
-   (`PLATFORM_SEPOLICY_VERSION`, vendor compatibility) instead of chasing
-   mounts.
-   *Caveat:* same `0x600`-vs-`0x7f00` mismatch as #2.
-
-None of these should be flashed before the `boot-debug.img` run: the ring has
-no message that distinguishes them, and the current device state (900e) is the
-only forensic copy of this boot.
+Non-issues confirmed by this investigation: the kernel has EROFS **and** ext4
+support (`erofs_read_superblock`, `erofs_iget`, `ext4_fill_super` in rodata),
+modules load from the stock `init_boot` ramdisk, and the UFS/storage stack is
+healthy up to the mount attempt.
 
 ## 7. Artefacts
 
@@ -320,13 +272,15 @@ On the build host, `~/ashfall/crash/`:
 | path | contents |
 |---|---|
 | `boot-debug.img` | RAM-boot image with `printk.devkmsg=on loglevel=8` (sha256 above) |
-| `20261113-141536/memory/` | 40 dumped regions, 4×2 GiB DDR + OCIMEM/DCC/PIMEM/… |
+| `20261113-141536/memory/` | first dump (ratelimited), 405 records |
 | `20261113-141536/memory/DDRCS0_0.BIN` | holds the ring at `0x23522060` |
 | `20261113-141536/memory/log_all.txt` | reconstructed log (405 records) |
-| `20261113-141536/memory/anchors.txt` | anchor search over the ring |
-| `20261113-141536/memory/memory-table.txt` | edl region table (phys base/length) |
-| `20261113-141536/memory/boots/` | all chains found (here: one) |
+| `20261113-140314/memory/` | debug-boot dump, 576 records, root cause visible |
+| `20261113-140314/memory/log_all.txt` | reconstructed log (576 records) |
+| `memory-table.txt` (both) | edl region table (phys base/length) |
+| `memory/boots/`, `memory/anchors.txt`, `memory/summary.txt` | per-boot chains + anchor report |
 
 In the repo: `scripts/device/ramdump.sh` (reproducible capture + extraction),
 `scripts/device/printk_extract.py` (ring walker),
-`docs/crash/2026-11-13-first-boot-log.txt` (full log).
+`docs/crash/2026-11-13-first-boot-log.txt` and
+`docs/crash/2026-11-13-debug-boot-log.txt` (full logs).

@@ -213,12 +213,15 @@ run_dump() {
   dir=$CRASH_ROOT/$ts
   host "mkdir -p $(printf %q "$dir")"
   log "dumping RAM to $dir/memory (read-only; 8 GiB over USB 2.0 takes ~5 min)" >&2
+  # $dir only exists on the build host: redirect the dump log there, never here.
   host "podman exec -w /work/crash/$ts $BOX bash -lc '
         mkdir -p logs
         timeout 3600 /opt/edlenv/bin/edl memorydump
-      '" >"$dir/dump.log" 2>&1 || warn "edl exited non-zero - dump may be partial"
-  tail -n 15 "$dir/dump.log" >&2 || true
-  [[ -d $dir/memory ]] || die "no memory/ directory produced - see $dir/dump.log"
+      ' > $(printf %q "$dir/dump.log") 2>&1" \
+    || warn "edl exited non-zero - dump may be partial"
+  host "tail -n 15 $(printf %q "$dir/dump.log")" >&2 || true
+  host "test -d $(printf %q "$dir/memory")" \
+    || die "no memory/ directory produced - see $dir/dump.log on $BUILD_HOST"
   printf '%s\n' "$dir"
 }
 
