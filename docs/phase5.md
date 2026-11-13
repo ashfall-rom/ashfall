@@ -156,8 +156,7 @@ calibration.
   the full page):
   - **Fan:** tile label = active preset name, subtitle = temperature; dialog = preset list
     (single choice) + "Edit presets" link. Tile state inactive only for Off.
-  - **Lighting:** tile toggles on/off on tap of the icon area is not available in QS, so:
-    tap opens the dialog; dialog = main on/off switch, target selector
+  - **Lighting:** tap opens the dialog; dialog = main on/off switch, target selector
     (Both / Left / Right), colour picker (presets + custom hue/saturation picker),
     brightness slider, effect selector (static, breathing, rainbow, duo) and speed.
     Changes apply live. Tile state inactive when mode = off.
