@@ -1,0 +1,80 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:paddingStart="32dp"
+    android:paddingTop="16dp"
+    android:paddingEnd="32dp"
+    android:paddingBottom="16dp">
+
+    <TextView
+        android:id="@+id/cal_title"
+        style="@style/AshFallPreferenceTitle"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:textSize="22sp" />
+
+    <TextView
+        android:id="@+id/cal_body"
+        style="@style/AshFallPreferenceSummary"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="8dp" />
+
+    <org.ashfall.parts.ui.StickPreviewView
+        android:id="@+id/cal_preview"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_marginTop="12dp"
+        android:layout_weight="1" />
+
+    <TextView
+        android:id="@+id/cal_progress"
+        style="@style/AshFallSection"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:gravity="center" />
+
+    <TextView
+        android:id="@+id/cal_review"
+        style="@style/AshFallPreferenceSummary"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:fontFamily="monospace"
+        android:visibility="gone" />
+
+    <TextView
+        android:id="@+id/cal_error"
+        style="@style/AshFallPreferenceTitle"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="8dp"
+        android:textColor="@color/status_warning"
+        android:visibility="gone" />
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="8dp"
+        android:gravity="end"
+        android:orientation="horizontal">
+
+        <Button
+            android:id="@+id/cal_cancel"
+            style="?android:attr/borderlessButtonStyle"
+            android:layout_width="wrap_content"
+            android:layout_height="52dp"
+            android:text="@string/cal_step_cancel"
+            android:textColor="?android:attr/colorAccent" />
+
+        <Button
+            android:id="@+id/cal_next"
+            style="?android:attr/borderlessButtonStyle"
+            android:layout_width="wrap_content"
+            android:layout_height="52dp"
+            android:minWidth="120dp"
+            android:text="@string/cal_step_next"
+            android:textColor="?android:attr/colorAccent" />
+    </LinearLayout>
+</LinearLayout>

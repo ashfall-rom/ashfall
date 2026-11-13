@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    style="@style/AshFallPreferenceRow"
+    android:gravity="center_vertical"
+    android:orientation="horizontal">
+
+    <LinearLayout
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_weight="1"
+        android:focusable="false"
+        android:orientation="vertical"
+        android:paddingEnd="16dp">
+
+        <TextView
+            android:id="@+id/colour_title"
+            style="@style/AshFallPreferenceTitle"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:focusable="false" />
+
+        <TextView
+            android:id="@+id/colour_summary"
+            style="@style/AshFallPreferenceSummary"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:focusable="false" />
+    </LinearLayout>
+
+    <org.ashfall.parts.ui.ColorSwatchView
+        android:id="@+id/colour_swatch"
+        android:layout_width="@dimen/swatch_size"
+        android:layout_height="@dimen/swatch_size"
+        android:focusable="false" />
+</LinearLayout>

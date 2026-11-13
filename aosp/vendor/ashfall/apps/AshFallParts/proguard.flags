@@ -1,0 +1,3 @@
+# Keep the TileService implementations: SystemUI resolves them by component
+# name from the manifest.
+-keep class org.ashfall.parts.qs.** { *; }

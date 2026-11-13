@@ -1,0 +1,251 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Copyright (C) 2026 The AshFall Project
+
+  Licensed under the Apache License, Version 2.0 (the "License");
+  you may not use this file except in compliance with the License.
+  You may obtain a copy of the License at
+
+       http://www.apache.org/licenses/LICENSE-2.0
+
+  Unless required by applicable law or agreed to in writing, software
+  distributed under the License is distributed on an "AS IS" BASIS,
+  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+  See the License for the specific language governing permissions and
+  limitations under the License.
+-->
+<resources>
+    <string name="app_name">AshFall Parts</string>
+
+    <!-- Settings homepage entry -->
+    <string name="handheld_title">Handheld</string>
+    <string name="handheld_summary">Fan, lighting, controller</string>
+
+    <!-- Pages -->
+    <string name="fan_title">Fan</string>
+    <string name="lighting_title">Lighting</string>
+    <string name="controller_title">Controller</string>
+    <string name="presets_title">Fan presets</string>
+    <string name="curve_title">Fan curve</string>
+    <string name="tester_title">Controller tester</string>
+    <string name="calibration_title">Calibration</string>
+
+    <!-- Common -->
+    <string name="ok">OK</string>
+    <string name="cancel">Cancel</string>
+    <string name="save">Save</string>
+    <string name="set">Set</string>
+    <string name="done">Done</string>
+    <string name="back">Back</string>
+    <string name="on">On</string>
+    <string name="off">Off</string>
+    <string name="apply">Apply</string>
+    <string name="delete">Delete</string>
+    <string name="rename">Rename</string>
+    <string name="duplicate">Duplicate</string>
+    <string name="activate">Activate</string>
+    <string name="edit">Edit</string>
+    <string name="reset">Reset</string>
+    <string name="add">Add</string>
+    <string name="none">None</string>
+    <string name="unknown">Unknown</string>
+    <string name="not_connected">Daemon not reachable</string>
+    <string name="percent_value">%1$d%%</string>
+    <string name="percent_value_format">%d%%</string>
+    <string name="temperature_value_format">%d °C</string>
+    <string name="temperature_celsius">%1$s °C</string>
+    <string name="temperature_value">%1$d °C</string>
+    <string name="rpm_value">%1$d rpm</string>
+    <string name="value_and_unit">%1$s %2$s</string>
+
+    <!-- Handheld page -->
+    <string name="home_fan_summary">%1$s · %2$s</string>
+    <string name="home_lighting_summary">%1$s · %2$s</string>
+    <string name="home_controller_summary">Stick deadzone %1$d%% · %2$d%%</string>
+    <string name="home_daemon_note">Fan and lighting are applied by the AshFall daemons.  Presets are stored by this app; the daemons only see the active values.</string>
+
+    <!-- Fan -->
+    <string name="fan_switch_title">Fan</string>
+    <string name="fan_switch_summary_on">On, %1$s</string>
+    <string name="fan_switch_summary_off">Off (safety override still applies)</string>
+    <string name="fan_status_title">Status</string>
+    <string name="fan_status_temperature">Temperature</string>
+    <string name="fan_status_output">Output</string>
+    <string name="fan_status_speed">Fan speed</string>
+    <string name="fan_status_safety">Safety override — fan at 100%%</string>
+    <string name="fan_status_unavailable">The fan daemon is not responding.</string>
+    <string name="fan_presets_category">Preset</string>
+    <string name="fan_preset_builtin">Built-in</string>
+    <string name="fan_preset_smart_summary">Follows a temperature curve</string>
+    <string name="fan_preset_manual_summary">Fixed %1$d%%</string>
+    <string name="fan_preset_curve_summary">Curve, %1$d points</string>
+    <string name="fan_preset_fixed_summary">%1$s</string>
+    <string name="fan_preset_edit_title">Edit presets</string>
+    <string name="fan_preset_edit_summary">Add, rename, duplicate or delete presets</string>
+    <string name="fan_preset_none">Custom values</string>
+    <string name="fan_new_preset">New preset</string>
+    <string name="fan_new_preset_default">Preset %1$d</string>
+    <string name="fan_curve_title">Curve</string>
+    <string name="fan_curve_summary">%1$d points · current %2$d °C → %3$d%%</string>
+    <string name="fan_curve_only_smart">Used when the preset mode is Smart</string>
+    <string name="fan_manual_category">Manual output</string>
+    <string name="fan_manual_title">Fan output</string>
+    <string name="fan_manual_summary">%1$d%%</string>
+    <string name="fan_manual_disabled">Choose the Manual preset to use this</string>
+    <string name="fan_safety_category">Safety</string>
+    <string name="fan_safety_title">Safety threshold</string>
+    <string name="fan_safety_summary">At or above %1$d °C the fan runs at 100%%</string>
+    <string name="fan_off_preset">Off</string>
+    <string name="fan_quiet_preset">Quiet</string>
+    <string name="fan_balanced_preset">Balanced</string>
+    <string name="fan_max_preset">Maximum</string>
+    <string name="fan_smart_preset">Smart (default)</string>
+    <string name="fan_mode_off">Off</string>
+    <string name="fan_mode_quiet">Quiet</string>
+    <string name="fan_mode_balanced">Balanced</string>
+    <string name="fan_mode_max">Maximum</string>
+    <string name="fan_mode_manual">Manual</string>
+    <string name="fan_mode_smart">Smart</string>
+
+    <!-- Preset editor -->
+    <string name="preset_builtin_summary">Built-in · %1$s</string>
+    <string name="preset_user_summary">%1$s · %2$s</string>
+    <string name="preset_actions">%1$s</string>
+    <string name="preset_change_mode">Change mode</string>
+    <string name="fan_preset_none_custom">Custom</string>
+    <string name="preset_delete_confirm">Delete “%1$s”?</string>
+    <string name="preset_delete_confirm_body">The preset is removed from this device.  The active fan settings stay as they are.</string>
+    <string name="preset_rename_title">Preset name</string>
+    <string name="preset_new_name">New preset</string>
+    <string name="preset_reset_title">Reset presets</string>
+    <string name="preset_reset_summary">Delete all user presets and restore the built-ins</string>
+    <string name="preset_reset_confirm">Delete every user preset?</string>
+    <string name="preset_delete_builtin">Built-in presets cannot be deleted</string>
+    <string name="preset_name_empty">Enter a name</string>
+    <string name="preset_limit">At most 32 presets</string>
+
+    <!-- Curve editor -->
+    <string name="curve_hint">Drag a point, or focus the graph and use the D-pad.  A adds a point, X deletes the selected point.</string>
+    <string name="curve_point_temp">%1$d °C</string>
+    <string name="curve_point_pct">%1$d%%</string>
+    <string name="curve_selected">Selected %1$d °C → %2$d%%</string>
+    <string name="curve_add_point">Add point</string>
+    <string name="curve_delete_point">Delete point</string>
+    <string name="curve_reset">Reset curve</string>
+    <string name="curve_too_many">A curve has at most 8 points</string>
+    <string name="curve_too_few">A curve needs at least 2 points</string>
+    <string name="curve_live_marker">Current temperature %1$d °C → %2$d%%</string>
+    <string name="curve_apply">Save curve</string>
+
+    <!-- Lighting -->
+    <string name="lighting_switch_title">Lighting</string>
+    <string name="lighting_switch_summary_on">%1$s, %2$d%%</string>
+    <string name="lighting_switch_summary_off">Off</string>
+    <string name="lighting_target_title">Colour target</string>
+    <string name="lighting_target_both">Both</string>
+    <string name="lighting_target_left">Left</string>
+    <string name="lighting_target_right">Right</string>
+    <string name="lighting_target_summary">%1$s · %2$s</string>
+    <string name="lighting_colour_title">Colour</string>
+    <string name="lighting_colour_hex">#%1$s</string>
+    <string name="lighting_colour_summary">%1$s left · %2$s right</string>
+    <string name="lighting_brightness_title">Brightness</string>
+    <string name="lighting_brightness_summary">%1$d%%</string>
+    <string name="lighting_effect_title">Effect</string>
+    <string name="lighting_effect_static">Static</string>
+    <string name="lighting_effect_breathing">Breathing</string>
+    <string name="lighting_effect_rainbow">Rainbow</string>
+    <string name="lighting_effect_duo">Duo</string>
+    <string name="lighting_speed_title">Effect speed</string>
+    <string name="lighting_speed_summary">%1$d of 10</string>
+    <string name="lighting_speed_summary_format">%d / 10</string>
+    <string name="lighting_screen_off_title">Turn off while the screen is off</string>
+    <string name="lighting_screen_off_summary">The sticks stay dark when the panel is off</string>
+    <string name="lighting_dialog_custom">Custom colour…</string>
+    <string name="lighting_hue">Hue</string>
+    <string name="lighting_saturation">Saturation</string>
+    <string name="lighting_value">Brightness</string>
+    <string name="lighting_presets_colour">Preset colours</string>
+
+    <!-- Controller -->
+    <string name="controller_tester_title">Controller tester</string>
+    <string name="controller_tester_summary">Live buttons, sticks, deadzones and trigger travel</string>
+    <string name="controller_calibration_title">Calibration</string>
+    <string name="controller_calibration_summary">Source: %1$s</string>
+    <string name="controller_calibration_missing">No calibration available</string>
+    <string name="controller_reset_cal_title">Reset to factory calibration</string>
+    <string name="controller_reset_cal_summary">Delete the user calibration and use the factory values</string>
+    <string name="controller_reset_cal_confirm">Reset the sticks to the factory calibration?</string>
+    <string name="controller_reset_cal_body">The user calibration in /data/misc/ashfall/joys is deleted.  The factory file is never modified.</string>
+    <string name="controller_deadzone_category">Deadzones</string>
+    <string name="controller_deadzone_inner">Inner deadzone</string>
+    <string name="controller_deadzone_inner_summary">%1$d%% of stick travel is ignored around the centre</string>
+    <string name="controller_deadzone_outer">Outer deadzone</string>
+    <string name="controller_deadzone_outer_summary">The last %1$d%% of travel maps to full deflection</string>
+    <string name="controller_deadzone_trigger">Trigger deadzone</string>
+    <string name="controller_deadzone_trigger_summary">%1$d%% of trigger travel is ignored</string>
+    <string name="controller_cal_source_user">user</string>
+    <string name="controller_cal_source_factory">factory</string>
+    <string name="controller_cal_source_default">default</string>
+    <string name="controller_cal_saved">Calibration saved</string>
+    <string name="controller_cal_reset_done">User calibration deleted</string>
+    <string name="controller_cal_error">The input daemon refused the request: %1$s</string>
+
+    <!-- Tester -->
+    <string name="tester_left_stick">Left stick</string>
+    <string name="tester_right_stick">Right stick</string>
+    <string name="tester_triggers">Triggers</string>
+    <string name="tester_raw">Raw</string>
+    <string name="tester_calibrated">Calibrated</string>
+    <string name="tester_hint">B or Back exits.  Select toggles raw values.  D-pad and sticks move the markers, A/B/X/Y and the shoulder buttons light up.</string>
+    <string name="tester_hint_no_raw">Raw view hidden.  Select shows the raw stream again.</string>
+    <string name="tester_no_raw">Raw stream unavailable (input daemon not reachable)</string>
+    <string name="tester_buttons">Buttons</string>
+    <string name="tester_hold">Peak hold — press Select to clear</string>
+
+    <!-- Calibration wizard -->
+    <string name="cal_step_release_title">Let go of the sticks</string>
+    <string name="cal_step_release_body">Put the handheld down and do not touch the sticks or triggers.  The centre position is captured for 2 seconds.</string>
+    <string name="cal_step_rotate_title">Roll both sticks around the edge</string>
+    <string name="cal_step_rotate_body">Move both sticks slowly around their full circle a few times, then let them spring back to the centre.  Capturing for 8 seconds.</string>
+    <string name="cal_step_trigger_title">Pull both triggers fully</string>
+    <string name="cal_step_trigger_body">Squeeze L2 and R2 all the way in and release them twice.  Capturing for 4 seconds.</string>
+    <string name="cal_step_review_title">Review and save</string>
+    <string name="cal_step_review_body">Check that every range looks sane.  Nothing is written until you press Save.</string>
+    <string name="cal_step_next">Next</string>
+    <string name="cal_step_cancel">Cancel</string>
+    <string name="cal_step_retry">Try again</string>
+    <string name="cal_step_start">Start</string>
+    <string name="cal_step_progress">%1$d s</string>
+    <string name="cal_error_socket">Cannot reach /dev/socket/ashfall_input.  Is ashfall-rp5-input running?</string>
+    <string name="cal_error_range">The sticks did not move far enough.  Roll both sticks around their full circle and try again.</string>
+    <string name="cal_error_trigger">The triggers did not travel far enough.  Pull L2 and R2 fully and try again.</string>
+    <string name="cal_error_no_input">No input samples arrived from ashfall-rp5-input.  Try again.</string>
+    <string name="cal_review_axes">Left stick X</string>
+    <string name="cal_review_min">min %1$s</string>
+    <string name="cal_review_center">centre %1$s</string>
+    <string name="cal_review_max">max %1$s</string>
+    <string name="cal_review_not_captured">Not captured</string>
+    <string name="cal_saved_title">Calibration saved</string>
+    <string name="cal_saved_body">ashfall-rp5-input is using the new calibration now.</string>
+
+    <!-- Quick Settings -->
+    <string name="tile_fan">Fan</string>
+    <string name="tile_lighting">Lighting</string>
+    <string name="tile_fan_dialog_title">Fan</string>
+    <string name="tile_fan_dialog_subtitle">%1$s · %2$d °C</string>
+    <string name="tile_lighting_dialog_title">Lighting</string>
+    <string name="tile_edit_presets">Edit presets</string>
+    <string name="tile_effect">Effect</string>
+    <string name="tile_brightness">Brightness</string>
+    <string name="tile_speed">Speed</string>
+    <string name="tile_target">Colour target</string>
+    <string name="tile_colour">Colour</string>
+    <string name="tile_unlock_first">Unlock the device to change this</string>
+    <string name="tile_off">Off</string>
+
+    <!-- Placeholder/footers -->
+    <string name="footer_fan">The daemon samples the hottest CPU/GPU sensor every 2 seconds.  The safety override runs the fan at 100%% in every mode.</string>
+    <string name="footer_controller">Deadzones are applied by ashfall-rp5-input after calibration, so every app and emulator sees them.</string>
+    <string name="footer_lighting">Effect changes are visible immediately.  Brightness 0 turns the rings off without changing the colour.</string>
+</resources>

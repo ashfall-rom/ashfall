@@ -1,0 +1,53 @@
+// Emulator preview build.  Sources are the *same* files as the Soong module:
+//   ../../src  +  ../shims (a small stand-in for SettingsLib's
+//   CollapsingToolbarBaseActivity, the only SettingsLib class the app uses).
+// prepare.sh excludes res/values-v36 (it references SettingsLib resources that
+// only exist inside the AOSP tree) and strips sharedUserId from the manifest.
+plugins {
+    id 'com.android.application'
+}
+
+android {
+    namespace 'org.ashfall.parts'
+    compileSdk 36
+
+    defaultConfig {
+        applicationId 'org.ashfall.parts'
+        minSdk 33
+        targetSdk 36
+        versionCode 1
+        versionName '1.0'
+    }
+
+    sourceSets {
+        main {
+            manifest.srcFile file("${rootProject.projectDir}/build/prepared/AndroidManifest.xml")
+            java.srcDirs = ['../../src', '../shims']
+            res.srcDirs = ["${rootProject.projectDir}/build/prepared/res", 'src/main/res']
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+
+    buildTypes {
+        debug {
+            debuggable true
+        }
+    }
+
+    lint {
+        abortOnError false
+        checkReleaseBuilds false
+    }
+}
+
+dependencies {
+    implementation 'androidx.appcompat:appcompat:1.7.0'
+    implementation 'androidx.preference:preference:1.2.1'
+    implementation 'androidx.recyclerview:recyclerview:1.3.2'
+    implementation 'androidx.fragment:fragment:1.8.5'
+    implementation 'com.google.android.material:material:1.12.0'
+}

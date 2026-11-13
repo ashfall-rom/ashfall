@@ -1,0 +1,248 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Lighting Quick Settings dialog.  Every control applies immediately. -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="@dimen/dialog_width"
+    android:layout_height="wrap_content"
+    android:orientation="vertical"
+    android:paddingStart="@dimen/dialog_padding"
+    android:paddingTop="20dp"
+    android:paddingEnd="@dimen/dialog_padding"
+    android:paddingBottom="12dp">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:gravity="center_vertical"
+        android:orientation="horizontal">
+
+        <ImageView
+            android:layout_width="32dp"
+            android:layout_height="32dp"
+            android:contentDescription="@null"
+            android:src="@drawable/ic_led"
+            android:tint="?android:attr/textColorPrimary" />
+
+        <TextView
+            style="@style/AshFallDialogTitle"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="16dp"
+            android:layout_weight="1"
+            android:text="@string/tile_lighting_dialog_title" />
+
+        <androidx.appcompat.widget.SwitchCompat
+            android:id="@+id/qs_lighting_switch"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:contentDescription="@string/lighting_switch_title" />
+    </LinearLayout>
+
+    <ScrollView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="8dp"
+        android:maxHeight="380dp">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical">
+
+            <TextView
+                style="@style/AshFallSection"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:text="@string/tile_target" />
+
+            <RadioGroup
+                android:id="@+id/qs_lighting_target"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal">
+
+                <RadioButton
+                    android:id="@+id/qs_target_both"
+                    android:layout_width="0dp"
+                    android:layout_height="48dp"
+                    android:layout_weight="1"
+                    android:text="@string/lighting_target_both" />
+
+                <RadioButton
+                    android:id="@+id/qs_target_left"
+                    android:layout_width="0dp"
+                    android:layout_height="48dp"
+                    android:layout_weight="1"
+                    android:text="@string/lighting_target_left" />
+
+                <RadioButton
+                    android:id="@+id/qs_target_right"
+                    android:layout_width="0dp"
+                    android:layout_height="48dp"
+                    android:layout_weight="1"
+                    android:text="@string/lighting_target_right" />
+            </RadioGroup>
+
+            <TextView
+                style="@style/AshFallSection"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:text="@string/tile_colour" />
+
+            <LinearLayout
+                android:id="@+id/qs_lighting_swatches"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="4dp"
+                android:orientation="horizontal" />
+
+            <Button
+                android:id="@+id/qs_lighting_custom"
+                style="?android:attr/borderlessButtonStyle"
+                android:layout_width="wrap_content"
+                android:layout_height="48dp"
+                android:gravity="start|center_vertical"
+                android:minWidth="0dp"
+                android:text="@string/lighting_dialog_custom"
+                android:textColor="?android:attr/colorAccent" />
+
+            <LinearLayout
+                android:id="@+id/qs_lighting_colour_expanded"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:visibility="gone">
+
+                <org.ashfall.parts.ui.ColorPickerView
+                    android:id="@+id/qs_lighting_picker"
+                    android:layout_width="match_parent"
+                    android:layout_height="150dp"
+                    android:focusable="true"
+                    android:focusableInTouchMode="true" />
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal">
+
+                    <TextView
+                        style="@style/AshFallSection"
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:text="@string/lighting_hue" />
+
+                    <TextView
+                        android:id="@+id/qs_lighting_hue_value"
+                        style="@style/AshFallDialogPrimary"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content" />
+                </LinearLayout>
+
+                <SeekBar
+                    android:id="@+id/qs_lighting_hue"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:max="360" />
+            </LinearLayout>
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal">
+
+                <TextView
+                    style="@style/AshFallSection"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="@string/tile_brightness" />
+
+                <TextView
+                    android:id="@+id/qs_lighting_brightness_value"
+                    style="@style/AshFallDialogPrimary"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content" />
+            </LinearLayout>
+
+            <SeekBar
+                android:id="@+id/qs_lighting_brightness"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:max="100" />
+
+            <TextView
+                style="@style/AshFallSection"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:text="@string/tile_effect" />
+
+            <RadioGroup
+                android:id="@+id/qs_lighting_effect"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical">
+
+                <RadioButton
+                    android:id="@+id/qs_effect_static"
+                    android:layout_width="match_parent"
+                    android:layout_height="40dp"
+                    android:text="@string/lighting_effect_static" />
+
+                <RadioButton
+                    android:id="@+id/qs_effect_breathing"
+                    android:layout_width="match_parent"
+                    android:layout_height="40dp"
+                    android:text="@string/lighting_effect_breathing" />
+
+                <RadioButton
+                    android:id="@+id/qs_effect_rainbow"
+                    android:layout_width="match_parent"
+                    android:layout_height="40dp"
+                    android:text="@string/lighting_effect_rainbow" />
+
+                <RadioButton
+                    android:id="@+id/qs_effect_duo"
+                    android:layout_width="match_parent"
+                    android:layout_height="40dp"
+                    android:text="@string/lighting_effect_duo" />
+            </RadioGroup>
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal">
+
+                <TextView
+                    style="@style/AshFallSection"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="@string/tile_speed" />
+
+                <TextView
+                    android:id="@+id/qs_lighting_speed_value"
+                    style="@style/AshFallDialogPrimary"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content" />
+            </LinearLayout>
+
+            <SeekBar
+                android:id="@+id/qs_lighting_speed"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:max="9" />
+        </LinearLayout>
+    </ScrollView>
+
+    <Button
+        android:id="@+id/qs_lighting_done"
+        style="?android:attr/borderlessButtonStyle"
+        android:layout_width="match_parent"
+        android:layout_height="48dp"
+        android:gravity="end|center_vertical"
+        android:text="@string/done"
+        android:textColor="?android:attr/colorAccent" />
+</LinearLayout>
