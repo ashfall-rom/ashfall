@@ -13,6 +13,15 @@ First a self-built GSI, then a full device ROM.
 6. **Custom features** - overclocking, gamepad fusion, battery indicators, sidebar.
 7. **Slim down.**
 
+## Status
+- **v0.1.0-gsi (2026-11-13)**: base GSI done and hardware-verified on the RP5 (stock
+  vendor): boots, landscape display + touch, Wi-Fi, BT, audio, brightness, battery,
+  vibration, USB adb/MTP, built-in gamepad (incl. Home/Back). Tested build
+  20261113-163514 (sha256 eeac1deb...). Open: fan + stick RGB (#45, phase 5),
+  flash-gsi serial auto-detect (#48).
+- Next: phase 5 (fan, RGB, gamepad calibration, AshFall settings menu) and part of
+  phase 6, per the user's spec. Custom kernel (overclock) comes after phases 5/6.
+
 ## Decisions (with the user, 2026-11-12)
 - Own A17 GSI (not a device build first). LineageOS 24.0 ships a vanilla
   `lineage_gsi_arm64` target; TrebleDroid only has `android-16.0`, so fixes are
