@@ -1,0 +1,46 @@
+# Copyright (C) 2026 The AshFall Project
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#      http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+# AshFall RP5 USB fix (issue #44). See docs/rp5/usb.md for the evidence.
+
+# The stock Android 13 vendor init script (/vendor/bin/init.qcom.usb.sh,
+# line 50) seeds persist.vendor.usb.config with the factory/QMMI composition
+# "diag,adb,serial_cdev" whenever the property is empty and ro.build.type is
+# not "user". Stock ships ro.build.type=user, so it never happens there; this
+# GSI is userdebug, so it does on every boot.
+#
+# The stock QTI USB gadget HAL (vendor.usb.use_gadget_hal=1,
+# sys.usb.configfs=2) then rewrites an ADB-only setCurrentUsbFunctions()
+# request into that vendor composition (UsbGadget::setupFunctions ->
+# addFunctionsFromPropString). Its diag FunctionFS has no userspace daemon
+# under the GSI, so the configfs UDC bind fails with
+# "udc a600000.dwc3: failed to start g1: -19" (ENODEV): nothing enumerates on
+# the PC and adbd loops on "timed out while waiting for FUNCTIONFS_BIND".
+#
+# Restore what a stock user build has - persist.vendor.usb.config=adb (the
+# vendor script's else branch sets it empty, which makes the HAL fall through
+# to its standard Android compositions). All of adb, mtp, ptp and mtp,adb are
+# then built by the HAL itself and work on the stock vendor.
+#
+# init parses /system/etc/init/hw/init.rc (which imports
+# /vendor/etc/init/hw/init.qcom.rc -> init.qcom.usb.rc) before
+# /system/etc/init/*.rc, so this action runs after the vendor `on boot` action
+# that copies persist.vendor.usb.config into sys.usb.config.
+on boot
+    setprop persist.vendor.usb.config adb
+    setprop vendor.usb.config adb
+    # Put the Android-standard value back. The vendor's
+    # `on property:sys.usb.config=*` handler publishes the final value to
+    # vendor.usb.config, so this must not stay the diag composition.
+    setprop sys.usb.config ${persist.sys.usb.config}
