@@ -38,6 +38,16 @@ public final class BottomBarView extends LinearLayout {
 
         settingsButton = findViewById(R.id.settings_button);
         focusedLabel = findViewById(R.id.focused_label);
+        settingsButton.setFocusable(true);
+        settingsButton.setFocusableInTouchMode(true);
+    }
+
+    boolean focusSettings() {
+        return settingsButton.requestFocus();
+    }
+
+    boolean isSettingsFocused() {
+        return settingsButton.hasFocus();
     }
 
     void setOnSettingsClickListener(OnClickListener listener) {

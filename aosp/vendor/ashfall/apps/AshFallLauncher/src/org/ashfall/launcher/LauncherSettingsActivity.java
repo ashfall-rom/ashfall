@@ -85,6 +85,7 @@ public final class LauncherSettingsActivity extends Activity {
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_launcher_settings);
+        Ui.applyEdgeToEdge(this, findViewById(R.id.settings_content), 0, 0);
 
         accent = Appearance.load(this).accent;
         backgroundView = findViewById(R.id.settings_background);

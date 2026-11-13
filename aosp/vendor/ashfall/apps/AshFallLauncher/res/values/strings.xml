@@ -48,6 +48,6 @@
     <string name="apply">Apply</string>
     <string name="cancel">Cancel</string>
     <string name="controller">Controller</string>
-    <string name="controller_hints_body">A  Open / select\nB  Back / close\nD-pad / left stick  Move focus\nL1 / R1  Previous / next page\nStart  App options\nSelect  Launcher settings</string>
+    <string name="controller_hints_body">A  Open / select\nB  Back / close\nD-pad / left stick  Move focus\nL1 / R1  Previous / next page\nStart  App options\nHold Start  Launcher settings\nSelect  Launcher settings</string>
     <string name="done">Done</string>
 </resources>

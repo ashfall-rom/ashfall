@@ -71,6 +71,7 @@ public final class HomeActivity extends Activity implements AppPager.Listener {
 
     private boolean optionsShowing;
     private boolean aLongPressFired;
+    private boolean startLongPressFired;
     private long lastDirectionAt;
     private int lastStickDirection;
     private long lastStickAt;
@@ -79,13 +80,19 @@ public final class HomeActivity extends Activity implements AppPager.Listener {
 
     private final Runnable longPressRunnable = () -> {
         aLongPressFired = true;
-        showAppOptions();
+        showAppOptions(true);
+    };
+
+    private final Runnable startLongPressRunnable = () -> {
+        startLongPressFired = true;
+        openSettings();
     };
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_home);
+        Ui.applyEdgeToEdge(this, findViewById(R.id.content), 4, 0);
 
         pager = findViewById(R.id.pager);
         pager.setListener(this);
@@ -197,13 +204,42 @@ public final class HomeActivity extends Activity implements AppPager.Listener {
 
     @Override
     public void onAppOptions(AppEntry entry) {
-        showAppOptions(entry);
+        // A touch long-press opened this; the release is swallowed by the
+        // dialog's short input guard.
+        showAppOptions(entry, false);
     }
 
     @Override
     public boolean dispatchKeyEvent(KeyEvent event) {
         if (optionsShowing) {
             return super.dispatchKeyEvent(event);
+        }
+
+        if (bottomBar.isSettingsFocused()) {
+            int keyCode = event.getKeyCode();
+            if (keyCode == KeyEvent.KEYCODE_DPAD_UP
+                    || keyCode == KeyEvent.KEYCODE_DPAD_LEFT
+                    || keyCode == KeyEvent.KEYCODE_DPAD_RIGHT) {
+                if (event.getAction() == KeyEvent.ACTION_DOWN) {
+                    pager.requestFocusCurrent();
+                }
+                return true;
+            }
+            if (keyCode == KeyEvent.KEYCODE_DPAD_DOWN) {
+                return true;
+            }
+            if (keyCode == KeyEvent.KEYCODE_BUTTON_A
+                    || keyCode == KeyEvent.KEYCODE_DPAD_CENTER
+                    || keyCode == KeyEvent.KEYCODE_ENTER) {
+                if (event.getAction() == KeyEvent.ACTION_UP) {
+                    openSettings();
+                }
+                return true;
+            }
+            if (keyCode == KeyEvent.KEYCODE_BUTTON_B
+                    || keyCode == KeyEvent.KEYCODE_BACK) {
+                return true;
+            }
         }
 
         int action = event.getAction();
@@ -252,8 +288,21 @@ public final class HomeActivity extends Activity implements AppPager.Listener {
 
             case KeyEvent.KEYCODE_MENU:
             case KeyEvent.KEYCODE_BUTTON_START:
-                if (action == KeyEvent.ACTION_DOWN && event.getRepeatCount() == 0) {
-                    showAppOptions();
+                if (action == KeyEvent.ACTION_DOWN) {
+                    if (event.getRepeatCount() == 0) {
+                        startLongPressFired = false;
+                        handler.removeCallbacks(startLongPressRunnable);
+                        handler.postDelayed(startLongPressRunnable, 650L);
+                    }
+                    return true;
+                }
+                if (action == KeyEvent.ACTION_UP) {
+                    handler.removeCallbacks(startLongPressRunnable);
+                    if (!startLongPressFired) {
+                        showAppOptions(false);
+                    }
+                    startLongPressFired = false;
+                    return true;
                 }
                 return true;
 
@@ -282,11 +331,16 @@ public final class HomeActivity extends Activity implements AppPager.Listener {
             return super.dispatchGenericMotionEvent(event);
         }
 
-        // The RP5 D-pad arrives as ABS_HAT0X/Y and is converted to DPAD key
-        // events by ViewRootImpl, so only the analog left stick is handled
-        // here. Handling the hat here as well would move the focus twice.
-        float x = safeAxis(event, MotionEvent.AXIS_X);
-        float y = safeAxis(event, MotionEvent.AXIS_Y);
+        // The RP5 D-pad is a HAT axis (AXIS_HAT_X/Y), not DPAD key events;
+        // ViewRootImpl only synthesizes those keys when the app does not
+        // consume the motion event. Handle the hat here directly, and keep
+        // treating the analog left stick (AXIS_X/Y) as navigation too.
+        float hatX = safeAxis(event, MotionEvent.AXIS_HAT_X);
+        float hatY = safeAxis(event, MotionEvent.AXIS_HAT_Y);
+        float stickX = safeAxis(event, MotionEvent.AXIS_X);
+        float stickY = safeAxis(event, MotionEvent.AXIS_Y);
+        float x = hatX != 0f ? hatX : stickX;
+        float y = hatY != 0f ? hatY : stickY;
         float deadzone = getResources().getInteger(R.integer.stick_deadzone_percent) / 100f;
 
         int direction = 0;
@@ -308,7 +362,10 @@ public final class HomeActivity extends Activity implements AppPager.Listener {
         long now = SystemClock.uptimeMillis();
         long repeat = getResources().getInteger(R.integer.stick_repeat_ms);
         if (direction != lastStickDirection || now - lastStickAt >= repeat) {
-            pager.moveFocus(direction);
+            boolean moved = pager.moveFocus(direction);
+            if (!moved && direction == View.FOCUS_DOWN) {
+                bottomBar.focusSettings();
+            }
             lastStickAt = now;
         }
         lastStickDirection = direction;
@@ -327,7 +384,10 @@ public final class HomeActivity extends Activity implements AppPager.Listener {
             }
         }
         lastDirectionAt = now;
-        pager.moveFocus(direction);
+        boolean moved = pager.moveFocus(direction);
+        if (!moved && direction == View.FOCUS_DOWN) {
+            bottomBar.focusSettings();
+        }
     }
 
     private boolean handleGamepadA(KeyEvent event) {
@@ -358,14 +418,14 @@ public final class HomeActivity extends Activity implements AppPager.Listener {
         }
     }
 
-    private void showAppOptions() {
+    private void showAppOptions(boolean swallowARelease) {
         AppEntry entry = pager.getFocusedEntry();
         if (entry != null) {
-            showAppOptions(entry);
+            showAppOptions(entry, swallowARelease);
         }
     }
 
-    private void showAppOptions(AppEntry entry) {
+    private void showAppOptions(AppEntry entry, boolean swallowARelease) {
         if (optionsShowing) {
             return;
         }
@@ -374,7 +434,7 @@ public final class HomeActivity extends Activity implements AppPager.Listener {
         dialog.show(() -> {
             optionsShowing = false;
             pager.post(pager::requestFocusCurrent);
-        });
+        }, swallowARelease);
     }
 
     private void openSettings() {

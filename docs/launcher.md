@@ -87,6 +87,8 @@ Android status bar is used instead of custom Wi-Fi/battery/clock widgets.
 | A, D-pad center, Enter | Launch the focused app. |
 | Hold A (500 ms) | Open the app-options panel for the focused app. |
 | Menu / Start | Open the app-options panel (same as hold-A). |
+| Hold Menu / Start | Open the launcher settings. |
+| D-pad down from the last grid row | Focus the on-screen Settings button; A opens it, Up returns to the grid. |
 | B / Back | Close the options panel; on the home screen it is a no-op. |
 | L1 / R1, Page Up / Page Down | Previous / next page. |
 | Select | Open the launcher settings. |
@@ -168,8 +170,10 @@ A selects, B/Back closes.
 ### System chrome
 
 - The normal Android status bar is visible; the launcher no longer draws its
-  own Wi-Fi, battery or clock. The app window uses a black status bar with
-  light icons, and the content is laid out below it.
+  own Wi-Fi, battery or clock. The app is edge-to-edge with transparent system
+  bars: the status-bar, navigation-bar and display-cutout insets are applied to
+  the content, so the grid is never clipped and the gesture area is black rather
+  than a separate strip.
 - The focused app name moved from the old top strip to the **bottom-right**
   corner of the bottom bar; the controller hints no longer take up that row.
 - Back is still handled: the home activity consumes `KEYCODE_BACK` and registers
@@ -186,7 +190,34 @@ once; the app list and icons load on a background thread while the chrome is
 already visible. On the RP5 the activity reports `Displayed ... +120ms` on first
 launch (logcat, 2026-11-13 test).
 
-## 3. Integration: default HOME without losing recents
+## 3. Known blocker: seamless HOME transition
+
+On the real RP5 (Android 17, no wipe) pressing Home still uses the
+WindowManagerShell default home-task animation, not the Quickstep home
+animation. Logcat shows `ShellRecents: RecentsTransitionHandler.startAnimation:
+no controller found`, followed by `DefaultTransitionHandler` animating the home
+task with the default `animAttr=0x8/0x9`; captured frames show the outgoing app
+and AshFall side by side during the ~0.6 s transition. Launcher3's old home task
+also remains in the home root task (`visible=false`, `translucent=true`) and can
+be the dimmed surface behind a menu opened during that window.
+
+The cause is outside this app: Quickstep sets
+`OverviewComponentObserver.mIsHomeAndOverviewSame=false` when the default home
+is not Launcher3 and uses the fallback activity interface; the shell then has
+no home-animation controller and falls back to the default task animation.
+Setting `windowAnimationStyle=@null` in the app does not remove the shell
+animation, so a fix needs one of these changes outside `vendor/ashfall/apps`
+(ask before touching):
+
+1. Patch Launcher3/Quickstep to support a third-party default HOME in
+   `OverviewComponentObserver`/`FallbackSwipeHandler` (the stock
+   `Launcher3QuickStepEX` likely carries such a change), or
+2. Patch WindowManagerShell to mark home task opens as no-animation when the
+   role holder is not Launcher3, or
+3. Set the device's transition animation scale to 0 (not recommended: it
+   affects every app).
+
+## 4. Integration: default HOME without losing recents
 
 `aosp/vendor/ashfall/apps.mk` adds `AshFallLauncher` to `PRODUCT_PACKAGES`.
 `Launcher3QuickStep` is not overridden, removed or modified.
@@ -225,7 +256,7 @@ If the test APK is installed on the device, uninstall it before flashing the
 in-tree build: a `/data` copy with the same package name shadows the
 `/system/app` module (and is signed with the test key).
 
-## 4. Verification performed
+## 5. Verification performed
 
 Standalone build (same sources, SDK 36, aapt2 + javac + d8 + apksigner) and
 live test on the RP5 (AshFall GSI v0.1.0-gsi, 1920x1080, 360 dpi):
@@ -242,7 +273,14 @@ live test on the RP5 (AshFall GSI v0.1.0-gsi, 1920x1080, 360 dpi):
 - Installing an app while the launcher is in front adds it to the grid and
   creates the expected pages; uninstalling it removes it and the focus falls
   back to a valid app.
-- Touch: tap launches, long-press opens options, swipe pages.
+- Touch: tap launches, long-press opens options without activating the first
+  action on release, swipe pages.
+- D-pad HAT axes (AXIS_HAT_X/Y) move the focus one step per press and repeat
+  while held; the left stick still works.
+- D-pad down from the last grid row focuses the on-screen Settings button; A
+  opens the launcher settings. Select and hold-Start also open settings.
+- Edge-to-edge insets keep the status bar and gesture area clear of the grid;
+  the launcher no longer shows a clipped top row or its own bottom strip.
 - The system status bar is visible and the grid/content starts below it; the
   focused app name is in the bottom-right corner.
 - Launcher settings opens from the bottom-left button: the background and
@@ -262,23 +300,41 @@ The appearance work was also exercised on the Android 13 virtual RP5
 background, bottom-right app name, and the launcher settings screen with the
 background/accent controls.
 
+On the real RP5 (Android 17 GSI, no wipe, HOME role set with
+`cmd role add-role-holder`) the final fixes were verified with the gamepad
+bridge itself:
+
+- `sendevent` HAT events on `AshFall RP5 Gamepad` moved the grid focus one step
+  per press; D-pad down from the last row put the accent focus ring on the
+  on-screen Settings button and A opened Launcher settings.
+- The status bar and gesture inset handling was checked on the 1920x1080 panel;
+  the top row is no longer under the status bar and no launcher-drawn bottom
+  strip remains.
+- A touch long-press and a held A both opened the options panel without
+  launching the focused app on release.
+- The HOME transition still shows the shell default home-task animation; see
+  the blocker above.
+
 The device was shared with the keyguard/taskbar work (#50/#51) during part of
 this test; the affected navigation/back/page tests were repeated afterwards on
 an exclusive device.
 
-## 5. User test checklist (after flashing)
+## 6. User test checklist (after flashing)
 
 1. Boot to the home screen. With fresh `userdata`, AshFall is the HOME app; if
    the old home is kept, set it in Settings > Apps > Default apps > Home app.
 2. Check the grid: sorted app icons and labels, the focused app name in the
    bottom-right corner, the system status bar on top, and the launcher settings
    button bottom-left.
-3. Controller: D-pad and left stick move the focus (including diagonals);
-   push past the left/right edge to change page; L1/R1 change page; A opens the
-   focused app.
+3. Controller: the physical D-pad (HAT axes) and left stick move the focus
+   (including diagonals); push past the left/right edge to change page; L1/R1
+   change page; A opens the focused app.
+   Down from the last row focuses the Settings button; A opens settings; Select
+   or hold-Start also opens settings.
 4. Press Home from a game: the launcher opens on page 1; recents still shows
    the Launcher3/Quickstep recents surface.
-5. Hold A or press Start: the options panel opens; A on App info opens Settings;
+5. Hold A or press Start: the options panel opens and the release that opened
+   it does not activate Open; A on App info opens Settings;
    A on Uninstall (a user app) opens the system uninstall confirmation; A on
    Kill sends the target's background process a kill request; B/Back closes the
    panel.

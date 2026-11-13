@@ -16,11 +16,17 @@
 
 package org.ashfall.launcher;
 
+import android.app.Activity;
 import android.content.Context;
+import android.graphics.Color;
+import android.graphics.Insets;
 import android.graphics.drawable.GradientDrawable;
 import android.graphics.drawable.StateListDrawable;
 import android.view.Gravity;
 import android.view.View;
+import android.view.Window;
+import android.view.WindowInsets;
+import android.view.WindowInsetsController;
 import android.widget.TextView;
 
 /** Small view/drawable helpers shared by the launcher and its settings. */
@@ -30,6 +36,48 @@ final class Ui {
 
     static int dp(Context context, float value) {
         return Math.round(value * context.getResources().getDisplayMetrics().density);
+    }
+
+    /**
+     * Draw edge-to-edge behind the system bars and inset the content instead,
+     * so the status bar and gesture area never overlap the grid. The bars
+     * stay transparent and use light icons on the dark launcher background.
+     */
+    static void applyEdgeToEdge(Activity activity, View content, int extraTopDp,
+            int extraBottomDp) {
+        Window window = activity.getWindow();
+        window.setStatusBarColor(Color.TRANSPARENT);
+        window.setNavigationBarColor(Color.TRANSPARENT);
+        window.setNavigationBarDividerColor(Color.TRANSPARENT);
+        window.setStatusBarContrastEnforced(false);
+        window.setNavigationBarContrastEnforced(false);
+        window.setDecorFitsSystemWindows(false);
+
+        WindowInsetsController controller = window.getInsetsController();
+        if (controller != null) {
+            controller.setSystemBarsAppearance(0,
+                    WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS
+                            | WindowInsetsController.APPEARANCE_LIGHT_NAVIGATION_BARS);
+        }
+
+        final int baseLeft = content.getPaddingLeft();
+        final int baseTop = content.getPaddingTop();
+        final int baseRight = content.getPaddingRight();
+        final int baseBottom = content.getPaddingBottom();
+        final int extraTop = dp(activity, extraTopDp);
+        final int extraBottom = dp(activity, extraBottomDp);
+
+        content.setOnApplyWindowInsetsListener((view, windowInsets) -> {
+            Insets bars = windowInsets.getInsets(WindowInsets.Type.systemBars());
+            Insets cutout = windowInsets.getInsets(WindowInsets.Type.displayCutout());
+            view.setPadding(
+                    baseLeft + Math.max(bars.left, cutout.left),
+                    baseTop + Math.max(bars.top, cutout.top) + extraTop,
+                    baseRight + Math.max(bars.right, cutout.right),
+                    baseBottom + Math.max(bars.bottom, cutout.bottom) + extraBottom);
+            return windowInsets;
+        });
+        content.requestApplyInsets();
     }
 
     static void applyTileBackground(View view, int accent) {

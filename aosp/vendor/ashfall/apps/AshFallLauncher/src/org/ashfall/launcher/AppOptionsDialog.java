@@ -25,6 +25,7 @@ import android.content.pm.PackageManager;
 import android.graphics.Color;
 import android.graphics.drawable.ColorDrawable;
 import android.graphics.drawable.GradientDrawable;
+import android.os.SystemClock;
 import android.view.KeyEvent;
 import android.view.View;
 import android.view.ViewGroup;
@@ -42,13 +43,18 @@ final class AppOptionsDialog {
     private final Activity activity;
     private final AppEntry entry;
     private Dialog dialog;
+    private long shownAt;
+    private boolean swallowOpeningAction;
+    private static final long INPUT_GUARD_MS = 600L;
 
     AppOptionsDialog(Activity activity, AppEntry entry) {
         this.activity = activity;
         this.entry = entry;
     }
 
-    void show(Runnable onDismiss) {
+    void show(Runnable onDismiss, boolean swallowOpeningRelease) {
+        this.swallowOpeningAction = swallowOpeningRelease;
+        shownAt = SystemClock.uptimeMillis();
         dialog = new Dialog(activity, R.style.Theme_AshFall_Dialog);
         dialog.setContentView(R.layout.dialog_app_options);
         dialog.setCanceledOnTouchOutside(true);
@@ -89,24 +95,36 @@ final class AppOptionsDialog {
         });
 
         open.setOnClickListener(view -> {
+            if (!acceptsInput()) {
+                return;
+            }
             dismiss();
             if (!Intents.launch(activity, entry)) {
                 toast(activity.getString(R.string.launch_failed, entry.label));
             }
         });
         info.setOnClickListener(view -> {
+            if (!acceptsInput()) {
+                return;
+            }
             dismiss();
             if (!Intents.openAppInfo(activity, entry)) {
                 toast(activity.getString(R.string.app_info_unavailable, entry.label));
             }
         });
         uninstall.setOnClickListener(view -> {
+            if (!acceptsInput()) {
+                return;
+            }
             dismiss();
             if (!Intents.uninstall(activity, entry)) {
                 toast(activity.getString(R.string.menu_uninstall_failed, entry.label));
             }
         });
         kill.setOnClickListener(view -> {
+            if (!acceptsInput()) {
+                return;
+            }
             dismiss();
             try {
                 ActivityManager manager = (ActivityManager) activity.getSystemService(
@@ -136,6 +154,13 @@ final class AppOptionsDialog {
                 if (keyCode == KeyEvent.KEYCODE_BUTTON_A
                         || keyCode == KeyEvent.KEYCODE_DPAD_CENTER
                         || keyCode == KeyEvent.KEYCODE_ENTER) {
+                    if (swallowOpeningAction) {
+                        swallowOpeningAction = false;
+                        return true;
+                    }
+                    if (!acceptsInput()) {
+                        return true;
+                    }
                     View focused = dialog.getWindow() == null
                             ? null : dialog.getWindow().getCurrentFocus();
                     if (focused != null && focused.getVisibility() == View.VISIBLE
@@ -154,6 +179,7 @@ final class AppOptionsDialog {
             return false;
         });
         dialog.setOnShowListener(d -> {
+            shownAt = SystemClock.uptimeMillis();
             open.post(open::requestFocus);
             Window window = dialog.getWindow();
             if (window != null) {
@@ -168,6 +194,10 @@ final class AppOptionsDialog {
             }
         });
         dialog.show();
+    }
+
+    private boolean acceptsInput() {
+        return SystemClock.uptimeMillis() - shownAt >= INPUT_GUARD_MS;
     }
 
     private void tintIcon(View action, int accent) {
