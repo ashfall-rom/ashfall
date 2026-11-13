@@ -110,6 +110,12 @@ struct control *control_create(struct input_ctx *ctx)
         control->listen_fd = socket_create_fallback();
     } else if (control->listen_fd < 0) {
         control->listen_fd = -1;
+    } else if (listen(control->listen_fd, CONTROL_MAX_CLIENTS) != 0) {
+        /* init only creates and binds the socket; listening is our job.
+         * Without it accept() fails with EINVAL on every poll wakeup. */
+        ah_logf(AH_LOG_ERROR, "control: listen: %s", strerror(errno));
+        close(control->listen_fd);
+        control->listen_fd = -1;
     }
     if (control->listen_fd >= 0) {
         /* The init-provided socket is blocking; accept_clients() relies on
@@ -287,8 +293,16 @@ static void accept_clients(struct control *control)
         if (fd < 0) {
             if (errno == EAGAIN || errno == EWOULDBLOCK)
                 return;
-            if (errno != EINTR)
-                ah_logf(AH_LOG_WARN, "control: accept: %s", strerror(errno));
+            if (errno == EINTR || errno == ECONNABORTED || errno == EMFILE ||
+                errno == ENFILE || errno == ENOBUFS || errno == ENOMEM)
+                return;
+            /* Persistent failure (e.g. EINVAL: not listening): log once and
+             * stop polling the socket instead of spinning on it. The gamepad
+             * itself is unaffected. */
+            ah_logf(AH_LOG_ERROR, "control: accept: %s; control socket disabled",
+                    strerror(errno));
+            close(control->listen_fd);
+            control->listen_fd = -1;
             return;
         }
         if (control->client_count >= CONTROL_MAX_CLIENTS) {
