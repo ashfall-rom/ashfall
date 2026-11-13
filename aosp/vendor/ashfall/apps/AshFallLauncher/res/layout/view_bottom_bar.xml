@@ -45,15 +45,17 @@
         android:textColor="@color/text_muted"
         android:textSize="@dimen/hint_text_size" />
 
-    <org.ashfall.launcher.ClockView
-        android:id="@+id/clock"
+    <TextView
+        android:id="@+id/focused_label"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:layout_gravity="center_vertical"
-        android:paddingStart="8dp"
-        android:paddingEnd="4dp"
+        android:ellipsize="end"
+        android:gravity="end"
+        android:maxWidth="340dp"
         android:singleLine="true"
+        android:text="@string/focused_none"
         android:textColor="@color/text_primary"
-        android:textSize="@dimen/clock_text_size"
+        android:textSize="@dimen/bottom_name_text_size"
         android:textStyle="bold" />
 </merge>

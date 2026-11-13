@@ -22,23 +22,33 @@ import android.view.Gravity;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.widget.LinearLayout;
+import android.widget.TextView;
 
-/** Bottom strip: Settings shortcut, controller hints and the clock. */
+/** Bottom strip: launcher-settings shortcut, controller hints, focused app name. */
 public final class BottomBarView extends LinearLayout {
+    private final View settingsButton;
+    private final TextView focusedLabel;
+
     public BottomBarView(Context context, AttributeSet attrs) {
         super(context, attrs);
         setOrientation(HORIZONTAL);
         setGravity(Gravity.CENTER_VERTICAL);
-        setPadding(dp(16), 0, dp(16), 0);
+        setPadding(Ui.dp(context, 16), 0, Ui.dp(context, 16), 0);
         LayoutInflater.from(context).inflate(R.layout.view_bottom_bar, this, true);
+
+        settingsButton = findViewById(R.id.settings_button);
+        focusedLabel = findViewById(R.id.focused_label);
     }
 
     void setOnSettingsClickListener(OnClickListener listener) {
-        View settings = findViewById(R.id.settings_button);
-        settings.setOnClickListener(listener);
+        settingsButton.setOnClickListener(listener);
     }
 
-    private int dp(int value) {
-        return Math.round(value * getResources().getDisplayMetrics().density);
+    void setFocusedLabel(CharSequence label) {
+        focusedLabel.setText(label);
+    }
+
+    void setAccent(int accent) {
+        Ui.applyActionBackground(settingsButton, accent);
     }
 }

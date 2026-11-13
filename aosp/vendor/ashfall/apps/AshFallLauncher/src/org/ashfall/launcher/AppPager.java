@@ -60,6 +60,7 @@ public final class AppPager extends FrameLayout {
     private int lastFocusedIndex;
     private AppEntry focusedEntry;
     private int bindSequence;
+    private int accent = Appearance.DEFAULT_ACCENT;
 
     public AppPager(Context context, AttributeSet attrs) {
         super(context, attrs);
@@ -94,6 +95,13 @@ public final class AppPager extends FrameLayout {
 
     void setListener(Listener listener) {
         this.listener = listener;
+    }
+
+    void setAccent(int accent) {
+        this.accent = accent;
+        for (int i = 0; i < grid.getTileCount(); i++) {
+            grid.tileAt(i).setAccent(accent);
+        }
     }
 
     /**
@@ -215,6 +223,7 @@ public final class AppPager extends FrameLayout {
         for (int i = 0; i < grid.getTileCount(); i++) {
             final AppTileView tile = grid.tileAt(i);
             final AppEntry entry = tile.getEntry();
+            tile.setAccent(accent);
             tile.setOnFocusChangeListener((view, hasFocus) -> {
                 if (hasFocus) {
                     lastFocusedIndex = grid.indexOfTile(tile);

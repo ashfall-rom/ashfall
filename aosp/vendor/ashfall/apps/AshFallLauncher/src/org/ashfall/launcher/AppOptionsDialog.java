@@ -58,6 +58,11 @@ final class AppOptionsDialog {
         View info = dialog.findViewById(R.id.action_info);
         View uninstall = dialog.findViewById(R.id.action_uninstall);
 
+        int accent = Appearance.load(activity).accent;
+        Ui.applyActionBackground(open, accent);
+        Ui.applyActionBackground(info, accent);
+        Ui.applyActionBackground(uninstall, accent);
+
         dialog.setOnDismissListener(d -> {
             dialog = null;
             if (onDismiss != null) {

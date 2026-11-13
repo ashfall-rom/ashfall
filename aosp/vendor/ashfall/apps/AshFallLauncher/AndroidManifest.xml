@@ -22,7 +22,6 @@
     <!-- Launchers are expected to see every launchable activity. -->
     <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES" />
     <uses-permission android:name="android.permission.REQUEST_DELETE_PACKAGES" />
-    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
 
     <queries>
         <intent>
@@ -60,7 +59,7 @@
             android:resumeWhilePausing="true"
             android:screenOrientation="landscape"
             android:stateNotNeeded="true"
-            android:theme="@style/Theme.AshFall.Fullscreen"
+            android:theme="@style/Theme.AshFall"
             android:windowSoftInputMode="stateAlwaysHidden|adjustNothing">
             <intent-filter android:priority="1000">
                 <action android:name="android.intent.action.MAIN" />
@@ -71,5 +70,12 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <activity
+            android:name=".LauncherSettingsActivity"
+            android:excludeFromRecents="true"
+            android:exported="false"
+            android:screenOrientation="landscape"
+            android:theme="@style/Theme.AshFall" />
     </application>
 </manifest>

@@ -64,15 +64,4 @@ final class Intents {
             return false;
         }
     }
-
-    static boolean openSettings(Context context) {
-        Intent intent = new Intent(Settings.ACTION_SETTINGS)
-                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-        try {
-            context.startActivity(intent);
-            return true;
-        } catch (ActivityNotFoundException | SecurityException e) {
-            return false;
-        }
-    }
 }

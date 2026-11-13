@@ -7,7 +7,6 @@
     <string name="loading_apps">Loading apps\u2026</string>
     <string name="no_apps">No apps found</string>
     <string name="focused_none">AshFall</string>
-    <string name="battery_percent">%1$d%%</string>
 
     <string name="menu_open">Open</string>
     <string name="menu_app_info">App info</string>
@@ -17,13 +16,31 @@
 
     <string name="cd_previous_page">Previous page</string>
     <string name="cd_next_page">Next page</string>
-    <string name="cd_settings">Open Settings</string>
-    <string name="cd_wifi">Wi-Fi status</string>
-    <string name="wifi_connected">Wi-Fi connected</string>
-    <string name="wifi_off">Wi-Fi not connected</string>
-    <string name="cd_battery">Battery status</string>
+    <string name="cd_settings">Launcher settings</string>
     <string name="cd_app_icon">Icon of %1$s</string>
 
     <string name="launch_failed">Couldn\u2019t open %1$s</string>
     <string name="app_info_unavailable">No app details available for %1$s</string>
+
+    <!-- Launcher settings -->
+    <string name="launcher_settings">Launcher settings</string>
+    <string name="settings_intro">Tune the home screen to your liking. Changes apply as soon as you go back.</string>
+    <string name="background">Background</string>
+    <string name="background_solid">Solid colour</string>
+    <string name="background_gradient">Gradient</string>
+    <string name="background_image">Image</string>
+    <string name="background_colour">Colour</string>
+    <string name="gradient_start">Gradient start</string>
+    <string name="gradient_end">Gradient end</string>
+    <string name="gradient_direction">Direction</string>
+    <string name="direction_down">Top to bottom</string>
+    <string name="direction_right">Left to right</string>
+    <string name="animate_colours">Animate colours</string>
+    <string name="choose_image">Choose image</string>
+    <string name="clear_image">Clear image</string>
+    <string name="no_image">No image selected</string>
+    <string name="image_dim">Image dim: %1$d%%</string>
+    <string name="accent_colour">Accent colour</string>
+    <string name="done">Done</string>
+    <string name="settings_hint">A  Select      B  Back</string>
 </resources>

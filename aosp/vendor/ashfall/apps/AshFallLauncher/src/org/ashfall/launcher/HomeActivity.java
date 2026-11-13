@@ -26,8 +26,6 @@ import android.view.InputDevice;
 import android.view.KeyEvent;
 import android.view.MotionEvent;
 import android.view.View;
-import android.view.WindowInsets;
-import android.view.WindowInsetsController;
 import android.widget.ImageButton;
 import android.widget.TextView;
 import android.widget.Toast;
@@ -58,7 +56,7 @@ public final class HomeActivity extends Activity implements AppPager.Listener {
     private final Handler handler = new Handler(Looper.getMainLooper());
 
     private AppPager pager;
-    private StatusBarView statusBar;
+    private LauncherBackgroundView backgroundView;
     private PageIndicatorView pageDots;
     private BottomBarView bottomBar;
     private TextView emptyState;
@@ -92,7 +90,7 @@ public final class HomeActivity extends Activity implements AppPager.Listener {
         pager = findViewById(R.id.pager);
         pager.setListener(this);
 
-        statusBar = findViewById(R.id.status_bar);
+        backgroundView = findViewById(R.id.background);
         pageDots = findViewById(R.id.page_dots);
         bottomBar = findViewById(R.id.bottom_bar);
         emptyState = findViewById(R.id.empty_state);
@@ -120,7 +118,12 @@ public final class HomeActivity extends Activity implements AppPager.Listener {
     protected void onStart() {
         super.onStart();
         repository.start();
-        hideSystemBars();
+    }
+
+    @Override
+    protected void onResume() {
+        super.onResume();
+        applyAppearance();
     }
 
     @Override
@@ -147,17 +150,13 @@ public final class HomeActivity extends Activity implements AppPager.Listener {
         // launcher's clearTaskOnLaunch behaviour. Reloads while the launcher
         // stays in front keep the focused app.
         pager.goToFirstPage();
-        hideSystemBars();
     }
 
     @Override
     public void onWindowFocusChanged(boolean hasFocus) {
         super.onWindowFocusChanged(hasFocus);
-        if (hasFocus) {
-            hideSystemBars();
-            if (pager != null) {
-                pager.requestFocusCurrent();
-            }
+        if (hasFocus && pager != null) {
+            pager.requestFocusCurrent();
         }
     }
 
@@ -185,7 +184,7 @@ public final class HomeActivity extends Activity implements AppPager.Listener {
 
     @Override
     public void onFocusedAppChanged(AppEntry entry) {
-        statusBar.setFocusedLabel(entry == null
+        bottomBar.setFocusedLabel(entry == null
                 ? getString(R.string.focused_none) : entry.label);
     }
 
@@ -379,9 +378,15 @@ public final class HomeActivity extends Activity implements AppPager.Listener {
     }
 
     private void openSettings() {
-        if (!Intents.openSettings(this)) {
-            toast(getString(R.string.launch_failed, getString(R.string.settings)));
-        }
+        startActivity(new Intent(this, LauncherSettingsActivity.class));
+    }
+
+    private void applyAppearance() {
+        Appearance appearance = Appearance.load(this);
+        backgroundView.apply(appearance);
+        pager.setAccent(appearance.accent);
+        pageDots.setAccent(appearance.accent);
+        bottomBar.setAccent(appearance.accent);
     }
 
     private void updateEmptyState() {
@@ -393,15 +398,6 @@ public final class HomeActivity extends Activity implements AppPager.Listener {
         } else {
             emptyState.setText(R.string.no_apps);
             emptyState.setVisibility(View.VISIBLE);
-        }
-    }
-
-    private void hideSystemBars() {
-        WindowInsetsController controller = getWindow().getInsetsController();
-        if (controller != null) {
-            controller.hide(WindowInsets.Type.systemBars());
-            controller.setSystemBarsBehavior(
-                    WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE);
         }
     }
 

@@ -2,8 +2,7 @@
 <!-- Copyright (C) 2026 The AshFall Project. Apache-2.0. -->
 <resources>
     <!-- Low-glare, high-contrast surface for a handheld played in the dark. -->
-    <color name="background_top">#FF0C1016</color>
-    <color name="background_bottom">#FF121A24</color>
+    <color name="background">#FF000000</color>
     <color name="surface">#FF171F2B</color>
     <color name="surface_strong">#FF202A39</color>
     <color name="divider">#FF243041</color>
@@ -12,7 +11,7 @@
     <color name="text_secondary">#FF9AA7BA</color>
     <color name="text_muted">#FF6C7A8E</color>
 
-    <!-- Warm ember accent, carried over from the stock launcher's #f24646. -->
+    <!-- Default ember accent; the live accent is stored in Appearance. -->
     <color name="accent">#FFF24646</color>
     <color name="accent_soft">#33F24646</color>
     <color name="ok">#FF8FD3A0</color>

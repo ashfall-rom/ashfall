@@ -68,16 +68,16 @@ icon grid, so the screen reads as a console UI rather than a phone launcher.
 
 | Region | Size | Content |
 |---|---|---|
-| Top status | 52 dp | Focused app name (left, marquee); Wi-Fi and battery (right). |
+| System status bar | system | The normal Android status bar (time, Wi-Fi, battery, notifications), with black background and light icons. |
 | Grid | flexible | 5 columns x 3 rows = **15 apps per page**, icon + label per tile, focus frame. |
 | Page dots | 20 dp | One dot per page, accent for the current page. |
-| Bottom | 52 dp | Settings shortcut, controller hints, clock. |
+| Bottom | 52 dp | Launcher-settings shortcut (left), controller hints (centre), focused app name (right). |
 
 The app also adds a small label under every icon (the stock launcher only shows
 the focused name), so the grid is readable without moving the focus. The
-palette is deliberately dark and low-glare (`#0c1016` to `#121a24`, accent
-`#f24646`) for a handheld used in the dark; a solid themed background is used
-instead of the wallpaper, which the issue permits.
+default look is pure black with the ember-red accent, deliberately low-glare
+for a handheld used in the dark. There is no top chrome of our own: the normal
+Android status bar is used instead of custom Wi-Fi/battery/clock widgets.
 
 ### Controller map
 
@@ -89,7 +89,7 @@ instead of the wallpaper, which the issue permits.
 | Menu / Start | Open the app-options panel (same as hold-A). |
 | B / Back | Close the options panel; on the home screen it is a no-op. |
 | L1 / R1, Page Up / Page Down | Previous / next page. |
-| Select | Open the Settings app. |
+| Select | Open the launcher settings. |
 | Touch | Tap to launch, long-press for options, horizontal swipe to change page; chevrons and page buttons are tappable. |
 
 The RP5 gamepad daemon reports A/B as `KEYCODE_BUTTON_A/B`, the D-pad as
@@ -103,6 +103,24 @@ The app registers a no-op `OnBackInvokedCallback` (and
 `android:enableOnBackInvokedCallback="true"`) in addition to consuming
 `KEYCODE_BACK`: on Android 17 the predictive-back gesture is separate from key
 events, and without a callback a right-edge swipe would close the HOME activity.
+
+### Appearance settings
+
+The bottom-left **Settings** button and Select open `LauncherSettingsActivity`
+(not the system Settings app). The screen is controller- and touch-navigable
+and previews changes against the live background:
+
+- **Background**: solid colour (14-colour palette), gradient (start/end colours,
+  top-to-bottom or left-to-right direction, optional animated hue shift), or a
+  custom image chosen through `ACTION_OPEN_DOCUMENT` with a 0–80% dim slider.
+  Images use a persistable URI grant so the choice survives reboots.
+- **Accent colour**: nine presets (ember red by default, plus orange, amber,
+  green, teal, blue, violet, pink and white). The accent drives the focus
+  frame, page dots and settings highlights and is applied live when returning
+  to the home screen.
+
+Settings are stored in the `appearance` `SharedPreferences` file. The default
+background is pure black (`#000000`); no wallpaper is read.
 
 ### App list
 
@@ -133,23 +151,23 @@ events, and without a callback a right-edge swipe would close the HOME activity.
 The panel is controller-navigable: left/right move between actions, A selects,
 B/Back closes.
 
-### Status and chrome
+### System chrome
 
-- Battery: sticky `ACTION_BATTERY_CHANGED`; percentage text plus an outline/fill
-  gauge, charging bolt, warning colour at <=15%.
-- Wi-Fi: `ConnectivityManager.registerDefaultNetworkCallback`; a connected
-  Wi-Fi transport shows the normal icon, otherwise the muted/off icon.
-- Clock: bottom right, honours the system 12/24-hour setting and ticks on the
-  minute boundary.
-- Immersive fullscreen: system bars are hidden with
-  `WindowInsetsController` and come back transiently on a swipe, so the
-  gesture/navigation indicator does not overlap the grid.
-- Settings shortcut: `Settings.ACTION_SETTINGS` from the bottom bar and Select.
+- The normal Android status bar is visible; the launcher no longer draws its
+  own Wi-Fi, battery or clock. The app window uses a black status bar with
+  light icons, and the content is laid out below it.
+- The focused app name moved from the old top strip to the **bottom-right**
+  corner, next to the controller hints.
+- Back is still handled: the home activity consumes `KEYCODE_BACK` and registers
+  a no-op `OnBackInvokedCallback` so neither the key nor the predictive-back
+  gesture closes the launcher.
+- The bottom-left Settings button and Select open the launcher's own settings,
+  not `Settings.ACTION_SETTINGS`.
 
 ### Performance
 
 The APK contains only the launcher: no Kotlin runtime, no AndroidX, no native
-libraries, no Internet permission. The built APK is ~70 KB. Views are inflated
+libraries, no Internet permission. The built APK is well under 100 KB. Views are inflated
 once; the app list and icons load on a background thread while the chrome is
 already visible. On the RP5 the activity reports `Displayed ... +120ms` on first
 launch (logcat, 2026-11-13 test).
@@ -211,7 +229,18 @@ live test on the RP5 (AshFall GSI v0.1.0-gsi, 1920x1080, 360 dpi):
   creates the expected pages; uninstalling it removes it and the focus falls
   back to a valid app.
 - Touch: tap launches, long-press opens options, swipe pages.
+- The system status bar is visible and the grid/content starts below it; the
+  focused app name is in the bottom-right corner.
+- Launcher settings opens from the bottom-left button: solid/gradient/image
+  sections switch correctly, the palette and accent selection update in place,
+  and switching the accent to blue immediately updates the focus ring and page
+  dots after returning home.
 - Cold start: `Displayed org.ashfall.launcher/.HomeActivity ... +120ms`.
+
+The appearance work was also exercised on the Android 13 virtual RP5
+(1920x1080) after the UI changes: system status bar on top, pure black default
+background, bottom-right app name, and the launcher settings screen with the
+background/accent controls.
 
 The device was shared with the keyguard/taskbar work (#50/#51) during part of
 this test; the affected navigation/back/page tests were repeated afterwards on
@@ -221,8 +250,9 @@ an exclusive device.
 
 1. Boot to the home screen. With fresh `userdata`, AshFall is the HOME app; if
    the old home is kept, set it in Settings > Apps > Default apps > Home app.
-2. Check the grid: sorted app icons and labels, focused name in the top bar,
-   Wi-Fi/battery indicators, clock, Settings shortcut.
+2. Check the grid: sorted app icons and labels, the focused app name in the
+   bottom-right corner, the system status bar on top, and the launcher settings
+   button bottom-left.
 3. Controller: D-pad and left stick move the focus (including diagonals);
    push past the left/right edge to change page; L1/R1 change page; A opens the
    focused app.
@@ -233,7 +263,11 @@ an exclusive device.
    closes the panel.
 6. Install/update/uninstall an app while the launcher is visible; the grid
    updates without a reboot and keeps a sensible focus.
-7. Touch: tap, long-press and swipe work; the status bar and gesture handle do
-   not overlap the 5x3 grid.
-8. Cold start: pressing Home after a reboot should feel immediate (no splash
+7. Touch: tap, long-press and swipe work; the system status bar and gesture
+   handle do not overlap the 5x3 grid.
+8. Open launcher Settings: switch background to solid/gradient/image; pick a
+   gradient direction and enable animation; choose an image and drag the dim
+   slider; switch the accent to blue and check the focus ring, page dots and
+   settings highlights.
+9. Cold start: pressing Home after a reboot should feel immediate (no splash
    or white flash).

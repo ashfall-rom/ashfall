@@ -28,7 +28,7 @@ public final class PageIndicatorView extends View {
     private final float spacing;
     private final float dotRadius;
     private final float selectedRadius;
-    private final int activeColor;
+    private int activeColor = Appearance.DEFAULT_ACCENT;
     private final int inactiveColor;
 
     private int page;
@@ -40,8 +40,12 @@ public final class PageIndicatorView extends View {
         spacing = 16f * density;
         dotRadius = 3.2f * density;
         selectedRadius = 4.8f * density;
-        activeColor = context.getColor(R.color.accent);
         inactiveColor = context.getColor(R.color.divider);
+    }
+
+    void setAccent(int accent) {
+        activeColor = accent;
+        invalidate();
     }
 
     void setPage(int page, int total) {

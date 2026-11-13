@@ -34,6 +34,7 @@ import android.widget.TextView;
  */
 final class AppTileView extends LinearLayout {
     private final AppEntry entry;
+    private int accent = Appearance.DEFAULT_ACCENT;
 
     AppTileView(Context context, AppEntry entry) {
         super(context);
@@ -47,7 +48,7 @@ final class AppTileView extends LinearLayout {
         setDescendantFocusability(FOCUS_BLOCK_DESCENDANTS);
         setClipChildren(false);
         setClipToPadding(false);
-        setBackgroundResource(R.drawable.bg_tile);
+        Ui.applyTileBackground(this, accent);
         setPadding(dp(6), dp(6), dp(6), dp(6));
         setContentDescription(entry.label);
 
@@ -90,6 +91,11 @@ final class AppTileView extends LinearLayout {
                 .scaleY(gainFocus ? 1.06f : 1.0f)
                 .setDuration(120)
                 .start();
+    }
+
+    void setAccent(int accent) {
+        this.accent = accent;
+        Ui.applyTileBackground(this, accent);
     }
 
     AppEntry getEntry() {
