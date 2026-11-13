@@ -38,52 +38,61 @@ stays on `.31`, so only the `sn3112` nodes are used
 ([`docs/stock-189/fan-rgb-189.txt`](../stock-189/fan-rgb-189.txt) §"RGB").  The
 LED backend enumerates the nodes at start and logs the result.
 
-## 2. Fan measurement (duty -> RPM range)
+## 2. Fan measurement (duty -> RPM range, measured 2026-11-13)
 
 The fan is a 4-wire PWM fan: `duty` is the PWM high time in ns and `speed` is
-the fan's feedback.  Percentages in `persist.ashfall.fan.*` map **linearly onto
-the measured useful range** (`FAN_DUTY_MIN_NS .. FAN_DUTY_MAX_NS` in
-`rp5/hw/fan.h`); `0 %` means `state=0`.
+the fan's tach/FG feedback in **RPM** (value read directly, no scaling; `0`
+when stopped, noisy by +-300 at the low end).  Percentages in
+`persist.ashfall.fan.*` map **linearly onto the measured useful range**
+(`FAN_DUTY_MIN_NS .. FAN_DUTY_MAX_NS` in `rp5/hw/fan.h`); `0 %` means
+`state=0`.
 
-Stock values for reference (`.31`/`.189`): Quiet 5 000 ns, Sport 25 000 ns,
-High 25 000 ns (`.189` maps 50..70 % to 25 000..35 000 ns).
+The sweep was run on the RP5 (build `20261113-213314`, SoC at ~35 C) from a
+stalled state, 5 s per step:
 
-**Status: the on-device sweep has not been run yet** (the RP5 was busy with
-another build when this landed).  Current constants are therefore provisional:
+| duty (ns) | duty (%) | `speed` (RPM) | note |
+|---:|---:|---:|---|
+| 2 000 | 4 | 300 -> 0 | stalls |
+| 3 000 | 6 | 0 | stalls |
+| 3 700 | 7.4 | 0 | does not start from rest |
+| 3 900 | 7.8 | 1 800 | starts (once) |
+| 4 000 | 8 | 1 500-1 800 | **starts 3/3 from rest**, keeps running |
+| 4 920 | 9.8 | 1 800 | built-in quiet preset |
+| 5 000 | 10 | 2 100 | stock Quiet |
+| 6 000 | 12 | 2 400 | |
+| 8 000 | 16 | 3 300 | |
+| 12 000 | 24 | 4 500 | |
+| 16 000 | 32 | 6 000 | |
+| 20 000 | 40 | 7 200 | |
+| 25 000 | 50 | 8 100-8 700 | stock Sport / built-in balanced preset (25 160 ns) |
+| 30 000 | 60 | 10 200 | |
+| 35 000 | 70 | 11 400 | |
+| 40 000 | 80 | 12 600 | |
+| 45 000 | 90 | 13 800 | |
+| 50 000 | 100 | 14 400-15 600 | PWM period ceiling (20 kHz), stable over 20 s |
 
-| constant | value | basis |
+Results:
+
+* **Minimum reliable duty = 4 000 ns** (3/3 starts from rest at ~35 C;
+  3 700 ns and below stall, 3 500 ns stalls even while running).
+* **Maximum useful duty = 50 000 ns**, i.e. the whole PWM period: the tach
+  still rises up to 100 % (there is no plateau below the period).  This is
+  higher than stock's High mode (25 000 ns, `.189` 35 000 ns), which simply
+  never used the top of the fan's range.
+* The tach responds within ~1 s, so the daemon's 2 s sampling is sufficient.
+* A 4 000 ns start was reliable, so a spin-up kick is not required; the daemon
+  still does a short 500 ms one (`FAN_MIN_KICK_MS`) as insurance for a cold
+  unit.  Set the constant to 0 to disable it.
+
+Final constants and presets:
+
+| constant | value | meaning |
 |---|---|---|
-| `FAN_DUTY_MIN_NS` | 3 000 | below stock Quiet (5 000), assumed minimum that spins reliably |
-| `FAN_DUTY_MAX_NS` | 35 000 | `.189` High maximum, assumed top of the useful range |
-| `FAN_PRESET_QUIET_PCT` | 7 | ~5 200 ns (stock Quiet 5 000 ns) |
-| `FAN_PRESET_BALANCED_PCT` | 68 | ~24 760 ns (stock Sport 25 000 ns) |
-| `FAN_PRESET_MAX_PCT` | 100 | 35 000 ns |
-
-Measurement procedure (userdebug GSI, `adb root`, fan at rest):
-
-```sh
-# for each duty: enable, wait ~10 s for the tach to settle, read the tach
-for d in 0 2000 3000 4000 5000 6000 8000 10000 12000 16000 20000 25000 30000 35000 40000; do
-  echo 1 > /sys/class/gpio5_pwm2/state
-  echo $d > /sys/class/gpio5_pwm2/duty
-  sleep 10
-  echo "$d ns -> $(cat /sys/class/gpio5_pwm2/speed)"
-done
-echo 0 > /sys/class/gpio5_pwm2/state
-```
-
-Fill in:
-
-| duty (ns) | `speed` raw | audible? | notes |
-|---:|---:|---|---|
-| | | | |
-
-Then set `FAN_DUTY_MIN_NS` to the smallest duty that starts and keeps spinning
-from cold, `FAN_DUTY_MAX_NS` to the duty above which the tach no longer rises,
-and re-derive the three preset percentages (quiet ~ stock 5 000 ns).  Also
-record whether the `speed` node is RPM or a tach count: `ashfall.status.fan.rpm`
-is `-1` when the node is unreadable, and otherwise reports the raw value — if
-the node turns out to be a scaled count, add the factor in `fan_read_rpm()`.
+| `FAN_DUTY_MIN_NS` | 4 000 | 1 % output, ~1 800 RPM |
+| `FAN_DUTY_MAX_NS` | 50 000 | 100 % output, ~15 000 RPM |
+| `FAN_PRESET_QUIET_PCT` | 2 | 4 920 ns / ~1 800 RPM (stock Quiet 5 000 ns) |
+| `FAN_PRESET_BALANCED_PCT` | 46 | 25 160 ns / ~8 100 RPM (stock Sport 25 000 ns) |
+| `FAN_PRESET_MAX_PCT` | 100 | 50 000 ns / ~15 000 RPM |
 
 ## 3. Fan modes
 
@@ -143,22 +152,45 @@ screen is off, `keep` keeps them running.  Screen state comes from the
 framework's `debug.tracing.screen_state` (Display Power Controller; `1` = off);
 no wakeups happen for the LEDs while they are off.
 
-Animation runs at 30 fps in the daemon (the hardware `breath` attribute is
-present but its behaviour is untested on this unit; a software animation is
-predictable and works for all effects).
+Animation runs at 30 fps in the daemon.  The hardware `breath` attribute is
+**not usable** by the daemon: on the device it is `--w--w----  root root`
+(write-only for root), while the daemon runs as `system`.  Software animation
+also covers `duo` and `rainbow`, which the hardware does not offer.
 
-### Which node lights what (measurement pending)
+### On-device findings (2026-11-13)
 
-* `sn3112l` / `sn3112r` are the **left / right stick rings** (stock
-  `left_joystick_light_enabled` / `right_joystick_light_enabled`,
-  `joystick_led_light_picker_color` with two colours).
-* `/sys/class/leds/{red,green,blue}` (pm8150l) are **not** the stick rings.
-  They are also not usable from this daemon: `private/coredomain.te` has
+* `enable` and `brightness` are **write-only** (`-rw-rw-rw-`, reading them
+  returns `EIO`), so the daemon detects them by writability and cannot read
+  back what it wrote.  `brightness` accepts `"<mode>-<r>:<g>:<b>"` with
+  **decimal** channels (`1-255:0:0`, not hex); the daemon writes decimal.
+  `mode 1` = static colour, `mode 0` = off.
+* `breath` is root-only (see above) and write-only.
+* Resolved paths (also used by `genfs_contexts`):
+  `readlink -f /sys/class/sn3112l/led` -> `/sys/devices/virtual/sn3112l/led`,
+  same for `sn3112r`.
+* `/sys/class/leds/{red,green,blue}` (pm8150l) are **not** the stick rings and
+  are **not usable** from this daemon: `private/coredomain.te` has
   `neverallow { coredomain -init -ueventd -vold ... } sysfs_leds:file *`, and
-  `/sys/class/leds` is genfs-labelled `sysfs_leds`.  On the device, cover each
-  node one at a time (`echo 255 > /sys/class/leds/red/brightness`) to record
-  what it physically lights; it is expected to be a front/notification LED.
-  The daemon's `leds` fallback backend was removed for this reason.
+  `/sys/class/leds` is genfs-labelled `sysfs_leds`.  The daemon's `leds`
+  fallback backend was removed for this reason.
+
+### Which node lights what (needs a human eye)
+
+The LED nodes are write-only, so this cannot be verified over adb.  It is a
+**user test step**: with the daemon running and the screen on,
+
+```sh
+adb shell setprop persist.ashfall.led.mode static
+adb shell setprop persist.ashfall.led.sync 0
+adb shell setprop persist.ashfall.led.color_left FF0000    # left should be red
+adb shell setprop persist.ashfall.led.color_right 0000FF   # right should be blue
+```
+
+and confirm left/right mapping, then `breathing`/`rainbow`/`duo` and
+`speed`.  `brightness 0` must be dark, `brightness 100` clearly brighter.  The
+expected result (from the stock settings: `left_joystick_light_enabled`,
+`right_joystick_light_enabled`, `joystick_led_light_picker_color`) is that
+`sn3112l` is the left ring and `sn3112r` the right one.
 
 ## 5. SELinux
 
@@ -172,20 +204,20 @@ neverallow { coredomain -apexd -init -ueventd -vold } sysfs:file no_rw_file_perm
 ```
 
 so the fan and LED attributes are labelled with dedicated types in
-`vendor/ashfall/sepolicy/genfs_contexts`:
+`vendor/ashfall/sepolicy/genfs_contexts`.  The paths were verified on the
+device (build `20261113-213314`):
 
-| type | paths |
-|---|---|
-| `ashfall_fan_sysfs` | `/devices/platform/soc/soc:pm8150l_gpio6` (the `gpio5-pwm` platform device, a `soc` simple-bus child), `/devices/virtual/gpio5_pwm2` (if the class device has no parent) |
-| `ashfall_led_sysfs` | `/devices/virtual/sn3112l`, `/devices/virtual/sn3112r` (and `/devices/platform/sn3112*`) |
+| type | path | why |
+|---|---|---|
+| `ashfall_fan_sysfs` | `/class/gpio5_pwm2` | the driver registers class-level attributes, so `state`/`duty`/`speed` live directly in the class directory (it is a real directory, not a device symlink); `avc` confirms `path="/sys/class/gpio5_pwm2/state"` |
+| `ashfall_led_sysfs` | `/devices/virtual/sn3112l`, `/devices/virtual/sn3112r` | `/sys/class/sn3112{l,r}/led` are symlinks into these device dirs; `avc` confirms `path="/sys/devices/virtual/sn3112l/led/brightness"` |
 
-Only the matching entries take effect; the others are harmless.  Verify the
-real paths after a flash and trim the list:
-
-```sh
-adb shell readlink -f /sys/class/gpio5_pwm2 /sys/class/sn3112l/led /sys/class/sn3112r/led
-adb shell ls -lZ /sys/class/gpio5_pwm2/duty /sys/class/sn3112*/led/brightness
-```
+On the test build the nodes were still labelled `u:object_r:sysfs:s0` (and the
+`shell` domain that ran the test binary is a permissive domain in userdebug),
+so the enforcing behaviour of these `genfscon` entries has to be confirmed on
+the first integration build: after flashing, `ls -lZ` must show
+`ashfall_fan_sysfs` / `ashfall_led_sysfs` and `dmesg | grep avc` must be clean
+while fan and LEDs are driven.
 
 Thermal zones need no new type: the stock vendor policy (still in place under
 the GSI) labels `/devices/virtual/thermal` and `/class/thermal` as
@@ -199,6 +231,10 @@ replaces `system`/`system_ext` but not the stock `vendor`, so
 `BOARD_SEPOLICY_DIRS` (vendor policy) would never be flashed.
 
 ## 6. Test checklist
+
+Run on a build that contains `ashfall-hwd` (the daemon needs `system` uid for
+`ashfall.status.*`; a manually pushed binary can only be run as `shell`, which
+is enough for the sysfs side but cannot set properties).
 
 1. `adb shell getprop init.svc.ashfall-hwd` -> `running`;
    `adb shell logcat -s ashfall-hwd` shows the thermal zone list and the LED
@@ -217,3 +253,37 @@ replaces `system`/`system_ext` but not the stock `vendor`, so
    wakeups, `keep` keeps them on.
 6. `adb shell dmesg | grep avc` (and `logcat -b events | grep avc`) is clean
    after exercising all of the above on an **enforcing** build.
+
+## 7. On-device verification (2026-11-13, build 20261113-213314)
+
+The daemons are not in that image; the static NDK binaries were pushed to
+`/data/local/tmp` and run as `shell` (adb root is disabled on that build:
+`ro.debuggable=0`).  `shell` is a permissive domain there, so sysfs access
+works and `avc` records the denials the real domain will need.
+
+Verified:
+
+* `ashfall-hwd` runs, enumerates the 16 CPU/GPU tsens zones (`cpu-*-*`,
+  `cpuss-*`, `gpuss-*`), finds the `sn3112` LED backend (write-only detection)
+  and applies the default settings: at ~34 C the smart curve gives 0 % and the
+  fan is stopped (`state=0 duty=0`), the LEDs get a static `1-153:19:19`
+  write for the default `FF2020` at 60 % (no write errors).
+* `ashfall-rp5-input` runs, loads the built-in defaults (no
+  `/data/misc/ashfall` in that image), creates the `AshFall RP5 Gamepad`
+  uinput device, opens `/dev/ttyHS1`, and the control socket (fed the fd via
+  `ANDROID_SOCKET_ashfall_input`, the same contract init uses) answers
+  `GET CAL` -> `OK default <16 keys>`, `GET/SET/RESET CAL` errors as
+  specified (`ERR missing key 'left_x_min'`, `ERR unknown command`) and
+  `RAW ON` -> `OK`.  No raw frames were delivered because the image's own
+  `ashfall-rp5-input` service holds and drains the UART (it could not be
+  stopped without root); raw streaming is covered by the host tests.
+* Fan/LED sweep data: §2.  LED write format: §4.  genfs paths: §5.
+
+Still needs the integration build (and a human):
+
+* property-driven modes (`setprop` is denied to `shell`: the property area has
+  no `ashfall_prop` type in that image, so even a permissive shell cannot set
+  `persist.ashfall.*`), and therefore the safety override (needs > 70 C).
+* `ashfall.status.*` publishing (needs `system` uid).
+* enforcing-mode `avc` check with the real policy.
+* which stick ring lights up (write-only nodes, see §4).

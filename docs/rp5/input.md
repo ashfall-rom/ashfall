@@ -308,6 +308,23 @@ Example (userdebug, as root):
 printf 'GET CAL\n' | nc -U -q1 /dev/socket/ashfall_input
 ```
 
+### On-device verification (2026-11-13)
+
+The daemons are not in build `20261113-213314`; the static NDK binary was
+pushed to `/data/local/tmp` and run as `shell`, with a small helper providing
+the inherited listening socket (the `ANDROID_SOCKET_ashfall_input` contract
+init uses).  Verified: the daemon loads the built-in defaults (that image has
+no `/data/misc/ashfall`, so the init rc and the factory copy are not installed
+yet), creates the `AshFall RP5 Gamepad` uinput device, opens `/dev/ttyHS1`,
+and the socket answers `GET CAL` -> `OK default <16 keys>`, a partial
+`SET CAL` -> `ERR missing key 'left_x_min'`, an unknown command ->
+`ERR unknown command`, and `RAW ON` -> `OK`.  `SET CAL` cannot be completed on
+that image because `/data/misc/ashfall` does not exist (and `shell` may not
+create it); `RAW` frames went to the image's own running
+`ashfall-rp5-input` service, which holds the UART (it cannot be stopped
+without root).  Both are covered by the host tests and remain user steps on
+the integration build.
+
 ## Phase 5 test checklist (in addition to the one below)
 
 1. `adb shell getprop init.svc.ashfall-rp5-input` -> `running`;

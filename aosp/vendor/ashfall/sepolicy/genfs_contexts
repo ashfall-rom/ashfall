@@ -2,24 +2,21 @@
 #
 # The fan and LED drivers create plain sysfs class devices, so their attributes
 # are labelled `sysfs` (generic) by default.  A coredomain daemon may not touch
-# generic sysfs (private/coredomain.te: neverallow sysfs:file no_rw_file_perms),
-# so both trees get a dedicated type here.
+# generic sysfs at all (private/coredomain.te:
+# neverallow { coredomain ... } sysfs:file no_rw_file_perms, which covers open,
+# read and write), so both trees get a dedicated type here.
 #
-# Paths are the *resolved* device paths (what `readlink -f /sys/class/...`
-# prints), not the class symlinks.  The fan node is a child of the `soc`
-# simple-bus node `pm8150l_gpio6`; the LED controllers are class devices
-# created by their driver without a device-tree parent.  Both spellings are
-# listed where the driver may or may not set a parent: an entry that does not
-# match is harmless, and this keeps the policy working across the two plausible
-# probe paths.  Verify with `ls -lZ /sys/class/gpio5_pwm2` after a flash (see
-# the test checklist in docs/rp5/hw.md).
+# All paths below were verified on the RP5 (build 20261113-213314) with
+# `readlink -f` / the avc audit path; see docs/rp5/hw.md §5.
 
-# Fan controller (gpio5_pwm.ko, class gpio5_pwm2)
-genfscon sysfs /devices/platform/soc/soc:pm8150l_gpio6 u:object_r:ashfall_fan_sysfs:s0
-genfscon sysfs /devices/virtual/gpio5_pwm2             u:object_r:ashfall_fan_sysfs:s0
+# Fan controller (gpio5_pwm.ko).  The driver registers class-level attributes,
+# so the files live directly in the class directory - there is no device dir:
+#   /sys/class/gpio5_pwm2/{state,duty,speed,period,thermal,en_backlight,...}
+genfscon sysfs /class/gpio5_pwm2     u:object_r:ashfall_fan_sysfs:s0
 
-# Stick LED controllers (class sn3112l / sn3112r, one attribute dir "led")
-genfscon sysfs /devices/virtual/sn3112l                u:object_r:ashfall_led_sysfs:s0
-genfscon sysfs /devices/virtual/sn3112r                u:object_r:ashfall_led_sysfs:s0
-genfscon sysfs /devices/platform/sn3112l               u:object_r:ashfall_led_sysfs:s0
-genfscon sysfs /devices/platform/sn3112r               u:object_r:ashfall_led_sysfs:s0
+# Stick LED controllers (sn3112l / sn3112r).  Each class has one device named
+# "led"; `/sys/class/sn3112{l,r}/led` are symlinks to these device dirs, which
+# is where enable/brightness/breath actually live:
+#   readlink -f /sys/class/sn3112l/led -> /sys/devices/virtual/sn3112l/led
+genfscon sysfs /devices/virtual/sn3112l  u:object_r:ashfall_led_sysfs:s0
+genfscon sysfs /devices/virtual/sn3112r  u:object_r:ashfall_led_sysfs:s0

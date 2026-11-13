@@ -91,13 +91,6 @@ bool led_parse_colour(const char *value, rgb_t *out)
     return true;
 }
 
-static bool node_readable(const char *path)
-{
-    char buf[16];
-
-    return sysfs_read_str(path, buf, sizeof(buf)) >= 0;
-}
-
 void led_state_init(led_state *state, int64_t now_ms)
 {
     char path[128];
@@ -108,8 +101,10 @@ void led_state_init(led_state *state, int64_t now_ms)
     state->backend = LED_BACKEND_NONE;
 
     for (int i = 0; i < 2; i++) {
+        /* The sn3112 attributes are write-only (reading them returns EIO), so
+         * presence is detected by writability, never by a read. */
         snprintf(path, sizeof(path), SN3112_BRIGHTNESS_FMT, side_dirs[i]);
-        if (!node_readable(path))
+        if (!sysfs_writable(path))
             continue;
         snprintf(state->side_dir[i], sizeof(state->side_dir[i]), "%s",
                  side_dirs[i]);

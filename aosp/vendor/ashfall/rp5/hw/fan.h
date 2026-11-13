@@ -23,27 +23,28 @@
 #define FAN_PERIOD_NS 50000
 
 /*
- * Measured useful duty range of the RP5 fan (docs/rp5/hw.md): the smallest
- * duty at which the fan spins reliably and the duty above which the RPM does
- * not rise any more.  Percentages are mapped linearly onto this range, so
+ * Measured useful duty range of the RP5 fan (docs/rp5/hw.md §2, measured on
+ * the 2026-11-13 build): the smallest duty at which the fan spins reliably
+ * (4 000 ns, 3/3 from rest; 3 700 ns and below stall) and the duty above
+ * which the RPM does not rise any more (none below the 50 000 ns period, so
+ * the whole PWM range is useful).  Percentages map linearly onto this range,
  * 1 % is the slowest usable speed and 100 % the fastest; 0 % means off.
- *
- * PROVISIONAL defaults are the stock values (Quiet 5 000 ns, High 25 000 ns,
- * .189 High tops out at 35 000 ns); the on-device measurement refines them.
  */
-#define FAN_DUTY_MIN_NS 3000
-#define FAN_DUTY_MAX_NS 35000
+#define FAN_DUTY_MIN_NS 4000
+#define FAN_DUTY_MAX_NS 50000
 
 /* Built-in preset percentages (quiet/balanced/max), from the measurement. */
-#define FAN_PRESET_QUIET_PCT 7    /* ~5 200 ns, stock Quiet is 5 000 ns */
-#define FAN_PRESET_BALANCED_PCT 68 /* ~24 760 ns, stock Sport is 25 000 ns */
-#define FAN_PRESET_MAX_PCT 100
+#define FAN_PRESET_QUIET_PCT 2     /* ~4 920 ns / ~1 800 RPM (stock Quiet 5 000) */
+#define FAN_PRESET_BALANCED_PCT 46 /* ~25 160 ns / ~8 100 RPM (stock Sport 25 000) */
+#define FAN_PRESET_MAX_PCT 100     /* 50 000 ns / ~15 000 RPM */
 
 /* Smart mode tuning (see docs/phase5.md §2.1). */
 #define FAN_SAMPLE_MS 2000
 #define FAN_EMA_ALPHA 0.35
 #define FAN_HYSTERESIS_C 3
-#define FAN_MIN_KICK_MS 1500
+/* A 4 000 ns start from rest was reliable in the measurement (3/3 at ~35 C);
+ * the short kick is kept as insurance for a cold unit.  Set to 0 to disable. */
+#define FAN_MIN_KICK_MS 500
 
 #define FAN_MAX_POINTS 8
 #define FAN_CURVE_MAX_LEN 92 /* persist.* property value limit */
