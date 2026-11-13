@@ -22,7 +22,7 @@ import android.graphics.Paint;
 import android.graphics.Rect;
 import android.view.View;
 
-/** Round colour swatch with a focus ring and a selected ring. */
+/** Round color swatch with a focus ring and a selected ring. */
 final class ColorSwatchView extends View {
     private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
     private int color = 0xFF000000;

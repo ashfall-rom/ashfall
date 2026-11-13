@@ -17,16 +17,20 @@
 package org.ashfall.launcher;
 
 import android.app.Activity;
+import android.app.ActivityManager;
 import android.app.Dialog;
+import android.content.Context;
 import android.content.pm.ApplicationInfo;
 import android.content.pm.PackageManager;
 import android.graphics.Color;
 import android.graphics.drawable.ColorDrawable;
+import android.graphics.drawable.GradientDrawable;
 import android.view.KeyEvent;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.Window;
 import android.view.WindowManager;
+import android.widget.ImageView;
 import android.widget.TextView;
 import android.widget.Toast;
 
@@ -54,14 +58,28 @@ final class AppOptionsDialog {
         title.setText(entry.label);
         packageName.setText(entry.packageName);
 
+        View root = dialog.findViewById(R.id.dialog_root);
         View open = dialog.findViewById(R.id.action_open);
         View info = dialog.findViewById(R.id.action_info);
         View uninstall = dialog.findViewById(R.id.action_uninstall);
+        View kill = dialog.findViewById(R.id.action_kill);
 
         int accent = Appearance.load(activity).accent;
         Ui.applyActionBackground(open, accent);
         Ui.applyActionBackground(info, accent);
         Ui.applyActionBackground(uninstall, accent);
+        Ui.applyActionBackground(kill, accent);
+        tintIcon(open, accent);
+        tintIcon(info, accent);
+        tintIcon(uninstall, accent);
+        tintIcon(kill, accent);
+
+        GradientDrawable panel = new GradientDrawable();
+        panel.setColor(Color.BLACK);
+        panel.setCornerRadius(activity.getResources().getDimensionPixelSize(
+                R.dimen.dialog_radius));
+        panel.setStroke(Ui.dp(activity, 1.5f), accent);
+        root.setBackground(panel);
 
         dialog.setOnDismissListener(d -> {
             dialog = null;
@@ -88,9 +106,24 @@ final class AppOptionsDialog {
                 toast(activity.getString(R.string.menu_uninstall_failed, entry.label));
             }
         });
+        kill.setOnClickListener(view -> {
+            dismiss();
+            try {
+                ActivityManager manager = (ActivityManager) activity.getSystemService(
+                        Context.ACTIVITY_SERVICE);
+                if (manager != null) {
+                    manager.killBackgroundProcesses(entry.packageName);
+                }
+                toast(activity.getString(R.string.menu_kill_done, entry.label));
+            } catch (RuntimeException e) {
+                toast(activity.getString(R.string.menu_kill_failed, entry.label));
+            }
+        });
 
         if (!isUninstallable()) {
             uninstall.setVisibility(View.GONE);
+            info.setNextFocusRightId(R.id.action_kill);
+            kill.setNextFocusLeftId(R.id.action_info);
         }
 
         dialog.setOnKeyListener((d, keyCode, event) -> {
@@ -106,7 +139,8 @@ final class AppOptionsDialog {
                     View focused = dialog.getWindow() == null
                             ? null : dialog.getWindow().getCurrentFocus();
                     if (focused != null && focused.getVisibility() == View.VISIBLE
-                            && (focused == open || focused == info || focused == uninstall)) {
+                            && (focused == open || focused == info
+                            || focused == uninstall || focused == kill)) {
                         focused.performClick();
                         return true;
                     }
@@ -134,6 +168,15 @@ final class AppOptionsDialog {
             }
         });
         dialog.show();
+    }
+
+    private void tintIcon(View action, int accent) {
+        if (action instanceof ViewGroup) {
+            View first = ((ViewGroup) action).getChildAt(0);
+            if (first instanceof ImageView) {
+                ((ImageView) first).setColorFilter(accent);
+            }
+        }
     }
 
     private boolean isUninstallable() {

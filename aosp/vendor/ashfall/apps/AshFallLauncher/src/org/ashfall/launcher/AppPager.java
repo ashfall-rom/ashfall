@@ -28,7 +28,7 @@ import java.util.Collections;
 import java.util.List;
 
 /**
- * Paged app grid. One page is materialised at a time; edge navigation, page
+ * Paged app grid. One page is materialized at a time; edge navigation, page
  * flings and the shoulder-button paging all go through {@link #changePage}.
  *
  * <p>DPAD focus is moved manually rather than relying on the framework focus

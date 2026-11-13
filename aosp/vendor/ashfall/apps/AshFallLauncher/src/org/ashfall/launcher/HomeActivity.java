@@ -42,7 +42,7 @@ import java.util.List;
  * <ul>
  *   <li>D-pad / left stick: move the focus inside the 5x3 page; pushing past a
  *       horizontal edge turns the page (row is preserved).</li>
- *   <li>A / D-pad centre / Enter: launch the focused app.</li>
+ *   <li>A / D-pad center / Enter: launch the focused app.</li>
  *   <li>Hold A, or Menu/Start: app options (open, app info, uninstall).</li>
  *   <li>B / Back: dismiss the options panel; on the home screen Back is a
  *       no-op (the stock launcher behaves the same way).</li>
@@ -147,7 +147,7 @@ public final class HomeActivity extends Activity implements AppPager.Listener {
     protected void onNewIntent(Intent intent) {
         super.onNewIntent(intent);
         // A fresh HOME press starts at the first page, like the stock
-        // launcher's clearTaskOnLaunch behaviour. Reloads while the launcher
+        // launcher's clearTaskOnLaunch behavior. Reloads while the launcher
         // stays in front keep the focused app.
         pager.goToFirstPage();
     }

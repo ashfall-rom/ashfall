@@ -34,25 +34,13 @@
     </LinearLayout>
 
     <TextView
-        android:id="@+id/controller_hints"
+        android:id="@+id/focused_label"
         android:layout_width="0dp"
         android:layout_height="wrap_content"
         android:layout_gravity="center_vertical"
         android:layout_weight="1"
-        android:gravity="center"
-        android:singleLine="true"
-        android:text="@string/hint_bar"
-        android:textColor="@color/text_muted"
-        android:textSize="@dimen/hint_text_size" />
-
-    <TextView
-        android:id="@+id/focused_label"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:layout_gravity="center_vertical"
         android:ellipsize="end"
         android:gravity="end"
-        android:maxWidth="340dp"
         android:singleLine="true"
         android:text="@string/focused_none"
         android:textColor="@color/text_primary"

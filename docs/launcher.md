@@ -11,10 +11,10 @@ stock firmware's `rp3launcher` + `Launcher3QuickStepEX` split.
 - License: Apache-2.0
 - Dependencies: framework views only (no AndroidX, Kotlin or Compose)
 
-This document is both the behavioural specification derived from the stock
+This document is both the behavioral specification derived from the stock
 launcher and the description of the clean-room implementation. No Retroid code,
 layout, drawable or string is copied; the references below are resource and
-class **names** observed while reverse-engineering the stock APK for behaviour.
+class **names** observed while reverse-engineering the stock APK for behavior.
 
 ## 1. What the stock launcher does
 
@@ -46,7 +46,7 @@ The "Layout" bottom-bar item switches modes.
 ### Navigation model
 
 - D-pad/stick moves the focus; `PageAppRecyclerView` and the page containers
-  keep the current page materialised.
+  keep the current page materialized.
 - `Workspace.dispatchKeyEvent` maps **L1 (102)** to the previous page and
   **R1 (103)** to the next page.
 - `PageAppRecyclerView` also reacts to **BUTTON_A (96)**.
@@ -62,7 +62,7 @@ underline `#f24646`, popup background `#eeeeee`; fullscreen with no action bar
 (`Theme.RP3Launcher.Fullscreen`). The status and bottom bars frame a large
 icon grid, so the screen reads as a console UI rather than a phone launcher.
 
-## 2. AshFall launcher behaviour
+## 2. AshFall launcher behavior
 
 ### Layout (1920x1080 @ 360 dpi = 853 x 480 dp)
 
@@ -71,7 +71,7 @@ icon grid, so the screen reads as a console UI rather than a phone launcher.
 | System status bar | system | The normal Android status bar (time, Wi-Fi, battery, notifications), with black background and light icons. |
 | Grid | flexible | 5 columns x 3 rows = **15 apps per page**, icon + label per tile, focus frame. |
 | Page dots | 20 dp | One dot per page, accent for the current page. |
-| Bottom | 52 dp | Launcher-settings shortcut (left), controller hints (centre), focused app name (right). |
+| Bottom | 52 dp | Launcher-settings shortcut (left) and focused app name (right). The controller hints moved into the settings screen. |
 
 The app also adds a small label under every icon (the stock launcher only shows
 the focused name), so the grid is readable without moving the focus. The
@@ -84,7 +84,7 @@ Android status bar is used instead of custom Wi-Fi/battery/clock widgets.
 | Input | Action |
 |---|---|
 | D-pad, left stick | Move focus. At a horizontal edge, turn the page and keep the row. |
-| A, D-pad centre, Enter | Launch the focused app. |
+| A, D-pad center, Enter | Launch the focused app. |
 | Hold A (500 ms) | Open the app-options panel for the focused app. |
 | Menu / Start | Open the app-options panel (same as hold-A). |
 | B / Back | Close the options panel; on the home screen it is a no-op. |
@@ -108,16 +108,25 @@ events, and without a callback a right-edge swipe would close the HOME activity.
 
 The bottom-left **Settings** button and Select open `LauncherSettingsActivity`
 (not the system Settings app). The screen is controller- and touch-navigable
-and previews changes against the live background:
+and previews changes against the live background. Settings are grouped into
+separate bordered cards so the background controls and the accent controls are
+visually distinct:
 
-- **Background**: solid colour (14-colour palette), gradient (start/end colours,
-  top-to-bottom or left-to-right direction, optional animated hue shift), or a
-  custom image chosen through `ACTION_OPEN_DOCUMENT` with a 0–80% dim slider.
-  Images use a persistable URI grant so the choice survives reboots.
-- **Accent colour**: nine presets (ember red by default, plus orange, amber,
+- **Background card**: solid color (14-color palette), gradient (start and end
+  palettes side by side, top-to-bottom or left-to-right direction, optional
+  animated hue shift), or a custom image chosen through `ACTION_OPEN_DOCUMENT`
+  with a 0–80% dim slider. Images use a persistable URI grant so the choice
+  survives reboots.
+- **Accent color card**: nine presets (ember red by default, plus orange, amber,
   green, teal, blue, violet, pink and white). The accent drives the focus
-  frame, page dots and settings highlights and is applied live when returning
-  to the home screen.
+  frame, page dots, app-options dialog and settings highlights and is applied
+  live when returning to the home screen.
+- **Custom color**: every palette (solid, gradient start, gradient end and
+  accent) also has a `Custom color…` button that opens an RGB picker with a
+  live preview and R/G/B sliders. The custom swatch next to the button shows
+  the current value.
+- **Controller card** (at the end): the controller mapping that used to be
+  printed along the bottom of the home screen.
 
 Settings are stored in the `appearance` `SharedPreferences` file. The default
 background is pure black (`#000000`); no wallpaper is read.
@@ -136,7 +145,7 @@ background is pure black (`#000000`); no wallpaper is read.
   make the grid jump.
 - The focused app is **not** persisted across a fresh HOME launch: pressing Home
   recreates the activity (`clearTaskOnLaunch`) and starts at page 1, matching
-  the stock launcher's reset behaviour.
+  the stock launcher's reset behavior.
 
 ### App options
 
@@ -147,9 +156,14 @@ background is pure black (`#000000`); no wallpaper is read.
 - **Uninstall** – `Intent.ACTION_DELETE` for non-system apps only (the panel
   hides the action for system apps). `REQUEST_DELETE_PACKAGES` is declared so
   the Android 17 package installer accepts the request.
+- **Kill** – `ActivityManager.killBackgroundProcesses` for the target package
+  (`KILL_BACKGROUND_PROCESSES` is declared). This is the same best-effort kill
+  available to a non-privileged app and matches the stock launcher's "Clear".
 
-The panel is controller-navigable: left/right move between actions, A selects,
-B/Back closes.
+The options panel uses the same two-color language as the rest of the launcher:
+a black rounded panel with an accent outline, accent action icons and the
+accent focus frame. It is controller-navigable: left/right move between actions,
+A selects, B/Back closes.
 
 ### System chrome
 
@@ -157,7 +171,7 @@ B/Back closes.
   own Wi-Fi, battery or clock. The app window uses a black status bar with
   light icons, and the content is laid out below it.
 - The focused app name moved from the old top strip to the **bottom-right**
-  corner, next to the controller hints.
+  corner of the bottom bar; the controller hints no longer take up that row.
 - Back is still handled: the home activity consumes `KEYCODE_BACK` and registers
   a no-op `OnBackInvokedCallback` so neither the key nor the predictive-back
   gesture closes the launcher.
@@ -231,10 +245,16 @@ live test on the RP5 (AshFall GSI v0.1.0-gsi, 1920x1080, 360 dpi):
 - Touch: tap launches, long-press opens options, swipe pages.
 - The system status bar is visible and the grid/content starts below it; the
   focused app name is in the bottom-right corner.
-- Launcher settings opens from the bottom-left button: solid/gradient/image
-  sections switch correctly, the palette and accent selection update in place,
-  and switching the accent to blue immediately updates the focus ring and page
-  dots after returning home.
+- Launcher settings opens from the bottom-left button: the background and
+  accent cards are visibly separate, solid/gradient/image sections switch
+  correctly, the gradient palettes are side by side, and the accent selection
+  updates in place. Switching the accent to blue immediately updates the focus
+  ring, page dots and app-options dialog after returning home.
+- The custom color picker opens for the solid, gradient start/end and accent
+  palettes; its R/G/B sliders and preview render correctly.
+- The app-options panel uses the accent (black panel, accent outline/icons) and
+  exposes Kill for system and user apps; Uninstall remains available for user
+  apps.
 - Cold start: `Displayed org.ashfall.launcher/.HomeActivity ... +120ms`.
 
 The appearance work was also exercised on the Android 13 virtual RP5
@@ -259,15 +279,18 @@ an exclusive device.
 4. Press Home from a game: the launcher opens on page 1; recents still shows
    the Launcher3/Quickstep recents surface.
 5. Hold A or press Start: the options panel opens; A on App info opens Settings;
-   A on Uninstall (a user app) opens the system uninstall confirmation; B/Back
-   closes the panel.
+   A on Uninstall (a user app) opens the system uninstall confirmation; A on
+   Kill sends the target's background process a kill request; B/Back closes the
+   panel.
 6. Install/update/uninstall an app while the launcher is visible; the grid
    updates without a reboot and keeps a sensible focus.
 7. Touch: tap, long-press and swipe work; the system status bar and gesture
    handle do not overlap the 5x3 grid.
 8. Open launcher Settings: switch background to solid/gradient/image; pick a
    gradient direction and enable animation; choose an image and drag the dim
-   slider; switch the accent to blue and check the focus ring, page dots and
-   settings highlights.
-9. Cold start: pressing Home after a reboot should feel immediate (no splash
-   or white flash).
+   slider; switch the accent to blue and check the focus ring, page dots,
+   settings highlights and app-options dialog. Try the `Custom color…` picker
+   on each palette.
+9. Check the Controller card at the end of Settings for the button mapping.
+10. Cold start: pressing Home after a reboot should feel immediate (no splash
+    or white flash).

@@ -58,6 +58,11 @@ public final class LauncherSettingsActivity extends Activity {
     private TextView dimLabel;
     private SeekBar dimSlider;
 
+    private ColorSwatchView solidCustom;
+    private ColorSwatchView gradientStartCustom;
+    private ColorSwatchView gradientEndCustom;
+    private ColorSwatchView accentCustom;
+
     private final List<View> optionButtons = new ArrayList<>();
     private final List<View> actionButtons = new ArrayList<>();
     private final List<ColorSwatchView> allSwatches = new ArrayList<>();
@@ -70,6 +75,10 @@ public final class LauncherSettingsActivity extends Activity {
 
     private interface ColorListener {
         void onColor(int color);
+    }
+
+    private interface ColorSupplier {
+        int get();
     }
 
     @Override
@@ -88,7 +97,7 @@ public final class LauncherSettingsActivity extends Activity {
         actionButtons.add(doneButton);
 
         applyAccent();
-        updateBackgroundTypeUi();
+        refreshUi();
         updateImageUi();
         previewBackground();
 
@@ -117,23 +126,35 @@ public final class LauncherSettingsActivity extends Activity {
         }
         Appearance.setImageUri(this, uri.toString());
         Appearance.setBackgroundType(this, Appearance.BACKGROUND_IMAGE);
-        updateBackgroundTypeUi();
+        refreshUi();
         updateImageUi();
         previewBackground();
     }
 
     @Override
     public boolean dispatchKeyEvent(KeyEvent event) {
-        if (event.getKeyCode() == KeyEvent.KEYCODE_BUTTON_B
-                && event.getAction() == KeyEvent.ACTION_UP) {
-            finish();
+        if (event.getKeyCode() == KeyEvent.KEYCODE_BUTTON_B) {
+            if (event.getAction() == KeyEvent.ACTION_UP) {
+                finish();
+            }
+            return true;
+        }
+        if (event.getKeyCode() == KeyEvent.KEYCODE_BUTTON_A) {
+            if (event.getAction() == KeyEvent.ACTION_UP) {
+                View focused = getCurrentFocus();
+                if (focused != null && focused.isClickable()
+                        && !(focused instanceof SeekBar)) {
+                    focused.performClick();
+                }
+            }
             return true;
         }
         return super.dispatchKeyEvent(event);
     }
 
     private void buildUi() {
-        addSectionTitle(getString(R.string.background));
+        LinearLayout backgroundCard = card();
+        backgroundCard.addView(cardTitle(getString(R.string.background)));
 
         LinearLayout types = row();
         solidType = typeButton(getString(R.string.background_solid),
@@ -145,34 +166,37 @@ public final class LauncherSettingsActivity extends Activity {
         types.addView(solidType, weightParams(1, 0));
         types.addView(gradientType, weightParams(1, 8));
         types.addView(imageType, weightParams(1, 0));
-        sections.addView(types);
+        backgroundCard.addView(types);
 
         solidBox = new LinearLayout(this);
         solidBox.setOrientation(LinearLayout.VERTICAL);
-        solidBox.addView(sectionLabel(getString(R.string.background_colour)));
-        addSwatchRows(solidBox, Appearance.PALETTE, solidSwatches, color -> {
-            Appearance.setSolidColor(this, color);
-            markSelected(solidSwatches, color);
-            previewBackground();
-        });
-        sections.addView(solidBox);
+        solidBox.addView(sectionLabel(getString(R.string.background_color)));
+        addSwatchRows(solidBox, Appearance.PALETTE, solidSwatches, this::applySolidColor);
+        solidCustom = addCustomColorRow(solidBox,
+                () -> Appearance.load(this).solidColor, this::applySolidColor);
+        backgroundCard.addView(solidBox);
 
         gradientBox = new LinearLayout(this);
         gradientBox.setOrientation(LinearLayout.VERTICAL);
-        gradientBox.addView(sectionLabel(getString(R.string.gradient_start)));
-        addSwatchRows(gradientBox, Appearance.PALETTE, gradientStartSwatches, color -> {
-            Appearance.setGradientStart(this, color);
-            markSelected(gradientStartSwatches, color);
-            previewBackground();
-        });
-        gradientBox.addView(sectionLabel(getString(R.string.gradient_end)));
-        addSwatchRows(gradientBox, Appearance.PALETTE, gradientEndSwatches, color -> {
-            Appearance.setGradientEnd(this, color);
-            markSelected(gradientEndSwatches, color);
-            previewBackground();
-        });
-        gradientBox.addView(sectionLabel(getString(R.string.gradient_direction)));
 
+        LinearLayout gradientColumns = row();
+        LinearLayout startColumn = column();
+        startColumn.addView(sectionLabel(getString(R.string.gradient_start)));
+        addSwatchRows(startColumn, Appearance.PALETTE, gradientStartSwatches,
+                this::applyGradientStart);
+        gradientStartCustom = addCustomColorRow(startColumn,
+                () -> Appearance.load(this).gradientStart, this::applyGradientStart);
+        LinearLayout endColumn = column();
+        endColumn.addView(sectionLabel(getString(R.string.gradient_end)));
+        addSwatchRows(endColumn, Appearance.PALETTE, gradientEndSwatches,
+                this::applyGradientEnd);
+        gradientEndCustom = addCustomColorRow(endColumn,
+                () -> Appearance.load(this).gradientEnd, this::applyGradientEnd);
+        gradientColumns.addView(startColumn, weightParams(1, 12));
+        gradientColumns.addView(endColumn, weightParams(1, 0));
+        gradientBox.addView(gradientColumns);
+
+        gradientBox.addView(sectionLabel(getString(R.string.gradient_direction)));
         LinearLayout directions = row();
         directionDown = Ui.optionButton(this, getString(R.string.direction_down));
         directionDown.setOnClickListener(view -> setGradientDirection(
@@ -189,7 +213,7 @@ public final class LauncherSettingsActivity extends Activity {
         LinearLayout animateRow = row();
         animateRow.setPadding(0, Ui.dp(this, 12), 0, 0);
         TextView animateLabel = new TextView(this);
-        animateLabel.setText(R.string.animate_colours);
+        animateLabel.setText(R.string.animate_colors);
         animateLabel.setTextColor(getColor(R.color.text_primary));
         animateLabel.setTextSize(14f);
         animateRow.addView(animateLabel, weightParams(1, 0));
@@ -200,7 +224,7 @@ public final class LauncherSettingsActivity extends Activity {
             previewBackground();
         });
         gradientBox.addView(animateRow);
-        sections.addView(gradientBox);
+        backgroundCard.addView(gradientBox);
 
         imageBox = new LinearLayout(this);
         imageBox.setOrientation(LinearLayout.VERTICAL);
@@ -250,19 +274,49 @@ public final class LauncherSettingsActivity extends Activity {
             }
         });
         imageBox.addView(dimSlider);
-        sections.addView(imageBox);
+        backgroundCard.addView(imageBox);
+        sections.addView(backgroundCard);
 
-        addSectionTitle(getString(R.string.accent_colour));
-        addSwatchRows(sections, Appearance.ACCENTS, accentSwatches, color -> {
-            Appearance.setAccent(this, color);
-            accent = color;
-            markSelected(accentSwatches, color);
-            applyAccent();
-        });
+        LinearLayout accentCard = card();
+        accentCard.addView(cardTitle(getString(R.string.accent_color)));
+        addSwatchRows(accentCard, Appearance.ACCENTS, accentSwatches, this::applyAccentColor);
+        accentCustom = addCustomColorRow(accentCard,
+                () -> Appearance.load(this).accent, this::applyAccentColor);
+        sections.addView(accentCard);
+
+        LinearLayout controllerCard = card();
+        controllerCard.addView(cardTitle(getString(R.string.controller)));
+        TextView controllerBody = new TextView(this);
+        controllerBody.setText(R.string.controller_hints_body);
+        controllerBody.setTextColor(getColor(R.color.text_secondary));
+        controllerBody.setTextSize(14f);
+        controllerBody.setLineSpacing(Ui.dp(this, 6), 1f);
+        controllerBody.setPadding(0, Ui.dp(this, 4), 0, 0);
+        controllerCard.addView(controllerBody);
+        sections.addView(controllerCard);
     }
 
-    private void addSectionTitle(String text) {
-        sections.addView(Ui.sectionTitle(this, text));
+    private LinearLayout card() {
+        LinearLayout card = new LinearLayout(this);
+        card.setOrientation(LinearLayout.VERTICAL);
+        int horizontal = Ui.dp(this, 20);
+        card.setPadding(horizontal, Ui.dp(this, 14), horizontal, Ui.dp(this, 18));
+        card.setBackgroundResource(R.drawable.bg_section);
+        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        params.topMargin = Ui.dp(this, 14);
+        card.setLayoutParams(params);
+        return card;
+    }
+
+    private TextView cardTitle(String text) {
+        TextView title = new TextView(this);
+        title.setText(text);
+        title.setTextColor(getColor(R.color.text_primary));
+        title.setTextSize(18f);
+        title.setTypeface(title.getTypeface(), android.graphics.Typeface.BOLD);
+        title.setPadding(0, 0, 0, Ui.dp(this, 4));
+        return title;
     }
 
     private TextView sectionLabel(String text) {
@@ -279,6 +333,12 @@ public final class LauncherSettingsActivity extends Activity {
         row.setOrientation(LinearLayout.HORIZONTAL);
         row.setGravity(Gravity.CENTER_VERTICAL);
         return row;
+    }
+
+    private LinearLayout column() {
+        LinearLayout column = new LinearLayout(this);
+        column.setOrientation(LinearLayout.VERTICAL);
+        return column;
     }
 
     private TextView typeButton(String text, Runnable action) {
@@ -300,9 +360,8 @@ public final class LauncherSettingsActivity extends Activity {
             ColorSwatchView swatch = new ColorSwatchView(this);
             swatch.setColor(colors[i]);
             swatch.setAccent(accent);
-            swatch.setSelected(false);
             LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
-                    Ui.dp(this, 42), Ui.dp(this, 42));
+                    Ui.dp(this, 40), Ui.dp(this, 40));
             params.setMargins(0, 0, Ui.dp(this, 8), 0);
             swatch.setOnClickListener(view -> listener.onColor(swatch.getColor()));
             target.add(swatch);
@@ -311,19 +370,71 @@ public final class LauncherSettingsActivity extends Activity {
         }
     }
 
+    private ColorSwatchView addCustomColorRow(ViewGroup parent, ColorSupplier current,
+            ColorListener listener) {
+        LinearLayout customRow = row();
+        customRow.setPadding(0, Ui.dp(this, 8), 0, 0);
+
+        ColorSwatchView swatch = new ColorSwatchView(this);
+        swatch.setAccent(accent);
+        swatch.setOnClickListener(view -> openPicker(current.get(), listener));
+        LinearLayout.LayoutParams swatchParams = new LinearLayout.LayoutParams(
+                Ui.dp(this, 40), Ui.dp(this, 40));
+        swatchParams.setMargins(0, 0, Ui.dp(this, 8), 0);
+        customRow.addView(swatch, swatchParams);
+        allSwatches.add(swatch);
+
+        TextView button = Ui.optionButton(this, getString(R.string.custom_color));
+        button.setOnClickListener(view -> openPicker(current.get(), listener));
+        actionButtons.add(button);
+        customRow.addView(button, weightParams(1, 0));
+
+        parent.addView(customRow);
+        return swatch;
+    }
+
+    private void openPicker(int initialColor, ColorListener listener) {
+        ColorPickerDialog.show(this, initialColor, accent, listener::onColor);
+    }
+
+    private void applySolidColor(int color) {
+        Appearance.setSolidColor(this, color);
+        refreshUi();
+        previewBackground();
+    }
+
+    private void applyGradientStart(int color) {
+        Appearance.setGradientStart(this, color);
+        refreshUi();
+        previewBackground();
+    }
+
+    private void applyGradientEnd(int color) {
+        Appearance.setGradientEnd(this, color);
+        refreshUi();
+        previewBackground();
+    }
+
+    private void applyAccentColor(int color) {
+        Appearance.setAccent(this, color);
+        accent = color;
+        refreshUi();
+        applyAccent();
+    }
+
     private void setBackgroundType(int type) {
         Appearance.setBackgroundType(this, type);
-        updateBackgroundTypeUi();
+        refreshUi();
         previewBackground();
     }
 
     private void setGradientDirection(int direction) {
         Appearance.setGradientDirection(this, direction);
-        updateBackgroundTypeUi();
+        refreshUi();
         previewBackground();
     }
 
-    private void updateBackgroundTypeUi() {
+    private void refreshUi() {
         Appearance appearance = Appearance.load(this);
 
         solidType.setSelected(appearance.backgroundType == Appearance.BACKGROUND_SOLID);
@@ -346,6 +457,11 @@ public final class LauncherSettingsActivity extends Activity {
         markSelected(gradientStartSwatches, appearance.gradientStart);
         markSelected(gradientEndSwatches, appearance.gradientEnd);
         markSelected(accentSwatches, appearance.accent);
+
+        markCustom(solidCustom, appearance.solidColor, Appearance.PALETTE);
+        markCustom(gradientStartCustom, appearance.gradientStart, Appearance.PALETTE);
+        markCustom(gradientEndCustom, appearance.gradientEnd, Appearance.PALETTE);
+        markCustom(accentCustom, appearance.accent, Appearance.ACCENTS);
     }
 
     private void updateImageUi() {
@@ -375,12 +491,26 @@ public final class LauncherSettingsActivity extends Activity {
         }
     }
 
+    private void markCustom(ColorSwatchView swatch, int color, int[] presets) {
+        swatch.setColor(color);
+        swatch.setSelected(!contains(presets, color));
+    }
+
+    private boolean contains(int[] values, int value) {
+        for (int candidate : values) {
+            if (candidate == value) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     private void applyAccent() {
         for (View view : optionButtons) {
             Ui.applyOptionBackground(view, accent);
         }
         for (View view : actionButtons) {
-            Ui.applyActionBackground(view, accent);
+            Ui.applyOptionBackground(view, accent);
         }
         for (ColorSwatchView swatch : allSwatches) {
             swatch.setAccent(accent);
@@ -389,10 +519,11 @@ public final class LauncherSettingsActivity extends Activity {
         ColorStateList accentState = ColorStateList.valueOf(accent);
         dimSlider.setProgressTintList(accentState);
         dimSlider.setThumbTintList(accentState);
+        dimSlider.setProgressBackgroundTintList(ColorStateList.valueOf(
+                Appearance.withAlpha(accent, 0x55)));
         animateSwitch.setThumbTintList(accentState);
         animateSwitch.setTrackTintList(ColorStateList.valueOf(
                 Appearance.withAlpha(accent, 0x66)));
-        animateSwitch.setTextColor(getColor(R.color.text_primary));
     }
 
     private void previewBackground() {
@@ -413,7 +544,7 @@ public final class LauncherSettingsActivity extends Activity {
     private void clearImage() {
         Appearance.setImageUri(this, null);
         Appearance.setBackgroundType(this, Appearance.BACKGROUND_SOLID);
-        updateBackgroundTypeUi();
+        refreshUi();
         updateImageUi();
         previewBackground();
     }

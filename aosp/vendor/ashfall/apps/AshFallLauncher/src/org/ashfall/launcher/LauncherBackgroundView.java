@@ -37,8 +37,8 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
 /**
- * Full-screen appearance layer: solid colour, animated/static gradient, or a
- * centre-cropped image with a dim scrim.
+ * Full-screen appearance layer: solid color, animated/static gradient, or a
+ * center-cropped image with a dim scrim.
  */
 public final class LauncherBackgroundView extends View {
     private static final ExecutorService LOADER = Executors.newSingleThreadExecutor(runnable -> {

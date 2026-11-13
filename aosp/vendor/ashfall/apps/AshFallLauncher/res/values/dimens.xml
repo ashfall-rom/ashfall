@@ -14,7 +14,6 @@
     <dimen name="status_icon_size">22dp</dimen>
 
     <dimen name="bottom_text_size">14sp</dimen>
-    <dimen name="hint_text_size">12sp</dimen>
     <dimen name="bottom_name_text_size">18sp</dimen>
     <dimen name="chevron_width">44dp</dimen>
     <dimen name="chevron_height">96dp</dimen>
