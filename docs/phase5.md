@@ -14,7 +14,11 @@ Status: contract, 2026-11-13. Decisions taken with the user:
 - Calibration: the factory file `/mnt/vendor/persist/retrostation/joys` is **never
   written**. User calibration lives in `/data/misc/ashfall/joys` with "Reset to factory".
 - Extras in scope: better Smart fan (CPU/GPU sensors, editable curve, hysteresis, overheat
-  safety), Quick Settings tiles (fan mode, lighting on/off), stick deadzone settings.
+  safety), stick deadzone settings, and two Quick Settings tiles that open **QS dialogs**
+  (like the Internet/Bluetooth tiles), see §3:
+  - **Fan tile:** pick the active **fan preset**. Presets are named fan curves the user
+    creates/edits on the Fan page.
+  - **Lighting tile:** choose left / right / both sticks, custom colour, brightness, effect.
 - Out of scope (Phase 6): battery/charging LED indicators, overclock/performance profiles.
 
 Base firmware: pre-release stock `.31` (5.15 GKI). Hardware facts:
@@ -45,11 +49,15 @@ the daemons and `system_app`). Status values are `ashfall.status.*` (written by
 
 | Property | Values | Default |
 |---|---|---|
-| `persist.ashfall.fan.mode` | `off`, `quiet`, `balanced`, `max`, `manual`, `smart` | `smart` |
+| `persist.ashfall.fan.mode` | `off`, `quiet`, `balanced`, `max`, `manual`, `smart` (`smart` = follow `curve`) | `smart` |
 | `persist.ashfall.fan.manual_pct` | 0..100 (used by `manual`) | `50` |
 | `persist.ashfall.fan.curve` | 2..8 `tempC:pct` pairs, ascending temp, e.g. `45:0,55:30,65:55,75:80,82:100` | that example |
 | `persist.ashfall.fan.safety_c` | 70..95 | `85` |
 
+- **Presets live in the app, not in properties** (property values are limited to 92 bytes).
+  A preset = name + mode (+ `manual_pct` or curve). Activating a preset writes `mode`,
+  `manual_pct` and/or `curve` above; the daemon only ever sees the active values.
+  `persist.ashfall.fan.preset` (<= 32 chars) records the active preset id for the UI/tile.
 - Sensor: the hottest of the CPU/GPU tsens zones, **selected by zone `type` name**
   (`cpu-*`, `cpuss-*`, `gpuss-*`), never by zone index. (Stock "Smart" reads
   `thermal_zone0` = `pm8150_tz`, a PMIC sensor; do not copy that.)
@@ -77,7 +85,7 @@ Status is updated at most every 2 s, and only when a value changed.
 
 | Property | Values | Default |
 |---|---|---|
-| `persist.ashfall.led.mode` | `off`, `static`, `breathing`, `rainbow` | `static` |
+| `persist.ashfall.led.mode` | `off`, `static`, `breathing`, `rainbow`, `duo` (smooth fade between the left and right colour on both sticks) | `static` |
 | `persist.ashfall.led.color_left` | `RRGGBB` | `FF2020` (AshFall red) |
 | `persist.ashfall.led.color_right` | `RRGGBB` | `FF2020` |
 | `persist.ashfall.led.sync` | `1` = right uses the left colour | `1` |
@@ -130,8 +138,12 @@ calibration.
   `com.android.settings.category = com.android.settings.category.ia.homepage`
   meta-data (title "Handheld", summary "Fan, lighting, controller", icon in the Settings
   icon style). No launcher icon.
-- **Fan page:** mode selector, manual slider, live temperature / output / RPM / safety
-  state, Smart curve editor (drag points, touch + D-pad usable), safety threshold.
+- **Fan page:** live temperature / output / RPM / safety state; **preset list**: built-in
+  presets (Off, Quiet, Balanced, Max, Smart-default; not deletable) plus user presets
+  (add, rename, duplicate, delete); each preset = mode + manual % or a curve edited in a
+  curve editor (drag points, touch + D-pad usable, live marker of the current temperature);
+  safety threshold. Presets stored in the app (e.g. JSON in device-protected storage so
+  they work before unlock); activating one writes the properties in §2.1.
 - **Lighting page:** on/off main switch, mode, colour pickers (left/right + sync),
   brightness, speed, screen-off behaviour; changes are visible live on the device.
 - **Controller page:** gamepad tester (drawn RP5 outline with live buttons, stick dots,
@@ -139,8 +151,16 @@ calibration.
   and raw values via `RAW ON`), calibration wizard (release sticks -> rotate both sticks ->
   press triggers fully -> review -> save via `SET CAL`; cancel leaves everything as is),
   "Reset to factory calibration", deadzone sliders.
-- **Quick Settings tiles:** "Fan" (tap cycles quiet -> balanced -> max -> smart, label shows
-  the mode, long-press opens the Fan page) and "Lighting" (toggle off <-> last mode).
+- **Quick Settings tiles** (`TileService`, both open a compact QS dialog via
+  `showDialog()`, styled like the system Internet/Bluetooth QS dialogs; long-press opens
+  the full page):
+  - **Fan:** tile label = active preset name, subtitle = temperature; dialog = preset list
+    (single choice) + "Edit presets" link. Tile state inactive only for Off.
+  - **Lighting:** tile toggles on/off on tap of the icon area is not available in QS, so:
+    tap opens the dialog; dialog = main on/off switch, target selector
+    (Both / Left / Right), colour picker (presets + custom hue/saturation picker),
+    brightness slider, effect selector (static, breathing, rainbow, duo) and speed.
+    Changes apply live. Tile state inactive when mode = off.
 - Must be fully usable with the gamepad (D-pad focus, A = select, B = back).
 - Clean-room: no Retroid code, assets or strings.
 
