@@ -210,7 +210,8 @@ The full `.189` package (`1.0.0.168 -> 1.0.0.189`) has:
 
 - `payload.bin` = 2,433,971,162 bytes; `FILE_SIZE=2433971162`
 - metadata `post-build=qti/kona/kona:13/TKQ1.240621.001/eng.RP5.20251128.173135:user/release-keys`
-- **no `pre-build`** line (full OTA, source-independent by design)
+- **no `pre-build`** line (full OTA, source-independent by design); it does carry
+  `pre-device=kona`, which every RP5 (including the pre-release `.31`) matches
 - payload partitions: `boot`, `dtbo`, `odm`, `product`, `system`, `system_ext`,
   `vbmeta`, `vbmeta_system`, `vendor`
 - `otacert` subject `C=CH, ST=Guangdong, L=Shenzhen, O=Moorechip, OU=Moorechip,
@@ -243,12 +244,21 @@ The `.168 -> .189` artifact is a full OTA, not a delta:
 4. Reboot when prompted. The inactive slot is written; the device should come
    up as `1.0.0.189`.
 
-Why this can work from `.31`: the full OTA has no `pre-build` or `pre-device`
-constraint, includes a complete set of OS partitions plus `boot`/`dtbo`, and
+Why this can work from `.31`: the full OTA has no `pre-build` constraint (its
+`pre-device=kona` matches), includes a complete set of OS partitions plus `boot`/`dtbo`, and
 is signed with the retail release key. The remaining uncertainty is whether
 the pre-release `.31` system trusts that same release key (see risks).
 
 ### Option B (fallback): flash retail `.34`, then take the online chain
+
+> **Orchestrator warning (verified 2026-11-13):** the `.34` QFIL package is a
+> factory image. Its `rawprogram*.xml` rewrite the **GPT** of every LUN,
+> **`persist`** (unit calibration/sensor data, incl. `retrostation/joys`),
+> **`devinfo`** (bootloader unlock state), `metadata`, `userdata`, `xbl`/`abl`
+> and all Qualcomm firmware, while leaving `vendor_boot`/`init_boot` empty
+> (not written). Never flash it unmodified. If it is ever needed, flash only
+> the software partitions (boot, dtbo, vbmeta, vbmeta_system, super) via
+> fastboot in one session, as done for the `.31` restore (#54).
 
 If local update rejects the full package (signature, anti-rollback or
 partition-layout check), put the device on a known retail base first:
@@ -276,14 +286,10 @@ the project boundary are a full package or a full-image flash.
 
 ## 6. Risks and caveats
 
-- **Signing-key mismatch on `.31`.** The full `.189` OTA is signed with the
-  retail release key (fingerprint above). The retail `.34` image trusts it;
-  the pre-release `.31` image probably does too (same Moorechip release-keys
-  vendor), but that was not verified because the `.31` full image was not
-  available here. Before flashing, compare
-  `/system/etc/security/otacerts.zip` on the running `.31` with the fingerprint
-  in §4. If it differs, local update will fail signature verification and
-  Option B is required.
+- **Signing key: verified OK.** `/system/etc/security/otacerts.zip` of the
+  pre-release `.31` contains exactly one `releasekey.x509.pem` with the same
+  SHA-256 fingerprint (`9D:DA:35:10:...:80:91`) as the full `.189` OTA's
+  `otacert`, so the signature check of a local update should pass.
 - **Anti-rollback.** `.189` `vbmeta` may carry a higher rollback index than
   `.31`. Once `.189` boots, downgrading to `.31`/`.34` may be refused. Keep the
   EDL/QFIL restore path and a data backup.
