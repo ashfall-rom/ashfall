@@ -165,7 +165,11 @@ Sequence:
    GSI bundles its own); `vendor_<slot>`/`odm_<slot>` and the dlkm partitions are
    never touched. `--keep-product` forbids those deletions and fails instead.
    The budget is overridable with `ASH_GROUP_MAX_BYTES` (default
-   `6442450944`). `restore-stock.sh` brings the stock super back.
+   `6442450944`). `restore-stock.sh` brings the stock super back. With
+   `--keep-product` and a deficit, `--dry-run` prints `would REFUSE` and exits
+   non-zero (the real run dies before any deletion). The target slot is
+   validated to be exactly `a` or `b`, including when it came from the
+   device-reported `current-slot`.
 5. **Flash `system`** -- `fastboot --slot <slot> flash system <img>` (fastbootd
    resizes the logical partition; fastboot sparse-splits large images using
    `max-download-size`).

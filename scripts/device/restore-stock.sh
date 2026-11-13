@@ -165,18 +165,35 @@ preflight() {
 
 # build plan: array of "partition|image|size"
 PLAN=()
+# has_slot_images <slot>: true when the complete required set for that slot is
+# present (vendor_boot/dtbo/vbmeta etc. are slot-suffixed; find_image still
+# accepts unsuffixed images that can serve either slot).
+has_slot_images() {
+  local slot=$1 p
+  for p in boot init_boot vendor_boot dtbo vbmeta; do
+    [[ -n $(find_image "$p" "$slot") ]] || return 1
+  done
+  return 0
+}
+
 resolve_plan() {
-  local slots=() slot part img size
+  local slots=() slot part img size have_a have_b
   case $SLOTS in
     both) slots=(a b) ;;
     auto)
-      if [[ -n $(find_image boot b) ]]; then
+      have_a=no; have_b=no
+      has_slot_images a && have_a=yes
+      has_slot_images b && have_b=yes
+      if [[ $have_a == yes && $have_b == yes ]]; then
         slots=(a b)
-      elif [[ -n $(find_image boot a) ]]; then
+      elif [[ $have_a == yes ]]; then
         slots=(a)
         warn "only slot-A stock images are present in $IMAGES; planning slot A (use --slot both once B is extracted)"
+      elif [[ $have_b == yes ]]; then
+        slots=(b)
+        warn "only slot-B stock images are present in $IMAGES; planning slot B (use --slot both once A is extracted)"
       else
-        die "no stock boot image for slot a or b in $IMAGES"
+        die "no complete slot image set (boot/init_boot/vendor_boot/dtbo/vbmeta) in $IMAGES"
       fi
       ;;
     *) slots=("$SLOTS") ;;
