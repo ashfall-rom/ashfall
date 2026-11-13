@@ -1,0 +1,43 @@
+//
+// Copyright (C) 2026 The AshFall Project
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//      http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+//
+
+// Workaround for a LineageOS 24.0 tree defect, NOT an AshFall feature.
+//
+// build/make/target/product/gsi/Android.bp defines the AOSP-only GSI image
+// module `aosp_system_image`, whose `deps` list names the AOSP `Calendar` app.
+// LineageOS removed `packages/apps/Calendar` from its tree (it ships Etar
+// instead), so Soong aborts the analysis of EVERY product in this tree:
+//
+//   error: build/make/target/product/gsi/Android.bp:190:1:
+//          "aosp_system_image" depends on undefined module "Calendar".
+//
+// `aosp_system_image` is dead weight for us: lineage_gsi_arm64 (and therefore
+// ashfall_gsi_arm64) inherits device/generic/common/gsi_arm64.mk, which selects
+// `android_gsi` via PRODUCT_SOONG_DEFINED_SYSTEM_IMAGE, and
+// lineage_generic_target.mk sets USE_SOONG_DEFINED_SYSTEM_IMAGE := false, so
+// the make-based image path is used. This empty `phony` module only satisfies
+// the analysis; nothing installs or builds it.
+//
+// (AccessibilityMenu and WallpaperCropper are also in that deps list but do
+// exist under frameworks/base, so they need no stub.)
+//
+// Remove this file once the dangling dep is fixed upstream or carried as a
+// proper patch in patches/build/ (issue #5).
+
+phony {
+    name: "Calendar",
+    required: [],
+}
