@@ -188,4 +188,25 @@ it empty), so this does not diverge from stock behaviour.
 
 ## Build
 
-See the PR for the verified build id, image size and `system.img.sha256`.
+Builds are orchestrated serially (`docs/PLAN.md`: workers never run
+`scripts/build.sh`; soong analysis alone peaked at ~46 GB RSS and OOM-ed the
+build host). This worker did not produce the final image; the PR carries a
+"Build request" section with the branch and head SHA.
+
+Expected in the build output:
+
+- `installed-files.txt`: `/system/etc/init/ashfall_usb.rc` must be present.
+- `build.prop`: unchanged by this fix (no new product properties).
+- No framework patch, no vendor/product/system_ext change; the fix is one rc
+  file copied into `/system/etc/init/`.
+
+Expected on the device after flashing (and after `adb reboot`):
+
+- `getprop persist.vendor.usb.config` -> `adb`
+- `getprop vendor.usb.config` -> `adb` (or the value of
+  `persist.sys.usb.config` after the vendor's property trigger runs)
+- with a host attached and USB debugging on: `sys.usb.state` non-empty,
+  `/sys/class/udc/a600000.dwc3/state` = `configured`, host `lsusb` shows an
+  `18d1:` device;
+- `logcat -b all -d` has no `udc a600000.dwc3: failed to start g1: -19` and
+  adbd no longer logs `timed out while waiting for FUNCTIONFS_BIND`.
