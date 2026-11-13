@@ -28,7 +28,7 @@
 # Options:
 #   --slot a|b         target slot (default: the device's current slot)
 #   --wipe             erase userdata + metadata after flashing (clean boot;
-#                      userdata erase takes ~6 minutes on this device)
+#                      userdata erase is seconds on this device, not minutes)
 #   --vbmeta PATH      use this vbmeta image instead of the stock one / an
 #                      auto-generated empty vbmeta (host path or local file)
 #   --keep-product     never delete product_<slot>/system_ext_<slot>, even if
@@ -44,6 +44,12 @@
 # Notes
 #   * Never uses `fastboot getvar all` (can wedge the bootloader, guide §8.1);
 #     individual getvars are retried because this ABL is flaky under load.
+#   * The RP5 ABL rejects `fastboot reboot fastboot` from the bootloader
+#     (`FAILED (remote: 'unknown command')`, 2026-11-13). fastbootd is reached
+#     via stock recovery instead: `fastboot reboot recovery` -> wait for adb
+#     state `recovery` -> `adb reboot fastboot` -> wait for `is-userspace: yes`.
+#     From Android/recovery `adb reboot fastboot` is used directly. See
+#     ensure_fastbootd in lib/device.sh.
 #   * The RP5's stock vbmeta lives in $REMOTE_FIRMWARE (lun4_vbmeta_<slot>.bin).
 #     If it is missing, an empty vbmeta with flags=3 (verity+verification
 #     disabled) is generated with python3 and flashed instead.
@@ -380,7 +386,8 @@ print_plan() {
   printf 'image:         %s (%s)\n' "$img" "$(human "$img_size")"
   printf 'vbmeta:        %s\n' "$vb_desc"
   printf '\nsteps:\n'
-  printf '  - switch to fastbootd (userspace fastboot) if needed\n'
+  printf '  - reach fastbootd if needed (bootloader: reboot recovery -> adb reboot fastboot;\n'
+  printf '    Android/recovery: adb reboot fastboot)\n'
   if ((KEEP_PRODUCT)) && ((GROUP_NEED > 0)); then
     printf '  - space budget: image does not fit and --keep-product forbids deleting\n'
     printf '    product_%s/system_ext_%s -> this run would REFUSE\n' "$SLOT" "$SLOT"
@@ -395,7 +402,7 @@ print_plan() {
     printf '  - fastboot --slot %s flash vbmeta %s (already flags=3)\n' "$SLOT" "$vb"
   fi
   if ((WIPE)); then
-    printf '  - fastboot erase userdata  (slow, ~6 min)\n'
+    printf '  - fastboot erase userdata  (observed 0.09 s on 2026-11-13)\n'
     printf '  - fastboot erase metadata\n'
   fi
   printf '  - fastboot set-active %s (only if it is not active already)\n' "$SLOT"
@@ -509,28 +516,9 @@ if ((!ASSUME_YES)); then
 fi
 
 # --- 1. reach fastbootd ------------------------------------------------------
-ensure_fastbootd() {
-  local i m
-  m=$(dev_mode)
-  case $m in
-    fastbootd) ok "already in fastbootd"; return 0 ;;
-    fastboot) ;;
-    android|recovery|sideload)
-      printf '\n==> reboot to bootloader (adb)\n    + adb reboot bootloader\n'
-      dev_adb reboot bootloader
-      for ((i = 0; i < 60; i++)); do [[ $(dev_mode) == fastboot ]] && break; sleep 2; done
-      ;;
-    *) die "cannot reach fastbootd from mode '$m'" ;;
-  esac
-  printf '\n==> reboot bootloader -> fastbootd\n    + fastboot reboot fastboot\n'
-  fb reboot fastboot
-  for ((i = 0; i < 90; i++)); do
-    if [[ $(dev_mode) == fastbootd ]]; then ok "fastbootd reachable"; return 0; fi
-    sleep 2
-  done
-  die "device did not enter fastbootd (check the screen; hard power-off and retry)"
-}
-
+# The route is device-specific and lives in lib/device.sh: this ABL rejects
+# `fastboot reboot fastboot`, so the bootloader path goes through the stock
+# recovery (reboot recovery -> wait for adb `recovery` -> adb reboot fastboot).
 ensure_fastbootd
 MODE=fastbootd
 DEV_SERIAL=$(dev_resolve_serial "$SERIAL")
@@ -618,7 +606,7 @@ fi
 
 if ((WIPE)); then
   # Erasing userdata/metadata is explicitly allowed (never *flashing* them).
-  step "erase userdata (slow, ~6 min on this device)" erase userdata
+  step "erase userdata (seconds on this device)" erase userdata
   step "erase metadata (vold regenerates encryption keys)" erase metadata
   ok "userdata + metadata erased"
 else

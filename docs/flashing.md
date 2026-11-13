@@ -68,7 +68,8 @@ Notes:
 - Recovering from an interrupted first-time provisioning:
   `scripts/device/run.sh recreate` (destroys and recreates the container).
 - Overrides (in `config/ashfall.local.conf` or the environment): `DEV_BOX`,
-  `DEV_BOX_IMAGE`, `DEV_BOX_PACKAGES`, `FB_RETRY`.
+  `DEV_BOX_IMAGE`, `DEV_BOX_PACKAGES`, `FB_RETRY`, `FB_TRANSITION_TIMEOUT`
+  (per-step mode-transition wait, default 180 s).
 
 ```bash
 scripts/device/run.sh adb devices -l
@@ -81,13 +82,27 @@ scripts/device/run.sh shell                        # interactive bash in the con
 | Goal | How | USB ID |
 |---|---|---|
 | Fastboot / bootloader | from off: **Volume Down + Power** | `18d1:d00d` |
-| Fastbootd (userspace) | `fastboot reboot fastboot` from the bootloader | `18d1:d00d` |
-| Recovery (adb) | boot menu / `adb reboot recovery` | `18d1:d001` |
+| Fastbootd (userspace) | from the bootloader: `fastboot reboot recovery`, wait for adb `recovery`, then `adb reboot fastboot`; from Android or recovery: `adb reboot fastboot` | `18d1:4ee0` |
+| Recovery (adb) | `fastboot reboot recovery` from the bootloader, boot menu, or `adb reboot recovery` | `18d1:d001` |
 | Android (adb + MTP) | normal boot | `18d1:4ee1` |
 | EDL (Qualcomm 9008) | guide §5/§12; not used by these scripts | `05c6:9008` |
 | Hard power-off | hold **Power ~15 s** | -- |
 
-`run.sh status` prints the current mode, including `fastbootd`.
+**This ABL rejects `fastboot reboot fastboot`** from the bootloader:
+
+```
+$ fastboot reboot fastboot
+Rebooting into fastboot                            FAILED (remote: 'unknown command')
+```
+
+That is why `flash-gsi.sh` goes through stock recovery on the RP5. Stock
+recovery shows the **"No command"** screen with the dead Android logo and its
+buttons do nothing -- that is normal, not a hang: adb is running there
+(`adb devices` -> `recovery`) and `adb reboot fastboot` enters fastbootd. Do not
+press buttons on that screen.
+
+`run.sh status` prints the current mode, including `fastbootd` (via
+`is-userspace: yes`).
 
 ## 4. Read-only snapshot: `info.sh`
 
@@ -149,9 +164,16 @@ Sequence:
 2. **Image type** -- accepts Android sparse, **EROFS** (the A17 GSI default,
    mounted by the stock 5.15 GKI kernel) and ext4 (fallback). The filesystem
    magic is checked; sparse images are unpacked by fastbootd.
-3. **Reach fastbootd** -- from Android/recovery `adb reboot bootloader`, then
-   `fastboot reboot fastboot`; from the bootloader, the latter directly. Waits
-   up to 3 minutes for `is-userspace: yes`.
+3. **Reach fastbootd** -- this ABL rejects `fastboot reboot fastboot`
+   (`FAILED (remote: 'unknown command')`), so the routes are:
+   - **bootloader** -> `fastboot reboot recovery` -> wait for adb state
+     `recovery` -> `adb reboot fastboot` -> wait for `is-userspace: yes`;
+   - **Android / recovery** -> `adb reboot fastboot` -> same wait.
+
+   Both waits are bounded by `FB_TRANSITION_TIMEOUT` (default 180 s each) and
+   fail closed with the last observed mode and a manual recovery hint. From the
+   bootloader the device passes through the stock recovery's "No command"
+   screen -- expected, adb is alive there.
 4. **Space budget** -- `super` is split into two slot groups of 6.0 GiB
    (`qti_dynamic_partitions_a/_b`); stock uses ~4.6 GiB (`system` 1.39,
    `vendor` 1.78, `product` 0.875, `system_ext` 0.49, `vendor_dlkm` 0.065,
@@ -179,9 +201,11 @@ Sequence:
    **256-byte empty vbmeta with flags=3** (hashtree + verification disabled) is
    generated with python3 and flashed instead. Either way AVB is off for the
    unsigned GSI -- without this the bootloader refuses to boot it.
-7. **Wipe (optional)** -- `fastboot erase userdata` (~6 minutes!) and
-   `fastboot erase metadata` (vold regenerates metadata-encryption keys on the
-   next boot). Runs in the bootloader, not fastbootd.
+7. **Wipe (optional)** -- `fastboot erase userdata` (0.09 s observed on
+   2026-11-13; the guide's older ~351 s figure does not apply here -- do not
+   wait minutes for it) and `fastboot erase metadata` (vold regenerates
+   metadata-encryption keys on the next boot). Runs in the bootloader, not
+   fastbootd.
 8. **Slot** -- `set-active <slot>` when the target is not the current slot
    (takes effect on the next boot).
 
@@ -199,7 +223,7 @@ Logs: `out/device/<ts>/flash-gsi.log`.
 |---|---|
 | small partitions | seconds |
 | `super` (12 GiB stock) | ~90 s |
-| `fastboot erase userdata` | ~350 s |
+| `fastboot erase userdata` | **0.09 s** (observed 2026-11-13; the guide's older ~351 s figure does not apply here) |
 | `flash system` (2--3 GiB GSI) | 1--3 min |
 
 ### Common failures
@@ -208,9 +232,10 @@ Logs: `out/device/<ts>/flash-gsi.log`.
 |---|---|
 | `getvar ... FAILED (remote: 'GetVar Variable Not found')` on everything | flaky/wedged fastboot session -- retries, then hard power-off 15 s and re-enter fastboot |
 | `fastboot devices` works but commands hang | wedged bootloader -- same |
+| `Rebooting into fastboot  FAILED (remote: 'unknown command')` | this ABL has no `reboot fastboot`: from the bootloader run `fastboot reboot recovery`, wait until `adb devices` shows `recovery`, then `adb reboot fastboot` |
 | `Not enough space to resize partition` | the budget was mis-read (flaky getvar) or `--keep-product` is set; re-run or free `product_<slot>`/`system_ext_<slot>` |
 | image is EROFS | supported (stock 5.15 kernel); ext4 is only a fallback |
-| `device did not enter fastbootd` | check the screen, then `adb reboot bootloader` + `fastboot reboot fastboot` manually |
+| `device did not enter fastbootd` | check the screen; from the bootloader run `fastboot reboot recovery`, confirm `adb devices` shows `recovery`, then `adb reboot fastboot`; if nothing helps, hard power-off 15 s |
 | `FAILED (remote: 'Device is locked')` | bootloader not unlocked -- do not try to bypass it |
 | flash succeeds, Android bootloops | boot to recovery, then `scripts/device/logs.sh`; bail out with `restore-stock.sh` |
 | `adb: unauthorized` | accept the prompt on the device (user builds); userdebug GSIs with `ro.adb.secure=0` have no prompt |
@@ -292,8 +317,15 @@ skips splash; `--skip-size-check` disables the image-vs-partition check (only
 when the mismatch is understood).
 
 It must run in the **bootloader's fastboot** (not fastbootd) and refuses
-otherwise. Accepted image names: `lun4_<part>_<slot>.bin`,
+otherwise. No step needs fastbootd: `super` is the 12 GiB **physical** partition
+and the stock flow flashes it from the bootloader (`fastboot flash super
+lun0_super.bin`, guide §8.3); the dynamic/logical partitions inside it are only
+relevant to `flash-gsi.sh`. `fastboot reboot fastboot` is not used here (this
+ABL rejects it anyway). Accepted image names: `lun4_<part>_<slot>.bin`,
 `lun0_<part>_<slot>.bin`, `<part>_<slot>.img`, `<part>.img`, `<part>.bin`.
+
+`--wipe` erases userdata in **seconds** on this device (0.09 s observed
+2026-11-13), not the guide's older ~351 s figure.
 
 It never touches `devinfo`, `persist`, radio/NV data or any other device-unique
 partition. If the device is in the "U-Boot / Loader Mode" state described in the
