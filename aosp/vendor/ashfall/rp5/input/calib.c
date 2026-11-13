@@ -258,7 +258,11 @@ bool calib_load_file(const char *path, struct calibration *out, char *err,
         *eq = '\0';
         errno = 0;
         value = strtod(eq + 1, &end);
-        if (errno != 0 || end == eq + 1 || !isfinite(value)) {
+        while (end && (*end == ' ' || *end == '\t' || *end == '\r' ||
+                       *end == '\n'))
+            end++;
+        if (errno != 0 || end == eq + 1 || !isfinite(value) ||
+            (end && *end != '\0')) {
             if (err && errlen)
                 snprintf(err, errlen, "%s:%d: bad value", path, lineno);
             fclose(file);
@@ -380,6 +384,21 @@ bool calib_save_file(const char *path, const struct calibration *cal, char *err,
         unlink(tmp);
         return false;
     }
+    /* Make the rename itself durable. */
+    {
+        char dir[PATH_MAX];
+        char *slash = strrchr(path, '/');
+        int dfd;
+
+        if (slash) {
+            snprintf(dir, sizeof(dir), "%.*s", (int)(slash - path), path);
+            dfd = open(dir, O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+            if (dfd >= 0) {
+                fsync(dfd);
+                close(dfd);
+            }
+        }
+    }
     return true;
 }
 
@@ -440,7 +459,11 @@ bool calib_parse_pairs(int count, char *const pairs[], struct calibration *out,
         key[key_len] = '\0';
         errno = 0;
         value = strtod(eq + 1, &end);
-        if (errno != 0 || end == eq + 1 || !isfinite(value)) {
+        while (end && (*end == ' ' || *end == '\t' || *end == '\r' ||
+                       *end == '\n'))
+            end++;
+        if (errno != 0 || end == eq + 1 || !isfinite(value) ||
+            (end && *end != '\0')) {
             if (err && errlen)
                 snprintf(err, errlen, "bad value for '%s'", key);
             return false;

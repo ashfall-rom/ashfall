@@ -16,10 +16,6 @@
 
 #define AH_PI 3.14159265358979323846
 
-#define LEDS_RED "/sys/class/leds/red/brightness"
-#define LEDS_GREEN "/sys/class/leds/green/brightness"
-#define LEDS_BLUE "/sys/class/leds/blue/brightness"
-
 static const char *const side_dirs[2] = {
     "/sys/class/sn3112l/led",
     "/sys/class/sn3112r/led",
@@ -118,20 +114,13 @@ void led_state_init(led_state *state, int64_t now_ms)
         snprintf(state->side_dir[i], sizeof(state->side_dir[i]), "%s",
                  side_dirs[i]);
         snprintf(path, sizeof(path), SN3112_ENABLE_FMT, side_dirs[i]);
-        state->have_enable[i] = sysfs_exists(path);
+        state->have_enable[i] = sysfs_writable(path);
         state->backend = LED_BACKEND_SN3112;
     }
     if (state->backend == LED_BACKEND_SN3112) {
         ah_logf(AH_LOG_INFO, "led: sn3112 backend (left=%s right=%s)",
                 state->side_dir[0][0] ? "yes" : "no",
                 state->side_dir[1][0] ? "yes" : "no");
-        return;
-    }
-
-    if (node_readable(LEDS_RED) && node_readable(LEDS_GREEN) &&
-        node_readable(LEDS_BLUE)) {
-        state->backend = LED_BACKEND_LEDS;
-        ah_logf(AH_LOG_INFO, "led: /sys/class/leds/{red,green,blue} backend");
         return;
     }
 
@@ -272,8 +261,8 @@ static void write_side(led_state *state, int side, rgb_t colour, bool enabled)
         if (state->shown_on[side] && state->have_enable[side]) {
             snprintf(path, sizeof(path), SN3112_ENABLE_FMT,
                      state->side_dir[side]);
-            sysfs_write_str(path, "0");
-            state->shown_on[side] = false;
+            if (sysfs_write_str(path, "0") == 0)
+                state->shown_on[side] = false;
         }
         return;
     }
@@ -284,7 +273,8 @@ static void write_side(led_state *state, int side, rgb_t colour, bool enabled)
                  state->side_dir[side]);
         snprintf(value, sizeof(value), "1-%u:%u:%u", colour.r, colour.g,
                  colour.b);
-        sysfs_write_str(path, value);
+        if (sysfs_write_str(path, value) != 0)
+            return; /* keep the colour dirty and retry on the next frame */
         state->shown[side] = colour;
         state->shown_valid[side] = true;
     }
@@ -292,7 +282,8 @@ static void write_side(led_state *state, int side, rgb_t colour, bool enabled)
         if (state->have_enable[side]) {
             snprintf(path, sizeof(path), SN3112_ENABLE_FMT,
                      state->side_dir[side]);
-            sysfs_write_str(path, "1");
+            if (sysfs_write_str(path, "1") != 0)
+                return;
         }
         state->shown_on[side] = true;
     }
@@ -300,42 +291,18 @@ static void write_side(led_state *state, int side, rgb_t colour, bool enabled)
 
 void led_disable(led_state *state)
 {
-    if (state->backend == LED_BACKEND_SN3112) {
-        write_side(state, 0, state->shown[0], false);
-        write_side(state, 1, state->shown[1], false);
-    } else if (state->backend == LED_BACKEND_LEDS) {
-        if (!state->shown_on[0])
-            return;
-        sysfs_write_int(LEDS_RED, 0);
-        sysfs_write_int(LEDS_GREEN, 0);
-        sysfs_write_int(LEDS_BLUE, 0);
-        state->shown_on[0] = false;
-    }
+    if (state->backend != LED_BACKEND_SN3112)
+        return;
+    write_side(state, 0, state->shown[0], false);
+    write_side(state, 1, state->shown[1], false);
 }
 
 void led_apply(led_state *state, const rgb_t frame[2], bool enabled)
 {
-    if (!enabled || state->backend == LED_BACKEND_NONE) {
+    if (!enabled || state->backend != LED_BACKEND_SN3112) {
         led_disable(state);
         return;
     }
-
-    if (state->backend == LED_BACKEND_SN3112) {
-        write_side(state, 0, frame[0], true);
-        write_side(state, 1, frame[1], true);
-        return;
-    }
-
-    /* /sys/class/leds/{red,green,blue}: a single tri-colour group, used as a
-     * best-effort fallback when the sn3112 class is absent. */
-    if (state->shown_valid[0] && !memcmp(&state->shown[0], &frame[0],
-                                         sizeof(frame[0])) &&
-        state->shown_on[0])
-        return;
-    sysfs_write_int(LEDS_RED, frame[0].r);
-    sysfs_write_int(LEDS_GREEN, frame[0].g);
-    sysfs_write_int(LEDS_BLUE, frame[0].b);
-    state->shown[0] = frame[0];
-    state->shown_valid[0] = true;
-    state->shown_on[0] = true;
+    write_side(state, 0, frame[0], true);
+    write_side(state, 1, frame[1], true);
 }

@@ -55,8 +55,8 @@ another build when this landed).  Current constants are therefore provisional:
 |---|---|---|
 | `FAN_DUTY_MIN_NS` | 3 000 | below stock Quiet (5 000), assumed minimum that spins reliably |
 | `FAN_DUTY_MAX_NS` | 35 000 | `.189` High maximum, assumed top of the useful range |
-| `FAN_PRESET_QUIET_PCT` | 8 | ~5 000 ns with the range above |
-| `FAN_PRESET_BALANCED_PCT` | 50 | ~19 000 ns |
+| `FAN_PRESET_QUIET_PCT` | 7 | ~5 200 ns (stock Quiet 5 000 ns) |
+| `FAN_PRESET_BALANCED_PCT` | 68 | ~24 760 ns (stock Sport 25 000 ns) |
 | `FAN_PRESET_MAX_PCT` | 100 | 35 000 ns |
 
 Measurement procedure (userdebug GSI, `adb root`, fan at rest):
@@ -118,7 +118,7 @@ the node turns out to be a scaled count, add the factor in `fan_read_rpm()`.
 | property | meaning |
 |---|---|
 | `ashfall.status.fan.temp` | hottest CPU/GPU temperature, tenths of °C (`563` = 56.3 °C) |
-| `ashfall.status.fan.pct` | current fan output 0..100 (100 during a kick) |
+| `ashfall.status.fan.pct` | current fan output 0..100 (100 during a kick, `-1` if the sysfs write failed) |
 | `ashfall.status.fan.rpm` | `speed` node value, `-1` when unavailable |
 | `ashfall.status.fan.safety` | `1` while the safety override is active |
 

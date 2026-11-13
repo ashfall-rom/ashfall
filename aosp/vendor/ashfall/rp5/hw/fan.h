@@ -35,8 +35,8 @@
 #define FAN_DUTY_MAX_NS 35000
 
 /* Built-in preset percentages (quiet/balanced/max), from the measurement. */
-#define FAN_PRESET_QUIET_PCT 8
-#define FAN_PRESET_BALANCED_PCT 50
+#define FAN_PRESET_QUIET_PCT 7    /* ~5 200 ns, stock Quiet is 5 000 ns */
+#define FAN_PRESET_BALANCED_PCT 68 /* ~24 760 ns, stock Sport is 25 000 ns */
 #define FAN_PRESET_MAX_PCT 100
 
 /* Smart mode tuning (see docs/phase5.md §2.1). */

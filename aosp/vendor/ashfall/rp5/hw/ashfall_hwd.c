@@ -155,7 +155,7 @@ static void publish_status(const fan_state *fan, int temp_tenths,
     struct status_cache next;
 
     next.temp = temp_tenths;
-    next.pct = fan->out_pct < 0 ? 0 : fan->out_pct;
+    next.pct = fan->out_pct; /* -1 = unknown (sysfs write failed) */
     next.rpm = fan->rpm;
     next.safety = fan->safety ? 1 : 0;
     next.valid = true;
@@ -305,9 +305,8 @@ int main(void)
 
     ah_logf(AH_LOG_INFO, "stopping");
     led_disable(&led);
-    /* Leave the fan in a defined state; the safety override lives only as
-     * long as this daemon. 100 % would be the safe choice, but a stopped
-     * daemon plus a spinning fan at 100 % is worse than the stock default. */
-    fan_apply_pct(&fan, 0, ah_now_ms());
+    /* Leave the fan at its current duty: the safety override only lives as
+     * long as this daemon, so stopping it must not also stop cooling.  init
+     * restarts the service and re-applies persist.ashfall.fan.*. */
     return 0;
 }

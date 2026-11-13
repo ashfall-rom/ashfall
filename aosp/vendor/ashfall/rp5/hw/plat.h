@@ -50,4 +50,8 @@ int sysfs_write_str(const char *path, const char *value);
 int sysfs_write_int(const char *path, int value);
 bool sysfs_exists(const char *path);
 
+/* True when the attribute exists and is writable (DAC).  Used to decide
+ * whether a sysfs node is present without a read round-trip. */
+bool sysfs_writable(const char *path);
+
 #endif /* ASHFALL_PLAT_H */

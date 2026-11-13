@@ -511,6 +511,17 @@ int main(void)
        rs_gpio cycles MCU power across a screen off/on.  Keeping the uinput
        device alive across reconnects avoids Android seeing a new gamepad. */
     while (g_running) {
+        /* The MCU lost power with buttons held: release everything the kernel
+         * still thinks is down before the new session starts. */
+        if (prev_keys != 0) {
+            for (int i = 0; i < 16; i++) {
+                if (!(prev_keys & (1u << i)) || mcu_keymap[i] == 0)
+                    continue;
+                emit_event(uinput_fd, EV_KEY, mcu_keymap[i], 0);
+            }
+            emit_sync(uinput_fd);
+        }
+
         mcu_fd = mcu_open();
         if (mcu_fd < 0) {
             sleep(1);

@@ -9,6 +9,12 @@
 /system/bin/ashfall-hwd              u:object_r:ashfall_hwd_exec:s0
 /system/bin/ashfall-rp5-input        u:object_r:ashfall_rp5_input_exec:s0
 
+# Gamepad MCU UART (and the stock /dev/rscom name the daemon falls back to).
+# /dev/ttyS[0-9]* is already serial_device in platform policy; the HS UART is
+# not covered there.
+/dev/ttyHS1                          u:object_r:serial_device:s0
+/dev/rscom                           u:object_r:serial_device:s0
+
 # Control socket created by init for ashfall-rp5-input
 /dev/socket/ashfall_input            u:object_r:ashfall_input_socket:s0
 

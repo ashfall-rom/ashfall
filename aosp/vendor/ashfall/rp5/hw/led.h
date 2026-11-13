@@ -5,8 +5,10 @@
  *   /sys/class/sn3112l/led/{enable,brightness}   left stick ring
  *   /sys/class/sn3112r/led/{enable,brightness}   right stick ring
  * `brightness` takes "<mode>-<r>:<g>:<b>" and mode 1 is the static colour
- * path.  The generic /sys/class/leds/{red,green,blue} nodes (pm8150l) are a
- * fallback for units/boots where the sn3112 class is missing.
+ * path.  The generic /sys/class/leds/{red,green,blue} nodes (pm8150l) are NOT
+ * used: /sys/class/leds is genfs-labelled sysfs_leds and a coredomain may not
+ * touch it (private/coredomain.te neverallow), and they are the notification
+ * LED, not the stick rings (docs/rp5/hw.md).
  *
  * SPDX-License-Identifier: Apache-2.0
  */
@@ -44,8 +46,7 @@ typedef struct {
 
 typedef enum {
     LED_BACKEND_NONE,
-    LED_BACKEND_SN3112, /* one controller per side */
-    LED_BACKEND_LEDS,   /* /sys/class/leds/{red,green,blue} */
+    LED_BACKEND_SN3112, /* one sn3112 controller per side */
 } led_backend;
 
 typedef struct {

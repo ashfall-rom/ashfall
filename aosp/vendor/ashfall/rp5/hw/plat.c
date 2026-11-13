@@ -293,6 +293,14 @@ int sysfs_write_int(const char *path, int value)
     return sysfs_write_str(path, buf);
 }
 
+bool sysfs_writable(const char *path)
+{
+    char real[PATH_MAX];
+
+    host_path(path, real, sizeof(real));
+    return access(real, W_OK) == 0;
+}
+
 bool sysfs_exists(const char *path)
 {
     char real[PATH_MAX];

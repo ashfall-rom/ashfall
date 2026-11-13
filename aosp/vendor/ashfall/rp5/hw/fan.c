@@ -216,8 +216,12 @@ int fan_apply_pct(fan_state *state, int pct, int64_t now_ms)
 
     if (pct == 0) {
         if (state->out_pct != 0) {
-            sysfs_write_int(FAN_DUTY_NODE, 0);
-            sysfs_write_int(FAN_STATE_NODE, 0);
+            if (sysfs_write_int(FAN_DUTY_NODE, 0) != 0 ||
+                sysfs_write_int(FAN_STATE_NODE, 0) != 0) {
+                /* Unknown state: try again on the next tick. */
+                state->out_pct = -1;
+                return 0;
+            }
             state->out_pct = 0;
         }
         state->kick_until_ms = 0;
@@ -227,8 +231,11 @@ int fan_apply_pct(fan_state *state, int pct, int64_t now_ms)
     /* Spin the fan up hard for a moment: the motor does not start reliably at
      * a low duty.  Only a 0 -> nonzero transition needs it. */
     if (state->out_pct <= 0) {
-        sysfs_write_int(FAN_STATE_NODE, 1);
-        sysfs_write_int(FAN_DUTY_NODE, fan_pct_to_duty(100));
+        if (sysfs_write_int(FAN_STATE_NODE, 1) != 0 ||
+            sysfs_write_int(FAN_DUTY_NODE, fan_pct_to_duty(100)) != 0) {
+            state->out_pct = -1;
+            return 0;
+        }
         state->pending_pct = pct;
         state->kick_until_ms = now_ms + FAN_MIN_KICK_MS;
         state->out_pct = 100;
@@ -248,8 +255,11 @@ int fan_apply_pct(fan_state *state, int pct, int64_t now_ms)
     duty = fan_pct_to_duty(pct);
     out = pct;
     if (state->out_pct != out) {
-        sysfs_write_int(FAN_STATE_NODE, 1);
-        sysfs_write_int(FAN_DUTY_NODE, duty);
+        if (sysfs_write_int(FAN_STATE_NODE, 1) != 0 ||
+            sysfs_write_int(FAN_DUTY_NODE, duty) != 0) {
+            state->out_pct = -1;
+            return 0;
+        }
         state->out_pct = out;
     }
     return out;

@@ -173,6 +173,15 @@ static void test_pairs(void)
         CHECK(!calib_parse_pairs(16, bad, &cal, err, sizeof(err)));
     }
 
+    /* trailing junk after the number is not a value */
+    {
+        char *bad[16];
+
+        memcpy(bad, ok, sizeof(ok));
+        bad[0] = "left_x_center=125.0abc";
+        CHECK(!calib_parse_pairs(16, bad, &cal, err, sizeof(err)));
+    }
+
     /* malformed pair */
     {
         char *bad[16];

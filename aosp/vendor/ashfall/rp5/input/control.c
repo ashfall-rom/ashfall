@@ -369,6 +369,8 @@ void control_stream_raw(struct control *control, int64_t now_ms,
         if (len <= 0)
             continue;
         if (send(client->fd, line, (size_t)len, MSG_NOSIGNAL) < 0) {
+            if (errno == EAGAIN || errno == EWOULDBLOCK)
+                continue; /* client is not reading fast enough; drop this frame */
             drop_client(control, i);
             i--;
             continue;
