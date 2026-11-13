@@ -1,0 +1,71 @@
+From 3874716a743623eda6eeadfe4a32cda6351ef94a Mon Sep 17 00:00:00 2001
+From: AshFall UI <ui@ashfall.local>
+Date: Fri, 13 Nov 2026 18:15:45 +0000
+Subject: [PATCH 1/2] SystemUI: tune falsing thresholds for a small landscape
+ handheld
+
+The RP5 is a 5.5" landscape handheld (1920x1080 at 360 dpi). AOSP's
+inch-based BrightLine falsing thresholds are sized for portrait phones,
+where 1.5in of vertical travel is a small fraction of the screen height.
+
+On the RP5 panel the 1.5in vertical fling threshold works out to 478px,
+i.e. 44% of the 1080px-tall screen, and the ZigZag primary-axis allowance
+(15% of the gesture length) is smaller than the natural arc of a short
+thumb swipe. Recorded lock-screen swipes on the device were rejected with
+dy=-189..-259px (478px required) and devianceY=68px (36.9px allowed), so
+only almost perfectly vertical, nearly full-height swipes unlocked.
+
+Lower the vertical fling distance to 0.75in (239px, 22% of the height,
+the same proportion a portrait phone gets) and allow 30% primary-axis
+ZigZag deviance. Pocket-touch protection is preserved: the proximity
+classifier still requires a 3in/80%-of-height long swipe when the sensor
+reports the screen covered, and the diagonal (45 degree), pointer-count,
+type and velocity classifiers are unchanged. Both values remain
+overridable at runtime through device_config systemui.
+
+Fixes #50
+---
+ .../systemui/classifier/DistanceClassifier.java        | 10 +++++++++-
+ .../android/systemui/classifier/ZigZagClassifier.java  |  8 +++++++-
+ 2 files changed, 16 insertions(+), 2 deletions(-)
+
+diff --git a/frameworks/base/packages/SystemUI/src/com/android/systemui/classifier/DistanceClassifier.java b/frameworks/base/packages/SystemUI/src/com/android/systemui/classifier/DistanceClassifier.java
+index 9d512f9..2a9fcec 100644
+--- a/frameworks/base/packages/SystemUI/src/com/android/systemui/classifier/DistanceClassifier.java
++++ b/frameworks/base/packages/SystemUI/src/com/android/systemui/classifier/DistanceClassifier.java
+@@ -49,7 +49,15 @@ import javax.inject.Inject;
+ class DistanceClassifier extends FalsingClassifier {
+ 
+     private static final float HORIZONTAL_FLING_THRESHOLD_DISTANCE_IN = 1;
+-    private static final float VERTICAL_FLING_THRESHOLD_DISTANCE_IN = 1.5f;
++    // AshFall: 0.75in instead of the AOSP 1.5in. The RP5 is a 5.5" landscape
++    // handheld: at its reported 318.976 ydpi the stock threshold is 478px, i.e.
++    // 44% of the 1080px-tall panel, while a normal thumb swipe on the lock screen
++    // covers 190-430px (see docs/ui.md). 0.75in (239px, 22% of the height) is
++    // the same proportion a portrait phone gets from 1.5in. The in-pocket
++    // long-swipe requirement in VERTICAL_SWIPE_THRESHOLD_DISTANCE_IN is
++    // deliberately left at 3in, so a covered proximity sensor still demands a
++    // ~80% of the screen height swipe before falsing is bypassed.
++    private static final float VERTICAL_FLING_THRESHOLD_DISTANCE_IN = 0.75f;
+     private static final float HORIZONTAL_SWIPE_THRESHOLD_DISTANCE_IN = 3;
+     private static final float VERTICAL_SWIPE_THRESHOLD_DISTANCE_IN = 3;
+     private static final float VELOCITY_TO_DISTANCE = 30f;
+diff --git a/frameworks/base/packages/SystemUI/src/com/android/systemui/classifier/ZigZagClassifier.java b/frameworks/base/packages/SystemUI/src/com/android/systemui/classifier/ZigZagClassifier.java
+index 7d1f65d..35c1b2e 100644
+--- a/frameworks/base/packages/SystemUI/src/com/android/systemui/classifier/ZigZagClassifier.java
++++ b/frameworks/base/packages/SystemUI/src/com/android/systemui/classifier/ZigZagClassifier.java
+@@ -48,7 +48,13 @@ class ZigZagClassifier extends FalsingClassifier {
+     // most swipes will follow somewhat of a 'C' or 'S' shape, we allow more deviance along the
+     // `SECONDARY` axis.
+     private static final float MAX_X_PRIMARY_DEVIANCE = .05f;
+-    private static final float MAX_Y_PRIMARY_DEVIANCE = .15f;
++    // AshFall: allow 30% instead of 15% of the gesture length to wander along the
++    // primary axis. A short (~250px) thumb swipe on the 5.5" landscape RP5 panel
++    // naturally arcs: recorded lock-screen swipes were rejected with
++    // devianceY=68px against a 36.9px allowance (see docs/ui.md). The allowance
++    // scales with the gesture, and the pocket-touch protection is the proximity
++    // based long-swipe requirement in DistanceClassifier, not this classifier.
++    private static final float MAX_Y_PRIMARY_DEVIANCE = .3f;
+     private static final float MAX_X_SECONDARY_DEVIANCE = .4f;
+     private static final float MAX_Y_SECONDARY_DEVIANCE = .3f;
+ 
