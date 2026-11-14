@@ -80,6 +80,7 @@ public class LightingDialog extends Dialog {
     public LightingDialog(@NonNull Context context, Listener listener) {
         super(context, R.style.Theme_AshFall_QsDialog);
         mListener = listener;
+        setCanceledOnTouchOutside(true);
     }
 
     @Override
@@ -89,8 +90,10 @@ public class LightingDialog extends Dialog {
         setContentView(R.layout.dialog_lighting);
         final Window window = getWindow();
         if (window != null) {
-            window.setLayout(Ui.dp(getContext(), 480), WindowManager.LayoutParams.WRAP_CONTENT);
-            window.setBackgroundDrawableResource(R.drawable.bg_dialog);
+            window.addFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND);
+            window.clearFlags(WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE);
+            Ui.fitDialog(window, findViewById(R.id.qs_lighting_root),
+                    findViewById(R.id.qs_lighting_scroll), 480);
         }
 
         mSwitch = findViewById(R.id.qs_lighting_switch);

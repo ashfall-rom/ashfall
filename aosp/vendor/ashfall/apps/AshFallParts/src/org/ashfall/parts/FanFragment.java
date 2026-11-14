@@ -16,10 +16,12 @@
 
 package org.ashfall.parts;
 
+import android.app.AlertDialog;
 import android.content.Intent;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
+import android.widget.Toast;
 
 import androidx.preference.Preference;
 import androidx.preference.PreferenceCategory;
@@ -28,12 +30,14 @@ import androidx.preference.PreferenceScreen;
 
 import org.ashfall.parts.hw.Curve;
 import org.ashfall.parts.hw.Fan;
+import org.ashfall.parts.hw.Perf;
 import org.ashfall.parts.hw.Preset;
 import org.ashfall.parts.hw.PresetStore;
 import org.ashfall.parts.ui.MainSwitchPreference;
 import org.ashfall.parts.ui.PresetPreference;
 import org.ashfall.parts.ui.SliderPreference;
 import org.ashfall.parts.ui.StatusPreference;
+import org.ashfall.parts.ui.TogglePreference;
 import org.ashfall.parts.ui.Ui;
 
 import java.util.List;
@@ -41,8 +45,16 @@ import java.util.List;
 /**
  * The Fan page.  Every change is written to the {@code persist.ashfall.fan.*}
  * properties immediately; the daemon applies it within a second.
+ *
+ * <p>While the page is visible it sets {@code ashfall.ui.fan_live=1} so the
+ * daemon publishes status every 500 ms instead of every 2 s.
  */
 public class FanFragment extends PreferenceFragmentCompat {
+
+    /** The daemon's live status period while a fan UI is visible. */
+    private static final long LIVE_TICK_MS = 500;
+    /** Number of taps on the version row that reveal the advanced settings. */
+    private static final int ADVANCED_TAPS = 7;
 
     private PresetStore mStore;
     private MainSwitchPreference mSwitch;
@@ -51,48 +63,55 @@ public class FanFragment extends PreferenceFragmentCompat {
     private Preference mEditRow;
     private Preference mCurveRow;
     private SliderPreference mManual;
-    private SliderPreference mSafety;
+    private TogglePreference mKick;
+    private TogglePreference mScreenOff;
+    private TogglePreference mThrottle;
+    private TogglePreference mPermanent;
+    private PreferenceCategory mAdvancedCategory;
+    private PreferenceScreen mScreen;
+    private int mVersionTaps;
     private boolean mRebuilding;
 
     private final Handler mHandler = new Handler(Looper.getMainLooper());
     private final Runnable mTick = new Runnable() {
         @Override
         public void run() {
+            Fan.refreshLive();
             updateStatus();
             updateLiveSummaries();
-            mHandler.postDelayed(this, 2000);
+            mHandler.postDelayed(this, LIVE_TICK_MS);
         }
     };
     private boolean mFirstResume = true;
+    private AlertDialog mThrottleDialog;
 
     @Override
     public void onCreatePreferences(Bundle savedInstanceState, String rootKey) {
         mStore = PresetStore.get(requireContext());
-        final PreferenceScreen screen = getPreferenceManager().createPreferenceScreen(
-                requireContext());
+        mScreen = getPreferenceManager().createPreferenceScreen(requireContext());
 
         mSwitch = new MainSwitchPreference(requireContext());
         mSwitch.setKey("fan_switch");
         mSwitch.setTitle(R.string.fan_switch_title);
         mSwitch.setCheckedChangeListener((preference, checked) -> onSwitchChanged(checked));
-        screen.addPreference(mSwitch);
+        mScreen.addPreference(mSwitch);
 
         final PreferenceCategory statusCategory = new PreferenceCategory(requireContext());
         statusCategory.setTitle(R.string.fan_status_title);
-        screen.addPreference(statusCategory);
+        mScreen.addPreference(statusCategory);
         mStatus = new StatusPreference(requireContext());
         mStatus.setKey("fan_status");
         statusCategory.addPreference(mStatus);
 
         mPresetCategory = new PreferenceCategory(requireContext());
         mPresetCategory.setTitle(R.string.fan_presets_category);
-        screen.addPreference(mPresetCategory);
+        mScreen.addPreference(mPresetCategory);
 
         mEditRow = new Preference(requireContext());
         mEditRow.setKey("edit_presets");
         mEditRow.setTitle(R.string.fan_preset_edit_title);
         mEditRow.setSummary(R.string.fan_preset_edit_summary);
-        mEditRow.setIcon(R.drawable.ic_fan);
+        mEditRow.setIcon(R.drawable.ic_ashfall_fan);
         mEditRow.setOnPreferenceClickListener(preference -> {
             startActivity(new Intent(requireContext(), PresetActivity.class));
             return true;
@@ -101,7 +120,7 @@ public class FanFragment extends PreferenceFragmentCompat {
         mCurveRow = new Preference(requireContext());
         mCurveRow.setKey("edit_curve");
         mCurveRow.setTitle(R.string.fan_curve_title);
-        mCurveRow.setIcon(R.drawable.ic_fan);
+        mCurveRow.setIcon(R.drawable.ic_ashfall_fan);
         mCurveRow.setOnPreferenceClickListener(preference -> {
             final Preset target = curveTarget();
             final Intent intent = new Intent(requireContext(), CurveActivity.class);
@@ -112,7 +131,7 @@ public class FanFragment extends PreferenceFragmentCompat {
 
         final PreferenceCategory manualCategory = new PreferenceCategory(requireContext());
         manualCategory.setTitle(R.string.fan_manual_category);
-        screen.addPreference(manualCategory);
+        mScreen.addPreference(manualCategory);
         mManual = new SliderPreference(requireContext());
         mManual.setKey("manual_pct");
         mManual.setTitle(R.string.fan_manual_title);
@@ -120,42 +139,89 @@ public class FanFragment extends PreferenceFragmentCompat {
         mManual.setValueFormat(getString(R.string.percent_value_format));
         mManual.setValueChangedListener((preference, value) -> {
             Fan.setManualPct(value);
+            syncActiveManual(value);
             updateLiveSummaries();
         });
         manualCategory.addPreference(mManual);
 
-        final PreferenceCategory safetyCategory = new PreferenceCategory(requireContext());
-        safetyCategory.setTitle(R.string.fan_safety_category);
-        screen.addPreference(safetyCategory);
-        mSafety = new SliderPreference(requireContext());
-        mSafety.setKey("safety_c");
-        mSafety.setTitle(R.string.fan_safety_title);
-        mSafety.setRange(Fan.MIN_SAFETY_C, Fan.MAX_SAFETY_C);
-        mSafety.setValueFormat(getString(R.string.temperature_value_format));
-        mSafety.setValue(Fan.safetyC());
-        mSafety.setValueChangedListener((preference, value) -> {
-            Fan.setSafetyC(value);
-            updateLiveSummaries();
+        final PreferenceCategory behaviour = new PreferenceCategory(requireContext());
+        behaviour.setTitle(R.string.fan_behaviour_category);
+        mScreen.addPreference(behaviour);
+
+        mKick = new TogglePreference(requireContext());
+        mKick.setKey("fan_kick");
+        mKick.setTitle(R.string.fan_kick_title);
+        mKick.setSummary(R.string.fan_kick_summary);
+        mKick.setOnToggleRequestedListener((preference, desired) -> {
+            Fan.setKick(desired);
+            refreshToggles();
         });
-        safetyCategory.addPreference(mSafety);
+        behaviour.addPreference(mKick);
+
+        mScreenOff = new TogglePreference(requireContext());
+        mScreenOff.setKey("fan_screen_off");
+        mScreenOff.setTitle(R.string.fan_screen_off_title);
+        mScreenOff.setSummary(R.string.fan_screen_off_summary);
+        mScreenOff.setOnToggleRequestedListener((preference, desired) -> {
+            Fan.setOffWhileScreenOff(desired);
+            refreshToggles();
+        });
+        behaviour.addPreference(mScreenOff);
+
+        final PreferenceCategory performance = new PreferenceCategory(requireContext());
+        performance.setTitle(R.string.fan_performance_category);
+        mScreen.addPreference(performance);
+
+        mThrottle = new TogglePreference(requireContext());
+        mThrottle.setKey("fan_throttle_override");
+        mThrottle.setTitle(R.string.fan_throttle_title);
+        mThrottle.setOnToggleRequestedListener((preference, desired) -> {
+            if (!desired) {
+                Perf.setOverride(false);
+                refreshToggles();
+                return;
+            }
+            confirmThrottleOverride();
+        });
+        performance.addPreference(mThrottle);
+
+        // Always build the hidden category (just above the version row) and
+        // only make it visible once it has been unlocked, so its position is
+        // identical whether it was unlocked now or in an earlier visit.
+        addAdvancedCategory();
+        setAdvancedVisible(Prefs.advancedUnlocked(requireContext()));
+
+        final Preference versionRow = new Preference(requireContext());
+        versionRow.setKey("fan_version");
+        versionRow.setTitle(R.string.fan_version_title);
+        versionRow.setSummary(getString(R.string.fan_version_summary,
+                Ui.appVersion(requireContext())));
+        versionRow.setOnPreferenceClickListener(preference -> {
+            onVersionTapped();
+            return true;
+        });
+        mScreen.addPreference(versionRow);
 
         final Preference footer = new Preference(requireContext());
         footer.setKey("fan_footer");
         footer.setSelectable(false);
         footer.setSummary(R.string.footer_fan);
-        screen.addPreference(footer);
+        mScreen.addPreference(footer);
 
         // Populate the (dynamic) preset rows before the screen is attached, so
         // the adapter is built from a stable hierarchy.  Later changes are
         // rebuilt only when returning from the preset editor (see onResume).
         rebuildPresets();
-        setPreferenceScreen(screen);
+        setPreferenceScreen(mScreen);
+        refreshToggles();
         updateStatus();
+        updateLiveSummaries();
     }
 
     @Override
     public void onResume() {
         super.onResume();
+        Fan.setLive(true);
         if (mFirstResume) {
             mFirstResume = false;
         } else if (getListView() != null) {
@@ -164,6 +230,8 @@ public class FanFragment extends PreferenceFragmentCompat {
             getListView().post(this::rebuildPresets);
         }
         updateStatus();
+        updateLiveSummaries();
+        refreshToggles();
         mHandler.removeCallbacks(mTick);
         mHandler.post(mTick);
     }
@@ -172,6 +240,17 @@ public class FanFragment extends PreferenceFragmentCompat {
     public void onPause() {
         super.onPause();
         mHandler.removeCallbacks(mTick);
+        Fan.setLive(false);
+    }
+
+    @Override
+    public void onDestroyView() {
+        mHandler.removeCallbacks(mTick);
+        if (mThrottleDialog != null) {
+            mThrottleDialog.dismiss();
+            mThrottleDialog = null;
+        }
+        super.onDestroyView();
     }
 
     private void onSwitchChanged(boolean checked) {
@@ -251,6 +330,98 @@ public class FanFragment extends PreferenceFragmentCompat {
         }
     }
 
+    /** Keeps the active Manual preset's stored output in step with the slider. */
+    private void syncActiveManual(int value) {
+        final Preset active = Fan.activePreset(mStore);
+        if (active != null && Preset.MODE_MANUAL.equals(active.mode) && active.manualPct != value) {
+            active.manualPct = value;
+            mStore.save(active);
+        }
+    }
+
+    private void refreshToggles() {
+        if (mKick == null) {
+            return;
+        }
+        mKick.setChecked(Fan.kick());
+        mScreenOff.setChecked(Fan.offWhileScreenOff());
+        mThrottle.setChecked(Perf.overrideActive());
+        mThrottle.setSummaryText(Perf.permanent()
+                ? getString(R.string.fan_throttle_summary_permanent)
+                : getString(Perf.overrideActive()
+                        ? R.string.fan_throttle_summary_on
+                        : R.string.fan_throttle_summary_off));
+        if (mPermanent != null) {
+            mPermanent.setChecked(Perf.permanent());
+        }
+    }
+
+    private void confirmThrottleOverride() {
+        if (!isAdded()) {
+            return;
+        }
+        mThrottleDialog = new AlertDialog.Builder(requireContext())
+                .setTitle(R.string.fan_throttle_confirm_title)
+                .setMessage(R.string.fan_throttle_confirm_body)
+                .setNegativeButton(R.string.cancel, null)
+                .setPositiveButton(R.string.fan_throttle_confirm_enable, (dialog, which) -> {
+                    Perf.setOverride(true);
+                    if (isAdded()) {
+                        refreshToggles();
+                    }
+                })
+                .create();
+        mThrottleDialog.show();
+    }
+
+    private void addAdvancedCategory() {
+        if (mAdvancedCategory != null || mScreen == null) {
+            return;
+        }
+        mAdvancedCategory = new PreferenceCategory(requireContext());
+        mAdvancedCategory.setTitle(R.string.fan_advanced_category);
+        mPermanent = new TogglePreference(requireContext());
+        mPermanent.setKey("fan_throttle_permanent");
+        mPermanent.setTitle(R.string.fan_advanced_permanent_title);
+        mPermanent.setSummary(R.string.fan_advanced_permanent_summary);
+        mPermanent.setOnToggleRequestedListener((preference, desired) -> {
+            Perf.setPermanent(desired);
+            if (desired) {
+                // The hidden switch is also an immediate override, otherwise
+                // "apply at every boot" would do nothing until the next boot.
+                Perf.setOverride(true);
+            }
+            refreshToggles();
+        });
+        mAdvancedCategory.addPreference(mPermanent);
+        mScreen.addPreference(mAdvancedCategory);
+        refreshToggles();
+    }
+
+    private void onVersionTapped() {
+        if (Prefs.advancedUnlocked(requireContext())) {
+            return;
+        }
+        mVersionTaps++;
+        if (mVersionTaps < ADVANCED_TAPS) {
+            return;
+        }
+        Prefs.setAdvancedUnlocked(requireContext(), true);
+        setAdvancedVisible(true);
+        Toast.makeText(requireContext(), R.string.fan_advanced_unlocked, Toast.LENGTH_SHORT)
+                .show();
+    }
+
+    /** androidx flattens groups into rows, so hide both the header and the row. */
+    private void setAdvancedVisible(boolean visible) {
+        if (mAdvancedCategory != null) {
+            mAdvancedCategory.setVisible(visible);
+        }
+        if (mPermanent != null) {
+            mPermanent.setVisible(visible);
+        }
+    }
+
     private void updateLiveSummaries() {
         if (mSwitch == null) {
             return;
@@ -269,10 +440,6 @@ public class FanFragment extends PreferenceFragmentCompat {
             final boolean manual = Preset.MODE_MANUAL.equals(Fan.mode());
             mManual.setEnabled(manual);
             mManual.setSummaryText(manual ? null : getString(R.string.fan_manual_disabled));
-        }
-        if (mSafety != null) {
-            mSafety.setValue(Fan.safetyC());
-            mSafety.setSummaryText(getString(R.string.fan_safety_summary, Fan.safetyC()));
         }
         if (mCurveRow != null) {
             final Preset target = curveTarget();

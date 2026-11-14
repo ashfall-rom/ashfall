@@ -25,5 +25,11 @@
         <item name="android:clipToPadding">false</item>
         <item name="android:clipChildren">false</item>
         <item name="android:listPreferredItemHeight">72dip</item>
+        <!-- Use exactly the Settings page background instead of the device
+             default window background (which is pure black in the dark theme
+             and made these pages look different from Settings).  Deriving it
+             from colorBackground also follows LineageOS' pure-black system
+             theme, because that is the attribute the platform theme changes. -->
+        <item name="android:windowBackground">?android:attr/colorBackground</item>
     </style>
 </resources>

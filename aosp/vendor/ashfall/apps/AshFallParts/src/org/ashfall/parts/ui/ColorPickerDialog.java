@@ -24,7 +24,6 @@ import android.view.View;
 import android.view.ViewGroup;
 import android.view.Window;
 import android.view.WindowManager;
-import android.widget.Button;
 import android.widget.LinearLayout;
 import android.widget.SeekBar;
 import android.widget.TextView;
@@ -36,7 +35,13 @@ import org.ashfall.parts.R;
 
 import java.util.Locale;
 
-/** Preset swatches + a hue/saturation/value picker, in a Settings-styled dialog. */
+/**
+ * Preset swatches + a hue/saturation/value picker, in a Settings-styled
+ * dialog.  Every change is applied live ({@code onColor}); the dialog only has
+ * a Done button, so no "Set" step is needed.  The window is dimmed and focus
+ * stays inside the dialog, which also keeps the gamepad from moving focus to
+ * the page behind it.
+ */
 public class ColorPickerDialog extends Dialog {
 
     public interface OnColorSelected {
@@ -54,6 +59,7 @@ public class ColorPickerDialog extends Dialog {
         super(context, R.style.Theme_AshFall_Dialog);
         mListener = listener;
         mColor = initialColor;
+        setCanceledOnTouchOutside(true);
     }
 
     @Override
@@ -63,8 +69,10 @@ public class ColorPickerDialog extends Dialog {
         setContentView(R.layout.dialog_colour_picker);
         final Window window = getWindow();
         if (window != null) {
-            window.setLayout(Ui.dp(getContext(), 480), WindowManager.LayoutParams.WRAP_CONTENT);
-            window.setBackgroundDrawableResource(R.drawable.bg_dialog);
+            window.addFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND);
+            window.clearFlags(WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE);
+            Ui.fitDialog(window, findViewById(R.id.picker_root),
+                    findViewById(R.id.picker_scroll), 480);
         }
 
         mPicker = findViewById(R.id.picker_square);
@@ -72,10 +80,7 @@ public class ColorPickerDialog extends Dialog {
         mHueValue = findViewById(R.id.picker_hue_value);
 
         mPicker.setColor(mColor);
-        mPicker.setListener(argb -> {
-            mColor = argb;
-            updateHueLabel();
-        });
+        mPicker.setListener(argb -> apply(argb));
 
         final LinearLayout swatches = findViewById(R.id.picker_swatches);
         final int size = Ui.dp(getContext(), 36);
@@ -93,6 +98,7 @@ public class ColorPickerDialog extends Dialog {
                 mPicker.setColor(color);
                 mHue.setProgress(Math.round(getHue(color)));
                 updateHueLabel();
+                apply(color);
             });
             swatches.addView(swatch);
         }
@@ -110,6 +116,7 @@ public class ColorPickerDialog extends Dialog {
                 mPicker.setHue(progress);
                 mColor = mPicker.getColor();
                 updateHueLabel();
+                apply(mColor);
             }
 
             @Override
@@ -122,17 +129,16 @@ public class ColorPickerDialog extends Dialog {
         });
         updateHueLabel();
 
-        final Button cancel = findViewById(R.id.picker_cancel);
-        final Button set = findViewById(R.id.picker_set);
-        cancel.setOnClickListener(view -> dismiss());
-        set.setOnClickListener(view -> {
-            if (mListener != null) {
-                mListener.onColor(mColor);
-            }
-            dismiss();
-        });
-
+        findViewById(R.id.picker_done).setOnClickListener(view -> dismiss());
         mPicker.requestFocus();
+    }
+
+    private void apply(int argb) {
+        mColor = argb;
+        updateHueLabel();
+        if (mListener != null) {
+            mListener.onColor(argb);
+        }
     }
 
     private void updateHueLabel() {

@@ -209,6 +209,12 @@ public class CurveEditorView extends View {
             case MotionEvent.ACTION_DOWN:
                 mDragging = findPoint(event.getX(), event.getY());
                 if (mDragging >= 0) {
+                    final android.view.ViewParent parent = getParent();
+                    if (parent != null) {
+                        // The page is scrollable; a point drag must not turn
+                        // into a page scroll.
+                        parent.requestDisallowInterceptTouchEvent(true);
+                    }
                     mSelected = mDragging;
                     dispatchSelection();
                     requestFocus();
@@ -226,6 +232,10 @@ public class CurveEditorView extends View {
             case MotionEvent.ACTION_CANCEL:
                 if (mDragging >= 0) {
                     mDragging = -1;
+                    final android.view.ViewParent parent = getParent();
+                    if (parent != null) {
+                        parent.requestDisallowInterceptTouchEvent(false);
+                    }
                     return true;
                 }
                 break;
@@ -265,9 +275,18 @@ public class CurveEditorView extends View {
                 moveSelected(1, 0);
                 return true;
             case KeyEvent.KEYCODE_DPAD_UP:
+                if (!canMovePct(1)) {
+                    // No point can be raised further: let the framework move
+                    // the focus to the controls below the graph (the stress
+                    // test sliders), so the page stays gamepad-navigable.
+                    return super.onKeyDown(keyCode, event);
+                }
                 moveSelected(0, 1);
                 return true;
             case KeyEvent.KEYCODE_DPAD_DOWN:
+                if (!canMovePct(-1)) {
+                    return super.onKeyDown(keyCode, event);
+                }
                 moveSelected(0, -1);
                 return true;
             case KeyEvent.KEYCODE_BUTTON_L1:
@@ -290,6 +309,15 @@ public class CurveEditorView extends View {
             default:
                 return super.onKeyDown(keyCode, event);
         }
+    }
+
+    /** Whether the selected point's output can still change in {@code delta}. */
+    private boolean canMovePct(int delta) {
+        if (mCurve.size() == 0) {
+            return false;
+        }
+        final int next = mCurve.pct(mSelected) + delta;
+        return next >= 0 && next <= 100;
     }
 
     private void moveSelected(int deltaTemp, int deltaPct) {

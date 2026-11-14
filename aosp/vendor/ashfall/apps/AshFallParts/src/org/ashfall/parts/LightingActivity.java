@@ -24,7 +24,6 @@ import androidx.preference.Preference;
 import androidx.preference.PreferenceCategory;
 import androidx.preference.PreferenceFragmentCompat;
 import androidx.preference.PreferenceScreen;
-import androidx.preference.SwitchPreferenceCompat;
 
 import org.ashfall.parts.hw.Led;
 import org.ashfall.parts.ui.ColorPickerDialog;
@@ -58,7 +57,6 @@ public class LightingActivity extends PartsActivity {
         private SliderPreference mBrightness;
         private ListPreference mEffect;
         private SliderPreference mSpeed;
-        private SwitchPreferenceCompat mScreenOff;
 
         @Override
         public void onCreatePreferences(Bundle savedInstanceState, String rootKey) {
@@ -97,11 +95,13 @@ public class LightingActivity extends PartsActivity {
             mColour = new ColorPreference(requireContext());
             mColour.setKey("lighting_colour");
             mColour.setTitle(R.string.lighting_colour_title);
-            mColour.setIcon(R.drawable.ic_led);
+            mColour.setIcon(R.drawable.ic_ashfall_lighting);
             mColour.setOnPreferenceClickListener(preference -> {
                 final int target = Prefs.ledTarget(requireContext());
                 new ColorPickerDialog(requireContext(), mColour.getColor(),
                         color -> {
+                            // Live: every hue/square/swatch change is applied
+                            // immediately, there is no Set step.
                             Led.setColor(target, Led.argbToColor(color));
                             refresh();
                         }).show();
@@ -157,19 +157,6 @@ public class LightingActivity extends PartsActivity {
                 refresh();
             });
             effectCategory.addPreference(mSpeed);
-
-            mScreenOff = new SwitchPreferenceCompat(requireContext());
-            mScreenOff.setKey("lighting_screen_off");
-            mScreenOff.setPersistent(false);
-            mScreenOff.setTitle(R.string.lighting_screen_off_title);
-            mScreenOff.setSummary(R.string.lighting_screen_off_summary);
-            mScreenOff.setChecked(Led.screenOffOff());
-            mScreenOff.setOnPreferenceChangeListener((preference, newValue) -> {
-                Led.setScreenOffOff((Boolean) newValue);
-                refresh();
-                return true;
-            });
-            effectCategory.addPreference(mScreenOff);
 
             final Preference footer = new Preference(requireContext());
             footer.setKey("lighting_footer");
@@ -233,8 +220,6 @@ public class LightingActivity extends PartsActivity {
             final boolean animated = Led.MODE_BREATHING.equals(effect)
                     || Led.MODE_RAINBOW.equals(effect);
             mSpeed.setEnabled(animated);
-
-            mScreenOff.setChecked(Led.screenOffOff());
         }
     }
 }

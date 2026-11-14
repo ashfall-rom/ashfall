@@ -18,7 +18,7 @@
     <string name="app_name">AshFall Parts</string>
 
     <!-- Settings homepage entry -->
-    <string name="handheld_title">Handheld</string>
+    <string name="handheld_title">AshFall settings</string>
     <string name="handheld_summary">Fan, lighting, controller</string>
 
     <!-- Pages -->
@@ -67,12 +67,12 @@
     <!-- Fan -->
     <string name="fan_switch_title">Fan</string>
     <string name="fan_switch_summary_on">On, %1$s</string>
-    <string name="fan_switch_summary_off">Off (safety override still applies)</string>
+    <string name="fan_switch_summary_off">Off</string>
     <string name="fan_status_title">Status</string>
     <string name="fan_status_temperature">Temperature</string>
     <string name="fan_status_output">Output</string>
     <string name="fan_status_speed">Fan speed</string>
-    <string name="fan_status_safety">Safety override — fan at 100%%</string>
+    <string name="fan_status_safety">Last-resort protection — fan at 100 %</string>
     <string name="fan_status_unavailable">The fan daemon is not responding.</string>
     <string name="fan_presets_category">Preset</string>
     <string name="fan_preset_builtin">Built-in</string>
@@ -91,14 +91,31 @@
     <string name="fan_manual_category">Manual output</string>
     <string name="fan_manual_title">Fan output</string>
     <string name="fan_manual_summary">%1$d%%</string>
-    <string name="fan_manual_disabled">Choose the Manual preset to use this</string>
-    <string name="fan_safety_category">Safety</string>
-    <string name="fan_safety_title">Safety threshold</string>
-    <string name="fan_safety_summary">At or above %1$d °C the fan runs at 100%%</string>
+    <string name="fan_manual_disabled">Select the Manual preset to use this</string>
+    <string name="fan_behaviour_category">Behaviour</string>
+    <string name="fan_kick_title">Spin-up kick</string>
+    <string name="fan_kick_summary">Give the fan a short burst when it starts, so it spins up reliably</string>
+    <string name="fan_screen_off_title">Fan off while the screen is off</string>
+    <string name="fan_screen_off_summary">Resume with a kick when the screen comes back on</string>
+    <string name="fan_performance_category">Performance</string>
+    <string name="fan_throttle_title">Override throttling</string>
+    <string name="fan_throttle_summary_on">Software clock throttling is disabled until reboot</string>
+    <string name="fan_throttle_summary_off">Keep the kernel\'s thermal clock limits</string>
+    <string name="fan_throttle_summary_permanent">Applied at every boot</string>
+    <string name="fan_throttle_confirm_title">Override throttling?</string>
+    <string name="fan_throttle_confirm_body">This disables the kernel\'s software clock throttling (thermal cooling devices) so the CPU and GPU stay at full clock while the handheld heats up. Hardware limits stay in place, but sustained heavy use can make the device dangerously hot, drain the battery and shorten its life. The override is forgotten at the next reboot.</string>
+    <string name="fan_throttle_confirm_enable">Enable</string>
+    <string name="fan_advanced_category">Advanced</string>
+    <string name="fan_advanced_permanent_title">Keep throttling override after reboot</string>
+    <string name="fan_advanced_permanent_summary">Apply the throttling override at every boot. Dangerous if left on.</string>
+    <string name="fan_version_title">AshFall settings version</string>
+    <string name="fan_version_summary">%1$s</string>
+    <string name="fan_advanced_unlocked">Advanced settings unlocked</string>
     <string name="fan_off_preset">Off</string>
     <string name="fan_quiet_preset">Quiet</string>
     <string name="fan_balanced_preset">Balanced</string>
     <string name="fan_max_preset">Max</string>
+    <string name="fan_manual_preset">Manual</string>
     <string name="fan_smart_preset">Smart (default)</string>
     <string name="fan_mode_off">Off</string>
     <string name="fan_mode_quiet">Quiet</string>
@@ -136,6 +153,12 @@
     <string name="curve_too_few">A curve needs at least 2 points</string>
     <string name="curve_live_marker">Current temperature %1$d °C → %2$d%%</string>
     <string name="curve_apply">Save curve</string>
+    <string name="curve_stress_title">Stress test</string>
+    <string name="curve_stress_hint">Loads the CPU and GPU so the curve can be watched under heat. Stops when you leave this page or after 10 minutes.</string>
+    <string name="curve_stress_cpu">CPU load</string>
+    <string name="curve_stress_gpu">GPU load</string>
+    <string name="curve_stress_running">Running — stops automatically in %1$s</string>
+    <string name="curve_stress_gpu_unavailable">GPU load is not available on this device; the CPU load is still running.</string>
 
     <!-- Lighting -->
     <string name="lighting_switch_title">Lighting</string>
@@ -159,8 +182,6 @@
     <string name="lighting_speed_title">Effect speed</string>
     <string name="lighting_speed_summary">%1$d of 10</string>
     <string name="lighting_speed_summary_format">%d / 10</string>
-    <string name="lighting_screen_off_title">Turn off while the screen is off</string>
-    <string name="lighting_screen_off_summary">The sticks stay dark when the panel is off</string>
     <string name="lighting_dialog_custom">Custom colour…</string>
     <string name="lighting_hue">Hue</string>
     <string name="lighting_saturation">Saturation</string>
@@ -245,7 +266,7 @@
     <string name="tile_off">Off</string>
 
     <!-- Placeholder/footers -->
-    <string name="footer_fan">The daemon samples the hottest CPU/GPU sensor every 2 seconds.  The safety override runs the fan at 100%% in every mode.</string>
+    <string name="footer_fan">The daemon samples the hottest CPU/GPU sensor every 2 seconds (every 0.5 seconds while this page is open).  A fixed last-resort rule still runs the fan at 100 % at 90 °C.</string>
     <string name="footer_controller">Deadzones are applied by ashfall-rp5-input after calibration, so every app and emulator sees them.</string>
     <string name="footer_lighting">Effect changes are visible immediately.  Brightness 0 turns the rings off without changing the colour.</string>
 </resources>

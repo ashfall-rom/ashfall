@@ -34,6 +34,7 @@ public final class Prefs {
     private static final String KEY_LAST_PRESET = "fan_last_preset";
     private static final String KEY_LED_LAST_MODE = "led_last_mode";
     private static final String KEY_LED_TARGET = "led_target";
+    private static final String KEY_ADVANCED = "advanced_unlocked";
 
     private Prefs() {
     }
@@ -73,5 +74,14 @@ public final class Prefs {
         } else {
             Led.setSync(false);
         }
+    }
+
+    /** The hidden advanced section stays unlocked once it has been revealed. */
+    public static boolean advancedUnlocked(Context context) {
+        return prefs(context).getBoolean(KEY_ADVANCED, false);
+    }
+
+    public static void setAdvancedUnlocked(Context context, boolean unlocked) {
+        prefs(context).edit().putBoolean(KEY_ADVANCED, unlocked).apply();
     }
 }

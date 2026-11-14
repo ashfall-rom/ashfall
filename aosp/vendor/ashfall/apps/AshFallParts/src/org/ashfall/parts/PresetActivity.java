@@ -64,7 +64,7 @@ public class PresetActivity extends PartsActivity {
             final Preference add = new Preference(requireContext());
             add.setKey("preset_add");
             add.setTitle(R.string.fan_new_preset);
-            add.setIcon(R.drawable.ic_fan);
+            add.setIcon(R.drawable.ic_ashfall_fan);
             add.setOnPreferenceClickListener(preference -> {
                 final Preset preset = mStore.add(
                         mStore.newPresetName(requireContext()), Preset.MODE_SMART,

@@ -1,7 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- Colour picker: preset swatches, a saturation/value square driven by touch
-     or the D-pad, and a hue slider. -->
+     or the D-pad, and a hue slider.  Live: changes apply as they happen, so the
+     only action is Done.  The controls scroll, the footer never does. -->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/picker_root"
     android:layout_width="@dimen/dialog_width"
     android:layout_height="wrap_content"
     android:orientation="vertical"
@@ -16,74 +18,74 @@
         android:layout_height="wrap_content"
         android:text="@string/lighting_colour_title" />
 
-    <TextView
-        style="@style/AshFallSection"
+    <ScrollView
+        android:id="@+id/picker_scroll"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:layout_marginTop="12dp"
-        android:text="@string/lighting_presets_colour" />
+        android:layout_marginTop="8dp">
 
-    <LinearLayout
-        android:id="@+id/picker_swatches"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:layout_marginTop="8dp"
-        android:orientation="horizontal" />
-
-    <org.ashfall.parts.ui.ColorPickerView
-        android:id="@+id/picker_square"
-        android:layout_width="match_parent"
-        android:layout_height="220dp"
-        android:layout_marginTop="16dp"
-        android:focusable="true"
-        android:focusableInTouchMode="true" />
-
-    <LinearLayout
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:layout_marginTop="12dp"
-        android:orientation="horizontal">
-
-        <TextView
-            style="@style/AshFallSection"
-            android:layout_width="0dp"
+        <LinearLayout
+            android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_weight="1"
-            android:text="@string/lighting_hue" />
+            android:orientation="vertical">
 
-        <TextView
-            android:id="@+id/picker_hue_value"
-            style="@style/AshFallDialogPrimary"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content" />
-    </LinearLayout>
+            <TextView
+                style="@style/AshFallSection"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="4dp"
+                android:text="@string/lighting_presets_colour" />
 
-    <SeekBar
-        android:id="@+id/picker_hue"
+            <LinearLayout
+                android:id="@+id/picker_swatches"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:orientation="horizontal" />
+
+            <org.ashfall.parts.ui.ColorPickerView
+                android:id="@+id/picker_square"
+                android:layout_width="match_parent"
+                android:layout_height="200dp"
+                android:layout_marginTop="12dp"
+                android:focusable="true"
+                android:focusableInTouchMode="true" />
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="12dp"
+                android:orientation="horizontal">
+
+                <TextView
+                    style="@style/AshFallSection"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="@string/lighting_hue" />
+
+                <TextView
+                    android:id="@+id/picker_hue_value"
+                    style="@style/AshFallDialogPrimary"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content" />
+            </LinearLayout>
+
+            <SeekBar
+                android:id="@+id/picker_hue"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:max="360" />
+        </LinearLayout>
+    </ScrollView>
+
+    <Button
+        android:id="@+id/picker_done"
+        style="?android:attr/borderlessButtonStyle"
         android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:max="360" />
-
-    <LinearLayout
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:gravity="end"
-        android:orientation="horizontal">
-
-        <Button
-            android:id="@+id/picker_cancel"
-            style="?android:attr/borderlessButtonStyle"
-            android:layout_width="wrap_content"
-            android:layout_height="48dp"
-            android:text="@string/cancel"
-            android:textColor="?android:attr/colorAccent" />
-
-        <Button
-            android:id="@+id/picker_set"
-            style="?android:attr/borderlessButtonStyle"
-            android:layout_width="wrap_content"
-            android:layout_height="48dp"
-            android:text="@string/set"
-            android:textColor="?android:attr/colorAccent" />
-    </LinearLayout>
+        android:layout_height="48dp"
+        android:layout_marginTop="4dp"
+        android:gravity="end|center_vertical"
+        android:text="@string/done"
+        android:textColor="?android:attr/colorAccent" />
 </LinearLayout>

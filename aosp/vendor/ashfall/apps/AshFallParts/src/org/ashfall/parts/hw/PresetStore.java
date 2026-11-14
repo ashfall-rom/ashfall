@@ -49,6 +49,7 @@ public final class PresetStore {
     public static final String ID_QUIET = "builtin.quiet";
     public static final String ID_BALANCED = "builtin.balanced";
     public static final String ID_MAX = "builtin.max";
+    public static final String ID_MANUAL = "builtin.manual";
     public static final String ID_SMART = "builtin.smart";
 
     public static final int MAX_PRESETS = 32;
@@ -252,10 +253,12 @@ public final class PresetStore {
                 return 2;
             case ID_MAX:
                 return 3;
-            case ID_SMART:
+            case ID_MANUAL:
                 return 4;
-            default:
+            case ID_SMART:
                 return 5;
+            default:
+                return 6;
         }
     }
 
@@ -265,6 +268,16 @@ public final class PresetStore {
         ensureBuiltin(ID_QUIET, "Quiet", Preset.MODE_QUIET);
         ensureBuiltin(ID_BALANCED, "Balanced", Preset.MODE_BALANCED);
         ensureBuiltin(ID_MAX, "Maximum", Preset.MODE_MAX);
+        Preset manual = byId(ID_MANUAL);
+        if (manual == null) {
+            manual = Preset.builtin(ID_MANUAL, "Manual", Preset.MODE_MANUAL);
+            manual.manualPct = Fan.DEFAULT_MANUAL_PCT;
+            mPresets.add(manual);
+        }
+        manual.builtin = true;
+        manual.mode = Preset.MODE_MANUAL;
+        manual.name = "Manual";
+        manual.manualPct = clamp(manual.manualPct, 0, 100);
         Preset smart = byId(ID_SMART);
         if (smart == null) {
             smart = Preset.builtin(ID_SMART, "Smart (default)", Preset.MODE_SMART);

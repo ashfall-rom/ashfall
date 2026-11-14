@@ -56,13 +56,14 @@ public class FanDialog extends Dialog {
         @Override
         public void run() {
             updateSubtitle();
-            mHandler.postDelayed(this, 2000);
+            mHandler.postDelayed(this, 500);
         }
     };
 
     public FanDialog(@NonNull Context context, Listener listener) {
         super(context, R.style.Theme_AshFall_QsDialog);
         mListener = listener;
+        setCanceledOnTouchOutside(true);
     }
 
     @Override
@@ -72,8 +73,10 @@ public class FanDialog extends Dialog {
         setContentView(R.layout.dialog_fan);
         final Window window = getWindow();
         if (window != null) {
-            window.setLayout(Ui.dp(getContext(), 440), WindowManager.LayoutParams.WRAP_CONTENT);
-            window.setBackgroundDrawableResource(R.drawable.bg_dialog);
+            window.addFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND);
+            window.clearFlags(WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE);
+            Ui.fitDialog(window, findViewById(R.id.qs_fan_root),
+                    findViewById(R.id.qs_fan_scroll), 440);
         }
 
         mList = findViewById(R.id.qs_fan_list);
@@ -94,14 +97,16 @@ public class FanDialog extends Dialog {
     @Override
     protected void onStart() {
         super.onStart();
+        Fan.setLive(true);
         mHandler.removeCallbacks(mTick);
-        mHandler.postDelayed(mTick, 2000);
+        mHandler.postDelayed(mTick, 500);
     }
 
     @Override
     protected void onStop() {
         super.onStop();
         mHandler.removeCallbacks(mTick);
+        Fan.setLive(false);
     }
 
     private void rebuild() {

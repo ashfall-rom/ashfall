@@ -136,7 +136,7 @@
         <service
             android:name=".qs.FanTileService"
             android:exported="true"
-            android:icon="@drawable/ic_tile_fan"
+            android:icon="@drawable/ic_ashfall_fan"
             android:label="@string/tile_fan"
             android:permission="android.permission.BIND_QUICK_SETTINGS_TILE"
             android:theme="@style/Theme.AshFall.QsDialog">
@@ -149,7 +149,7 @@
         <service
             android:name=".qs.LightingTileService"
             android:exported="true"
-            android:icon="@drawable/ic_tile_lighting"
+            android:icon="@drawable/ic_ashfall_lighting"
             android:label="@string/tile_lighting"
             android:permission="android.permission.BIND_QUICK_SETTINGS_TILE"
             android:theme="@style/Theme.AshFall.QsDialog">

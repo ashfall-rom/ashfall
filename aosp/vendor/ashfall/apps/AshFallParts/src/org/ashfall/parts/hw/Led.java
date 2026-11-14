@@ -33,7 +33,6 @@ public final class Led {
     public static final String SYNC = "persist.ashfall.led.sync";
     public static final String BRIGHTNESS = "persist.ashfall.led.brightness";
     public static final String SPEED = "persist.ashfall.led.speed";
-    public static final String SCREEN_OFF = "persist.ashfall.led.screen_off";
 
     public static final String MODE_OFF = "off";
     public static final String MODE_STATIC = "static";
@@ -130,14 +129,6 @@ public final class Led {
 
     public static void setSpeed(int value) {
         Props.setInt(SPEED, clamp(value, 1, 10));
-    }
-
-    public static boolean screenOffOff() {
-        return !"keep".equals(Props.get(SCREEN_OFF, "off"));
-    }
-
-    public static void setScreenOffOff(boolean off) {
-        Props.set(SCREEN_OFF, off ? "off" : "keep");
     }
 
     public static String sanitizeColor(String rgb, String def) {

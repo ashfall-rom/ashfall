@@ -1,8 +1,9 @@
 # AshFall Parts (`org.ashfall.parts`)
 
 The AshFall hardware tools as a built-in Settings module: one root entry
-**Handheld → Fan / Lighting / Controller**, plus the **Fan** and **Lighting**
-Quick Settings tiles.  No launcher entry, no separate-looking control app.
+**AshFall settings → Fan / Lighting / Controller**, plus the **Fan** and
+**Lighting** Quick Settings tiles.  No launcher entry, no separate-looking
+control app.
 
 - Source: `aosp/vendor/ashfall/apps/AshFallParts/`
 - Module: `AshFallParts` (`android_app`), added to `PRODUCT_PACKAGES` in
@@ -53,12 +54,34 @@ Details that matter:
 
 `HandheldActivity` and the three page activities extend
 `com.android.settingslib.collapsingtoolbar.CollapsingToolbarBaseActivity`, the
-same base class as a Settings sub-page.  The app theme is
+same base class as a Settings sub-page.  The visible root entry is **AshFall
+settings** (`handheld_title`); the class name is only an implementation detail.
+The app theme is
 `Theme.SubSettingsBase.Expressive` on Android 16+ (`res/values-v36/themes.xml`),
 which also installs SettingsLib's preference theme overlay, so the
 androidx.preference rows (title/summary/switch/slider, light and dark) render
 exactly like platform rows.  The fallback theme (pre-36 SDKs and the emulator
 preview) is an AppCompat Settings-like theme.
+
+### 1.1 Icons
+
+The user-selected clean-room icons from `docs/icons/drafts/vectors/` (issue #85)
+are copied into `res/drawable` under their final names:
+
+* `ic_ashfall_fan.xml` — the framed four-blade rotor
+  (`fan-c-four-blade-framed`).  Used by the Fan row on the root page, the Fan
+  page's Edit/Curve rows, the preset editor's add row, the Fan QS dialog header
+  and the Fan Quick Settings tile.
+* `ic_ashfall_lighting.xml` — the stick ring with a sparkle
+  (`lighting-b-ring`).  Used by the Lighting row/page, the colour row, the
+  Lighting QS dialog header and the Lighting Quick Settings tile.
+
+Both are 24 dp, single-colour vectors with no baked tint (`@android:color/white`
+artwork): Settings tints the preference rows, and SystemUI tints the tile icon
+for its active/inactive states, which is why the QS icons must stay
+monochrome.  The root homepage icon (`ic_handheld`) and the app icon
+(`ic_ashfall`) are unchanged; the old `ic_fan`/`ic_led`/`ic_tile_*` drawables are
+removed.
 
 ## 2. Pages
 
@@ -67,11 +90,11 @@ immediately to the properties from §2 of the contract; there is no Apply button
 
 | Page | Activity | Content |
 |---|---|---|
-| Handheld | `HandheldActivity` | Fan / Lighting / Controller rows with live summaries, daemon note |
-| Fan | `FanActivity` | main switch, live status, preset list, curve, manual %, safety |
+| AshFall settings | `HandheldActivity` | Fan / Lighting / Controller rows with live summaries, daemon note |
+| Fan | `FanActivity` | main switch, live status, presets, curve, manual %, kick, screen-off, throttling override |
 | Fan presets | `PresetActivity` | create / rename / duplicate / delete / change mode |
-| Curve | `CurveActivity` | drag-and-D-pad curve editor with live temperature marker |
-| Lighting | `LightingActivity` | switch, target, colour picker, brightness, effect, speed, screen-off |
+| Curve | `CurveActivity` | drag-and-D-pad curve editor, live marker, live preview, stress test |
+| Lighting | `LightingActivity` | switch, target, live colour picker, brightness, effect, speed |
 | Controller | `ControllerActivity` | tester, calibration wizard, factory reset, deadzones |
 | Tester | `TesterActivity` | drawn handheld, live buttons/sticks/triggers, raw stream |
 | Calibration | `CalibrationActivity` | four-step wizard, review, `SET CAL` |
@@ -80,22 +103,41 @@ immediately to the properties from §2 of the contract; there is no Apply button
 
 * **Main switch** (`MainSwitchPreference`) turns the fan on to the last active
   preset (or Smart) and off by writing `persist.ashfall.fan.mode=off` and
-  `persist.ashfall.fan.preset=builtin.off`.  The safety override is a daemon
-  feature and stays active even in Off.  The row uses the framework
-  `android.widget.Switch`, not `androidx…SwitchCompat`: the page is inflated
-  with `Theme.SubSettingsBase.Expressive`, which is not an AppCompat theme
-  (see §9).
-* **Status** is read every 2 s while the page is visible:
-  `ashfall.status.fan.{temp,pct,rpm,safety}`.  Temperature is `tenths °C`; the
-  page shows `°C`, output %, RPM (or `—`), and the safety warning.
+  `persist.ashfall.fan.preset=builtin.off`.  The last-resort rule (100 % at
+  90 °C) is a daemon feature and stays active even in Off.  The row uses the
+  framework `android.widget.Switch`, not `androidx…SwitchCompat`: the page is
+  inflated with `Theme.SubSettingsBase.Expressive`, which is not an AppCompat
+  theme (see §9).
+* **Status** is read every 500 ms while the page is visible (the page sets
+  `ashfall.ui.fan_live=1` on resume and clears it on pause, so the daemon
+  publishes at its fast cadence): `ashfall.status.fan.{temp,pct,rpm,safety}`.
+  Temperature is `tenths °C`; the page shows `°C`, output %, RPM (or `—`), and
+  the last-resort warning.
 * **Presets** are single-choice rows.  Selecting one calls `Fan.apply()`:
   `mode`, then `manual_pct` for Manual or `curve` for Smart, then the preset id
   in `persist.ashfall.fan.preset`.  The daemon only ever sees the active values.
+  The built-ins are Off / Quiet / Balanced / Max / **Manual** / Smart, so the
+  daemon's `manual` mode is reachable from the UI and the output slider always
+  has a preset to write back to.
 * **Curve** row opens the curve editor for the active preset (falling back to
   the built-in Smart preset when the active one has no curve).
-* **Manual output** slider is enabled only in Manual mode.
-* **Safety threshold** slider is 70–95 °C with the explanation that the fan runs
-  at 100 % at or above it.
+* **Manual output** slider is enabled only in Manual mode; moving it writes
+  `persist.ashfall.fan.manual_pct` and keeps the active Manual preset's stored
+  percentage in step.
+* **Behaviour**: **Spin-up kick** (`persist.ashfall.fan.kick`) and **Fan off
+  while the screen is off** (`persist.ashfall.fan.screen_off` = `off`/`run`),
+  both ordinary switch rows (`ui/TogglePreference`).
+* **Performance**: **Override throttling** writes the non-persistent
+  `ashfall.perf.throttle_override`; enabling always goes through a danger
+  confirmation.  A hidden **Advanced** category, revealed by pressing the
+  version row seven times (remembered in the app's UI prefs), holds the
+  **Keep after reboot** switch
+  (`persist.ashfall.perf.throttle_override_permanent`).  Enabling the hidden
+  switch also applies the override immediately; turning the visible switch off
+  releases the runtime override without touching the permanent flag.
+* **Safety threshold**: removed.  The daemon keeps a fixed, undocumented
+  last-resort rule (100 % at 90 °C, released at 80 °C) and the status block
+  still shows when it is active; there is no slider and no property.
 
 ### 2.2 Presets and the curve editor
 
@@ -111,16 +153,18 @@ before the first unlock:
   {"id":"builtin.quiet",   "name":"Quiet",          "mode":"quiet",    ...},
   {"id":"builtin.balanced","name":"Balanced",       "mode":"balanced", ...},
   {"id":"builtin.max",     "name":"Max",            "mode":"max",      ...},
+  {"id":"builtin.manual",  "name":"Manual",         "mode":"manual",   "manual_pct":50, "builtin":true},
   {"id":"builtin.smart",   "name":"Smart (default)","mode":"smart",    "curve":"45:0,55:30,65:55,75:80,82:100","builtin":true},
   {"id":"user.129648e1",   "name":"Preset 1",       "mode":"smart",    "curve":"48:2,55:30,...","builtin":false}
 ]}
 ```
 
 * Built-ins are re-seeded on load and cannot be renamed or deleted.  Their
-  **mode is fixed** by the contract (Off/Quiet/Balanced/Max/Smart), so the UI
-  does not offer “Change mode” for them and `PresetStore.save()` keeps the
-  re-seeded mode/name even if a future caller tries to change it.  The
-  built-in **Smart** curve is editable (it is the “Smart default” curve); every
+  **mode is fixed** by the contract (Off/Quiet/Balanced/Max/Manual/Smart), so
+  the UI does not offer “Change mode” for them and `PresetStore.save()` keeps
+  the re-seeded mode/name even if a future caller tries to change it.  The
+  built-in **Smart** curve is editable (it is the “Smart default” curve); the
+  built-in **Manual** keeps the last output set with the Fan page slider; every
   other built-in has no curve to edit.
 * A user preset is mode + `manual_pct` *or* `curve`; ids are
   `user.` + 8 hex characters (≤ 32 characters, matching the property limit).
@@ -131,26 +175,39 @@ before the first unlock:
 * The **active preset** is resolved in one place, `Fan.activePreset(store)`:
   use `persist.ashfall.fan.preset` when it still names a preset, otherwise map
   the daemon-visible `mode` to the matching built-in (Off/Quiet/Balanced/Max/
-  Smart).  Manual without a recorded preset has no built-in and is shown as
-  “Custom values”.  The Fan page, the Handheld summary, the QS tile, the QS
-  dialog and the curve editor all use this helper, so an empty id on a fresh
+  Manual/Smart).  The Fan page, the AshFall settings summary, the QS tile, the
+  QS dialog and the curve editor all use this helper, so an empty id on a fresh
   install (mode `smart`) shows Smart and an ACTIVE tile instead of Off.
 * Deleting the active user preset, or “Reset presets”, clears/remaps
-  `persist.ashfall.fan.preset` to the built-in for the current mode (empty for
-  Manual), so the recorded id can never go stale.
+  `persist.ashfall.fan.preset` to the built-in for the current mode
+  (`builtin.manual` for Manual), so the recorded id can never go stale.
 * Every curve change is saved immediately and, when the edited preset is the
   resolved active preset **and the current mode is Smart**, written to
-  `persist.ashfall.fan.curve`.  That covers the fresh-install case where
+  `persist.ashfall.fan.curve` **and** to `ashfall.ui.fan_preview_curve`, which
+  the daemon follows while the editor is open (live preview).  The preview is
+  cleared in `onPause`, so the daemon falls back to the saved curve as soon as
+  the editor closes.  That covers the fresh-install case where
   `persist.ashfall.fan.preset` is empty and the edited preset is the built-in
-  Smart; the daemon follows the edit without re-activating the preset, so
-  leaving the page can never lose an edit.
+  Smart; leaving the page can never lose an edit.
 
 Curve editor (`ui/CurveEditorView`): 2–8 points, ascending 25–95 °C, 0–100 %.
 Touch drags points; with the D-pad, left/right moves the selected point along
 the temperature axis, up/down changes its output, L1/R1 select the previous/next
-point, A adds a point, X deletes one.  The current temperature is a dashed live
-marker at the interpolated output.  The graph draws a focus ring when it owns
-the focus.
+point, A adds a point, X deletes one.  When the selected point is already at
+0 %/100 %, up/down is not consumed and the framework moves the focus to the
+controls below the graph, so the page stays fully gamepad-navigable.  The
+current temperature is a dashed live marker at the interpolated output.  The
+graph draws a focus ring when it owns the focus.
+
+**Stress test** (bottom of the curve page): CPU and GPU load sliders, 0–100 %.
+CPU load is one worker per (up to eight) core running a busy loop with the
+requested duty cycle.  GPU load is an offscreen 512×512 EGL/GLES2 pbuffer that
+renders a deliberately expensive fragment shader with `glFinish()` and the same
+duty cycle.  A zero slider means no load; the engine starts on the first
+non-zero value, auto-stops after **ten minutes**, and the page calls
+`Stress.stop()` in `onPause`, so leaving the editor always ends the load.  A
+fresh visit starts at 0/0 and never silently resumes.  The load is ordinary app
+work: it touches neither the daemons nor any property.
 
 ### 2.3 Lighting
 
@@ -165,11 +222,14 @@ The UI target selector maps onto the daemon's `led.sync`:
 * Main switch: on restores the last non-off effect (`ui` prefs), off writes
   `led.mode=off`.
 * Colour row opens a colour picker with eight preset swatches and an HSV
-  picker: preset swatches, a saturation/value square (touch or D-pad), a hue
-  slider, Cancel/Set.  The row shows the left/right colours.
+  picker: preset swatches, a saturation/value square (touch or D-pad) and a hue
+  slider.  The picker is **live**: every swatch/hue/square change writes
+  `led.color_*` immediately, there is no Set step, only Done.  The row shows the
+  left/right colours.
 * Brightness 0–100, effects static/breathing/rainbow/duo, speed 1–10 (enabled
-  for breathing/rainbow), and “turn off while the screen is off” writing
-  `led.screen_off=off|keep`.
+  for breathing/rainbow).  The screen-off option is **removed** (LEDs are
+  always off while the panel is off, re-applied on screen-on by the daemon);
+  there is no `led.screen_off` property any more.
 * Everything applies live.
 
 ### 2.4 Controller
@@ -209,13 +269,28 @@ The UI target selector maps onto the daemon's `led.sync`:
 * Tap opens the dialog with `TileService.showDialog(dialog)` (window type
   `TYPE_QS_DIALOG`, so it behaves like the Internet/Bluetooth dialogs).  If the
   device is locked the action runs through `unlockAndRun`.
+* Both dialogs use the AppCompat DayNight dialog theme, so they follow the
+  system light/dark (and pure-black) theme, and both are **modal**: the window
+  is focusable, dims the panel and takes input focus, so neither touch nor the
+  gamepad can navigate the Quick Settings panel behind them.  The rounded card
+  is the window background itself (one outline/shadow); the theme no longer
+  adds a second background or elevation, which removed the stray shadows.
+* Their height is fitted by `ui.Ui.fitDialog()`: the dialog is measured with at
+  most 86 % of the display height, and if the content is taller only the
+  `ScrollView` is shrunk to the space the header and footer leave over.  A
+  plain `ScrollView` ignores `android:maxHeight`, which used to let the
+  Lighting content grow past the panel and clip the Done button into the
+  corner.  The colour picker dialog uses the same helper.
 * **Fan dialog**: header with the active preset and temperature, a
   single-choice preset list (applies immediately), “Edit presets” (opens the
-  preset editor) and Done.  The header temperature refreshes every 2 s.
+  preset editor) and Done.  The header temperature refreshes every 500 ms and
+  the dialog sets `ashfall.ui.fan_live` while it is open.
 * **Lighting dialog**: on/off switch, target (Both/Left/Right), preset colour
   swatches plus an **inline** custom colour picker (saturation/value square +
   hue slider; no second window, which would be hidden behind the QS dialog),
-  brightness, effect, speed and Done.  All controls apply immediately.
+  brightness, effect, speed and Done.  All controls apply immediately.  It uses
+  the same hue-based picker and swatches as the Lighting page (no RGB-only
+  path).
 * Long-press: `TileService` has no `onLongClick`; SystemUI resolves
   `android.service.quicksettings.action.QS_TILE_PREFERENCES` inside the tile's
   package and passes the tile component in `EXTRA_COMPONENT_NAME`.
@@ -225,6 +300,10 @@ The UI target selector maps onto the daemon's `led.sync`:
   declares `android:theme="@style/Theme.AshFall.QsDialog"`; the dialog theme
   uses a literal accent (a self-referential `?android:attr/colorAccent` makes
   framework TextAppearances unresolvable in that context).
+* Tile icons are the shared `ic_ashfall_fan`/`ic_ashfall_lighting` vectors
+  (24 dp, single colour, no baked tint).  SystemUI applies its own tint for
+  the active and inactive tile states, so no state-specific drawable is
+  needed.
 
 ## 4. Gamepad navigation
 
@@ -236,7 +315,7 @@ Everything is reachable with the RP5 pad and the D-pad/left stick:
 | A / D-pad center / Enter | activate the focused row / toggle / open |
 | B / Back | dismisses dialogs and leaves the page (toolbar back button for touch) |
 | D-pad left/right on a slider | adjust the value (the SeekBar is the focus stop) |
-| Curve editor | L1/R1 select a point, left/right temperature, up/down output, A add, X delete |
+| Curve editor | L1/R1 select a point, left/right temperature, up/down output, A add, X delete; up/down at 0 %/100 % moves focus to the controls below the graph |
 | Tester | all input is displayed; Select toggles raw, B exits |
 | Wizard | D-pad moves between Cancel/Save, A activates; B cancels |
 
@@ -288,15 +367,19 @@ SystemUI.
 
 Read/written exactly as specified in `docs/phase5.md`:
 
-* `persist.ashfall.fan.{mode,manual_pct,curve,safety_c,preset}`
+* `persist.ashfall.fan.{mode,manual_pct,curve,preset,kick,kick_pct,screen_off}`
+* `ashfall.ui.{fan_live,fan_preview_curve}`
 * `ashfall.status.fan.{temp,pct,rpm,safety}`
-* `persist.ashfall.led.{mode,color_left,color_right,sync,brightness,speed,screen_off}`
+* `persist.ashfall.led.{mode,color_left,color_right,sync,brightness,speed}`
+* `ashfall.perf.throttle_override`, `persist.ashfall.perf.throttle_override_permanent`
 * `persist.ashfall.pad.{deadzone_inner,deadzone_outer,trigger_deadzone}`
 * `/dev/socket/ashfall_input`: `GET CAL`, `SET CAL`, `RESET CAL`, `RAW ON/OFF`
 
-Property access uses `android.os.SystemProperties` through reflection (with a
-`getprop`/`setprop` fallback); the app is platform-signed `system_app`, so the
-SELinux rules owned by the native worker apply.
+`persist.ashfall.fan.safety_c` and `persist.ashfall.led.screen_off` are **no
+longer read or written** by this app (both were removed by §6.1 of the
+contract).  Property access uses `android.os.SystemProperties` through
+reflection (with a `getprop`/`setprop` fallback); the app is platform-signed
+`system_app`, so the SELinux rules owned by the native worker apply.
 
 ## 6. Verification
 
@@ -311,7 +394,7 @@ javac 21, -source/-target 17
       out/soong/.intermediates/.../SettingsLibCollapsingToolbarBaseActivity.jar
       androidx (appcompat/preference/recyclerview/fragment/core/...) jars
   src/org/ashfall/parts/**/*.java
--> 70 classes, no errors
+-> 94 classes, no errors
 ```
 
 `com.android.settingslib.collapsingtoolbar.CollapsingToolbarBaseActivity` and
@@ -485,6 +568,66 @@ Final device state: `persist.ashfall.fan.mode=off`,
 deadzones 5/3/3; calibration source `default` (unchanged); both daemons
 running; fan hardware `state=0 duty=0`.
 
+### 6.6 Phase-5 follow-ups v2 (#83)
+
+The user-test changes of `docs/phase5.md` §6.3 were implemented on
+`feat/settings-v2-83`.  Verification performed for this change:
+
+* **A17 API/theme check (build host, read-only).**  All sources, including the
+  new `hw/Perf`, `hw/Stress`, `ui/TogglePreference` and the `Ui.fitDialog()`
+  sizing helper, compile against
+  `prebuilts/sdk/current/public/android.jar`, SettingsLib
+  (`CollapsingToolbarBaseActivity`, `SettingsTheme`) and the androidx
+  appcompat/preference/recyclerview/fragment/lifecycle jars from
+  `out/soong/.intermediates` with javac 21 (`-source/-target 17`):
+  94 classes, no errors.  (An `R` class generated from the real `res/` tree was
+  used, so every resource name referenced from Java had to exist.)
+* **Resource compile (build host, read-only).**  `aapt2 compile --dir res`
+  succeeds for all 25 resource files; the only unresolved references are the
+  external SettingsLib/AppCompat themes (`Theme.SubSettingsBase.Expressive`,
+  `Theme.AppCompat.DayNight.*`), as expected outside the platform build.
+* **Icons (issue #85 selection).**  `docs/icons/drafts/vectors/fan-c-four-blade-framed.xml`
+  and `lighting-b-ring.xml` are copied verbatim (minus the preview-only
+  `android:tint`) to `res/drawable/ic_ashfall_fan.xml` and
+  `res/drawable/ic_ashfall_lighting.xml`; both compile with `aapt2` and are
+  single-colour 24 dp vectors so Settings and SystemUI can tint them.  They
+  replace the Fan/Lighting rows, page/dialog glyphs and both QS tile icons.
+* **Theme parity.**  The page theme now sets
+  `android:windowBackground=?android:attr/colorBackground` and both content
+  layouts draw `?android:attr/colorBackground`; `Theme.SubSettingsBase.Expressive`
+  sets that attribute to `settingslib_materialColorSurfaceContainer`
+  (`@android:color/system_surface_container_dark` on A17 night), i.e. exactly
+  the Settings page background instead of the DeviceDefault window background
+  (`@android:drawable/background_holo_dark` = pure black).  Because a
+  LineageOS pure-black theme also changes `colorBackground`, the pages follow
+  it without a second hard-coded colour.
+* **Dialogs.**  `Theme.AshFall.Dialog` is an AppCompat **DayNight** dialog
+  whose window background is the rounded card (`bg_dialog`); the extra
+  `android:background` and `android:elevation` that produced the second, stray
+  shadow are gone.  Both QS dialogs and the in-app colour picker make their
+  window focusable and dim the surface behind them (modal for touch and for the
+  gamepad).  `Ui.fitDialog()` measures the card and shrinks only the scroll
+  area, so the Done button can no longer be clipped into the corner.
+* **Live fan status.**  `ashfall.ui.fan_live=1` is written on resume/onStart of
+  the Fan page, the curve editor and the QS Fan dialog and cleared when they
+  leave; their polling period is 500 ms.  A counter in `Fan.setLive()` keeps
+  the flag set while more than one fan UI is visible.
+* **Live curve preview.**  Every editor change writes the curve to
+  `ashfall.ui.fan_preview_curve` (and the saved property) when the edited preset
+  is the active Smart preset; `onPause` clears the preview.
+* **Manual mode.**  A `builtin.manual` preset is seeded, `Fan.builtinPresetId`
+  maps `manual` to it, and the Fan page slider keeps its stored percentage in
+  step, so the daemon's Manual mode is reachable without creating a preset.
+* **Stress test.**  `hw/Stress` implements the CPU duty-cycle workers and the
+  offscreen GLES2 shader load, a ten-minute cap and a `stop()` used from
+  `CurveActivity.onPause`; the UI is two 0–100 sliders on the curve page and a
+  live countdown.  On this machine the page and load paths were only statically
+  checked (device/emulator run pending; see below).
+* **Not yet run on hardware for this change:** the RP5 verification of the
+  stress test, the throttling override and the pure-black theme is pending a
+  serialized device slot; the items are in the §8 checklist.  No device state
+  was modified by this change.
+
 ## 7. Build integration
 
 `aosp/vendor/ashfall/apps.mk` gets a separate block (kept apart from the
@@ -510,39 +653,54 @@ trampoline and the two `TileService`s.
 
 ## 8. Device test checklist
 
-1. Settings → bottom of the homepage: **Handheld** with the fan/lighting/
-   controller subtitle and a tinted icon in the expressive style.
-2. Open Handheld; check the three rows show live values and open the pages;
-   Back returns to Settings.
-3. Fan: switch off/on; activate each built-in; check the daemon follows within
-   a second (temperature/output/RPM/safety update every 2 s).  Select Manual
-   and move the manual slider; edit the Smart curve and confirm the fan follows.
+1. Settings → bottom of the homepage: **AshFall settings** with the
+   fan/lighting/controller subtitle and a tinted icon in the expressive style.
+2. Open AshFall settings; check the three rows show live values and open the
+   pages; Back returns to Settings.
+3. Fan: switch off/on; activate each built-in (including **Manual**, then move
+   the output slider); check the daemon follows within a second
+   (temperature/output/RPM/safety update every 0.5 s while the page is open).
+   Edit the Smart curve and confirm the fan follows the live preview.
 4. Presets: create, rename, duplicate, delete a user preset; verify it survives
    a reboot (device-protected storage) and that a preset id appears in
    `persist.ashfall.fan.preset`.
-5. Safety: set the threshold to 70 °C and confirm the fan goes to 100 % above
-   it, including in Off mode, then drops 10 °C below.
-6. Lighting: switch on/off, change target (Both/Left/Right), pick a preset and
-   a custom colour, brightness, each effect and speed; check the rings live and
-   that Both uses the same colour on both sticks.
-7. Screen-off: enable “turn off while the screen is off” and check the rings go
-   dark with the panel and return on wake.
-8. Controller: open the tester with the pad; move sticks (dots inside the
+5. Behaviour: toggle **Spin-up kick** and **Fan off while the screen is off**;
+   confirm `persist.ashfall.fan.kick`/`screen_off` change and that the fan
+   stops/resumes with the panel.
+6. Throttling: **Override throttling** shows the danger confirmation, enabling
+   writes `ashfall.perf.throttle_override=1`, and a reboot clears it.  Press the
+   version row seven times, enable **Keep after reboot** and confirm the
+   permanent property; turn the visible switch off afterwards.
+7. Stress test: on the curve page set CPU 50 % / GPU 50 % and watch the
+   temperature rise; set both to 0, leave the page and confirm the load stops
+   (`top`/GPU idle) and the countdown/stop after 10 minutes works.
+8. Lighting: switch on/off, change target (Both/Left/Right), pick a preset and
+   a custom colour (it applies as you drag the hue/square, no Set), brightness,
+   each effect and speed; check the rings live and that Both uses the same
+   colour on both sticks.  Confirm there is no screen-off option.
+9. Controller: open the tester with the pad; move sticks (dots inside the
    deadzone rings), press every button/shoulder/trigger; verify the raw overlay
    via `RAW ON` shows data.
-9. Calibration: run the wizard, save, verify `GET CAL` reports `user`; reset to
-   factory and verify `factory`; confirm the factory file is unchanged.
-10. Deadzones: set inner 15 %, outer 10 %, trigger 10 %; verify in the tester
+10. Calibration: run the wizard, save, verify `GET CAL` reports `user`; reset to
+    factory and verify `factory`; confirm the factory file is unchanged.
+11. Deadzones: set inner 15 %, outer 10 %, trigger 10 %; verify in the tester
     and in another app/emulator that the deadzone is applied by the daemon.
-11. Quick Settings: add both tiles; check the Fan label is the active preset
+12. Quick Settings: add both tiles; check the Fan label is the active preset
     name and the subtitle the temperature; tap each tile, change something,
-    check it applies live; long-press each tile opens the matching page.
-12. Lock the device and tap a tile: it must ask for unlock before opening the
+    check it applies live, that the Done button is fully visible and that there
+    is no stray double shadow; long-press each tile opens the matching page.
+13. Modal dialogs: with a QS dialog open, push D-pad and A/B and confirm focus
+    never moves into the Quick Settings panel behind it; do the same for the
+    in-app colour picker.
+14. Lock the device and tap a tile: it must ask for unlock before opening the
     dialog.
-13. Light/dark: switch the system theme and check the pages, dialogs, the
-    tester and the QS dialogs.
-14. Gamepad only: complete every flow with D-pad/A/B (no touch).
-15. Real A/B path: on the RP5 send the face buttons with
+15. Light/dark/pure black: switch the system theme (including LineageOS pure
+    black) and check the pages match the rest of Settings, and that the dialogs
+    and the QS dialogs follow it.
+16. Gamepad only: complete every flow with D-pad/A/B (no touch), including
+    leaving the curve editor graph with D-pad down and operating the stress
+    sliders.
+17. Real A/B path: on the RP5 send the face buttons with
     `sendevent` on the “AshFall RP5 Gamepad” evdev node (not
     `input keyevent`) and confirm A selects on every page, both QS dialogs and
     the Settings homepage row, and B dismisses dialogs / leaves pages.  This
@@ -577,3 +735,48 @@ trampoline and the two `TileService`s.
   in-app Lighting page uses the standalone `ColorPickerDialog`.
 * The loop `tools/mock/` and `preview/` are development tooling; they are not
   installed into the image and are not referenced by `Android.bp`.
+* **Theme parity is derived, not copied.**  The app does not duplicate any
+  Settings colour: `android:windowBackground`/content backgrounds are
+  `?android:attr/colorBackground`, which `Theme.SubSettingsBase.Expressive`
+  points at `settingslib_materialColorSurfaceContainer`
+  (`@android:color/system_surface_container_dark` on A17 night).  LineageOS'
+  pure-black mode is `LineageBlackTheme`, an RRO that sets
+  `system_surface_container_dark` to `#000000`
+  (`packages/overlays/Lineage/customizations/BlackTheme/res/values-night/colors.xml`),
+  so the pages turn pure black at the same moment the rest of Settings does,
+  without per-theme values in this app.
+* **Dialogs are DayNight, not themed by this app.**  Both the page dialog and
+  the two `TYPE_QS_DIALOG` windows use an AppCompat DayNight parent without a
+  forced `uiMode`; the system (and a LineageOS pure-black overlay) decides the
+  colours.  Modal behaviour comes from a focusable, dimming window, not from
+  consuming the gamepad keys in the app.
+* **Stress test scope.**  It is intentional load, not a benchmark: the CPU
+  side uses a duty cycle per core and the GPU side renders an offscreen shader
+  with `glFinish()`, so the reported percentage is approximate.  It runs at
+  normal app priority (no `Process.setThreadPriority`), so it can be preempted
+  like any other app; that keeps it safe and is enough to heat the SoC for
+  curve tuning.  A device without a working EGL pbuffer simply produces no GPU
+  load and logs a warning.
+* **Throttling override is two switches.**  The visible switch writes the
+  non-persistent `ashfall.perf.throttle_override`; the hidden one writes
+  `persist.ashfall.perf.throttle_override_permanent` and also enables the
+  runtime override so its effect is immediate.  Turning the visible switch off
+  does not clear the permanent flag (it only releases the runtime override);
+  the hidden switch is the only way to change the boot behaviour.  This follows
+  §6.1 of the contract.
+* **Unused legacy strings** (`fan_safety_*`, `lighting_screen_off_*`, `set`
+  usage in the colour picker) were removed with the features, so the resource
+  table does not advertise controls that no longer exist.
+* **Cross-worker dependency (outside this app).**  `persist.ashfall.fan.{kick,
+  kick_pct,screen_off}` already fall under the `persist.ashfall.` property
+  context and `set_prop(system_app, ashfall_prop)`, but `ashfall.ui.*` and
+  `ashfall.perf.*` need new property types (`ashfall_ui_prop`,
+  `ashfall_perf_prop`), contexts and `set_prop(system_app, …)` rules in
+  `aosp/vendor/ashfall/sepolicy/`, plus readers in
+  `aosp/vendor/ashfall/rp5/hw/ashfall_hwd.c` (per `docs/phase5.md` §6.1).
+  Neither file is owned by this change, so until they land the app's writes are
+  best-effort and the daemon does not yet observe kick/screen-off, the 500 ms
+  cadence, the live preview or the throttling override.  `ashfall-hwd` also
+  still reads the removed `persist.ashfall.fan.safety_c` and must switch to its
+  fixed 90 °C/80 °C last-resort rule; the app no longer writes that property.
+  These are merge/sequencing items, not app defects.

@@ -1,6 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- Lighting Quick Settings dialog.  Every control applies immediately. -->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/qs_lighting_root"
     android:layout_width="@dimen/dialog_width"
     android:layout_height="wrap_content"
     android:orientation="vertical"
@@ -19,7 +20,7 @@
             android:layout_width="32dp"
             android:layout_height="32dp"
             android:contentDescription="@null"
-            android:src="@drawable/ic_led"
+            android:src="@drawable/ic_ashfall_lighting"
             android:tint="?android:attr/textColorPrimary" />
 
         <TextView
@@ -39,10 +40,10 @@
     </LinearLayout>
 
     <ScrollView
+        android:id="@+id/qs_lighting_scroll"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:layout_marginTop="8dp"
-        android:maxHeight="380dp">
+        android:layout_marginTop="8dp">
 
         <LinearLayout
             android:layout_width="match_parent"
@@ -243,6 +244,7 @@
         style="?android:attr/borderlessButtonStyle"
         android:layout_width="match_parent"
         android:layout_height="48dp"
+        android:layout_marginTop="4dp"
         android:gravity="end|center_vertical"
         android:text="@string/done"
         android:textColor="?android:attr/colorAccent" />
