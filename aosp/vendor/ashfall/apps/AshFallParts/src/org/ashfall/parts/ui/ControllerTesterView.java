@@ -438,17 +438,40 @@ public class ControllerTesterView extends View {
         final float halfW = layout.w * w * 0.5f;
         final float top = (layout.y - layout.h * 0.5f) * h;
         final float bottom = (layout.y + layout.h * 0.5f) * h;
+
+        // Track.
         mRect.set(cx - halfW, top, cx + halfW, bottom);
         mFill.setColor(Ui.fade(mPrimary, 0.05f));
         canvas.drawRoundRect(mRect, halfW, halfW, mFill);
-        if (value > 0.001f) {
-            mRect.set(cx - halfW, bottom - (bottom - top) * value, cx + halfW, bottom);
+
+        // Fill: a plain rectangle from the bottom, clipped to the inner bar so
+        // even a 1-2 % value stays inside the outline instead of sticking out
+        // (issue #104).  A positive value keeps a 2 dp sliver visible.
+        final float inset = Math.min(2 * mDensity, Math.min(halfW * 0.5f, (bottom - top) * 0.5f));
+        final float innerLeft = cx - halfW + inset;
+        final float innerRight = cx + halfW - inset;
+        final float innerTop = top + inset;
+        final float innerBottom = bottom - inset;
+        final float innerRadius = Math.min((innerRight - innerLeft) * 0.5f,
+                (innerBottom - innerTop) * 0.5f);
+        mPath.reset();
+        mRect.set(innerLeft, innerTop, innerRight, innerBottom);
+        mPath.addRoundRect(mRect, innerRadius, innerRadius, Path.Direction.CW);
+        if (value > 0f) {
+            final float height = Math.max(2 * mDensity, (innerBottom - innerTop) * value);
+            canvas.save();
+            canvas.clipPath(mPath);
+            mRect.set(innerLeft, innerBottom - height, innerRight, innerBottom);
             mFill.setColor(mAccent);
-            canvas.drawRoundRect(mRect, halfW, halfW, mFill);
+            canvas.drawRect(mRect, mFill);
+            canvas.restore();
         }
-        mStroke.setColor(Ui.fade(mSecondary, 0.8f));
+
+        // Outline on top.
         mRect.set(cx - halfW, top, cx + halfW, bottom);
+        mStroke.setColor(Ui.fade(mSecondary, 0.8f));
         canvas.drawRoundRect(mRect, halfW, halfW, mStroke);
+
         mLabel.setColor(mPrimary);
         canvas.drawText(label, cx - mLabel.measureText(label) / 2, top - 10 * mDensity, mLabel);
         final String percent = String.format(Locale.US, "%d%%", Math.round(value * 100));
@@ -462,10 +485,7 @@ public class ControllerTesterView extends View {
         drawButton(canvas, mLayout.r1, w, h, isPressed(BTN_R1), "R1");
     }
 
-    /**
-     * Left stick above the D-pad, right stick below the face buttons: the
-     * physical RP5 arrangement, without the body around it.
-     */
+    /** Stick positions come from the layout file; the editor decides the arrangement. */
     private void drawSticks(Canvas canvas, float w, float h) {
         drawStick(canvas, mLayout.leftStick, w, h, mState.leftX, mState.leftY, true);
         drawStick(canvas, mLayout.rightStick, w, h, mState.rightX, mState.rightY, false);
@@ -501,9 +521,21 @@ public class ControllerTesterView extends View {
         mDot.setColor(isPressed(left ? BTN_L3 : BTN_R3) ? mAccent : Ui.fade(mAccent, 0.9f));
         canvas.drawCircle(dotX, dotY, Math.max(10 * mDensity, radius * 0.18f), mDot);
 
+        // L3/R3 badge: a capsule inside the top of the stick (issue #104), not a
+        // label beside it.  It is drawn after the dot so it stays readable.
+        final boolean clickPressed = isPressed(left ? BTN_L3 : BTN_R3);
         final String click = left ? "L3" : "R3";
-        mLabel.setColor(isPressed(left ? BTN_L3 : BTN_R3) ? mAccent : mSecondary);
-        canvas.drawText(click, cx + radius * 0.66f, cy + radius * 0.18f, mLabel);
+        final float capHalfW = radius * 0.45f;
+        final float capHalfH = radius * 0.17f;
+        final float capCy = cy - radius * 0.55f;
+        mRect.set(cx - capHalfW, capCy - capHalfH, cx + capHalfW, capCy + capHalfH);
+        mFill.setColor(clickPressed ? mAccent : Ui.fade(mPrimary, 0.07f));
+        canvas.drawRoundRect(mRect, capHalfH, capHalfH, mFill);
+        mStroke.setColor(clickPressed ? mAccent : Ui.fade(mSecondary, 0.55f));
+        canvas.drawRoundRect(mRect, capHalfH, capHalfH, mStroke);
+        mSmall.setColor(clickPressed ? mPrimary : mSecondary);
+        canvas.drawText(click, cx - mSmall.measureText(click) / 2,
+                capCy + mSmall.getTextSize() * 0.35f, mSmall);
 
         final String value = String.format(Locale.US, "%.2f  %.2f", nx, ny);
         mSmall.setColor(mSecondary);
@@ -514,14 +546,17 @@ public class ControllerTesterView extends View {
     private void drawDpad(Canvas canvas, float w, float h) {
         final float cx = mLayout.dpad.x * w;
         final float cy = mLayout.dpad.y * h;
-        final float arm = mLayout.dpad.r * h;
-        final float half = arm * 0.36f;
-        drawArrow(canvas, cx, cy - arm, half, arm, isPressed(BTN_UP), false, -1f);
-        drawArrow(canvas, cx, cy + arm, half, arm, isPressed(BTN_DOWN), false, 1f);
-        drawArrow(canvas, cx - arm, cy, arm, half, isPressed(BTN_LEFT), true, -1f);
-        drawArrow(canvas, cx + arm, cy, arm, half, isPressed(BTN_RIGHT), true, 1f);
+        // The layout's r is the half-span (the editor draws 2*r*H across), not
+        // the offset to each arrow (issue #104).
+        final float a = mLayout.dpad.r * h;
+        final float arm = a * 0.5f;
+        final float shortHalf = a * 0.36f;
+        drawArrow(canvas, cx, cy - arm, shortHalf, arm, isPressed(BTN_UP), false, -1f);
+        drawArrow(canvas, cx, cy + arm, shortHalf, arm, isPressed(BTN_DOWN), false, 1f);
+        drawArrow(canvas, cx - arm, cy, arm, shortHalf, isPressed(BTN_LEFT), true, -1f);
+        drawArrow(canvas, cx + arm, cy, arm, shortHalf, isPressed(BTN_RIGHT), true, 1f);
         mFill.setColor(Ui.fade(mPrimary, 0.04f));
-        mRect.set(cx - half, cy - half, cx + half, cy + half);
+        mRect.set(cx - shortHalf, cy - shortHalf, cx + shortHalf, cy + shortHalf);
         canvas.drawRect(mRect, mFill);
     }
 
@@ -550,21 +585,28 @@ public class ControllerTesterView extends View {
     }
 
     /**
-     * X top, Y left, A right, B bottom (physical RP5); the exact positions come
-     * from the layout file so the editor can move each button independently.
+     * X top, Y left, A right, B bottom (physical RP5).  The view is not 16:9,
+     * so the four layout circles are used only for the group centre and a
+     * single pixel offset; that keeps the diamond square on the device
+     * (issue #104) while each button keeps its own radius.
      */
     private void drawFaceButtons(Canvas canvas, float w, float h) {
-        drawCircle(canvas, mLayout.buttonX, w, h, isPressed(BTN_X), "X");
-        drawCircle(canvas, mLayout.buttonY, w, h, isPressed(BTN_Y), "Y");
-        drawCircle(canvas, mLayout.buttonA, w, h, isPressed(BTN_A), "A");
-        drawCircle(canvas, mLayout.buttonB, w, h, isPressed(BTN_B), "B");
+        final float cx = (mLayout.buttonY.x + mLayout.buttonA.x) * 0.5f * w;
+        final float cy = (mLayout.buttonX.y + mLayout.buttonB.y) * 0.5f * h;
+        float off = (((mLayout.buttonA.x - mLayout.buttonY.x) * w * 0.5f)
+                + ((mLayout.buttonB.y - mLayout.buttonX.y) * h * 0.5f)) * 0.5f;
+        if (off <= 1f) {
+            // Degenerate layout (e.g. A and Y crossed): keep a usable diamond.
+            off = Math.min(w, h) * 0.10f;
+        }
+        drawCircle(canvas, cx, cy - off, mLayout.buttonX.r * h, isPressed(BTN_X), "X");
+        drawCircle(canvas, cx - off, cy, mLayout.buttonY.r * h, isPressed(BTN_Y), "Y");
+        drawCircle(canvas, cx + off, cy, mLayout.buttonA.r * h, isPressed(BTN_A), "A");
+        drawCircle(canvas, cx, cy + off, mLayout.buttonB.r * h, isPressed(BTN_B), "B");
     }
 
-    private void drawCircle(Canvas canvas, TesterLayout.Circle layout, float w, float h,
-            boolean pressed, String label) {
-        final float cx = layout.x * w;
-        final float cy = layout.y * h;
-        final float radius = layout.r * h;
+    private void drawCircle(Canvas canvas, float cx, float cy, float radius, boolean pressed,
+            String label) {
         mFill.setColor(pressed ? mAccent : Ui.fade(mPrimary, 0.05f));
         canvas.drawCircle(cx, cy, radius, mFill);
         mStroke.setColor(pressed ? mAccent : Ui.fade(mSecondary, 0.8f));
