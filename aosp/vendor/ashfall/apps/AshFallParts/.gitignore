@@ -1,0 +1,6 @@
+# Emulator preview build outputs (not part of the AOSP module).
+preview/.gradle/
+preview/build/
+preview/app/build/
+preview/local.properties
+tools/mock/build/

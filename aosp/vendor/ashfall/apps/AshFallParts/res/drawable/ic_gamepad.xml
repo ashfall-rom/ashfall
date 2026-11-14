@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Gamepad glyph: body, D-pad and four face buttons. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <path
+        android:fillColor="#00000000"
+        android:strokeColor="#FFFFFFFF"
+        android:strokeWidth="1.6"
+        android:pathData="M7.4,7.5h9.2c3.1,0 5.4,2.4 5.4,5.4c0,3.2 -2.2,5.2 -4.7,5.2c-1.4,0 -2.5,-0.7 -3.4,-1.9h-3.8c-0.9,1.2 -2,1.9 -3.4,1.9c-2.5,0 -4.7,-2 -4.7,-5.2c0,-3 2.3,-5.4 5.4,-5.4z" />
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M7.3,10.1h1.4v1.5h1.5v1.4H8.7v1.5H7.3V13H5.8v-1.4h1.5z" />
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M15.9,10.6m-1.1,0a1.1,1.1 0,1 1,2.2 0a1.1,1.1 0,1 1,-2.2 0" />
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M18.3,12.8m-1.1,0a1.1,1.1 0,1 1,2.2 0a1.1,1.1 0,1 1,-2.2 0" />
+</vector>

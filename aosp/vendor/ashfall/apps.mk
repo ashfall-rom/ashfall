@@ -13,3 +13,10 @@
 # ---------------------------------------------------------------------------
 PRODUCT_PACKAGES += \
     AshFallLauncher
+
+# ---------------------------------------------------------------------------
+# AshFallParts: the "Handheld" Settings pages (fan, lighting, controller) and
+# the Fan/Lighting Quick Settings tiles.  See docs/parts.md.
+# ---------------------------------------------------------------------------
+PRODUCT_PACKAGES += \
+    AshFallParts

@@ -1,0 +1,161 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Copyright (C) 2026 The AshFall Project
+
+  Licensed under the Apache License, Version 2.0 (the "License");
+  you may not use this file except in compliance with the License.
+  You may obtain a copy of the License at
+
+       http://www.apache.org/licenses/LICENSE-2.0
+
+  Unless required by applicable law or agreed to in writing, software
+  distributed under the License is distributed on an "AS IS" BASIS,
+  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+  See the License for the specific language governing permissions and
+  limitations under the License.
+-->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    package="org.ashfall.parts"
+    android:sharedUserId="android.uid.system"
+    android:versionCode="1"
+    android:versionName="1.0">
+
+    <!-- The Fan and Lighting tiles are Quick Settings tiles.  The daemons own
+         the hardware; this app only writes persist.ashfall.* properties and
+         talks to /dev/socket/ashfall_input (see docs/phase5.md). -->
+    <uses-permission android:name="android.permission.STATUS_BAR" />
+
+    <application
+        android:allowBackup="false"
+        android:defaultToDeviceProtectedStorage="true"
+        android:directBootAware="true"
+        android:icon="@drawable/ic_ashfall"
+        android:label="@string/app_name"
+        android:supportsRtl="true"
+        android:theme="@style/Theme.AshFall.Settings">
+
+        <!-- Root entry on the Settings homepage.  Settings discovers it through
+             TileUtils (system apps only) and renders it like a native row. -->
+        <activity
+            android:name=".HandheldActivity"
+            android:configChanges="orientation|screenSize|screenLayout|keyboardHidden"
+            android:exported="true"
+            android:label="@string/handheld_title"
+            android:theme="@style/Theme.AshFall.Settings">
+            <intent-filter>
+                <action android:name="com.android.settings.action.EXTRA_SETTINGS" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+            <meta-data
+                android:name="com.android.settings.category"
+                android:value="com.android.settings.category.ia.homepage" />
+            <meta-data
+                android:name="com.android.settings.title"
+                android:resource="@string/handheld_title" />
+            <meta-data
+                android:name="com.android.settings.summary"
+                android:resource="@string/handheld_summary" />
+            <meta-data
+                android:name="com.android.settings.icon"
+                android:resource="@drawable/ic_handheld" />
+            <meta-data
+                android:name="com.android.settings.icon_tintable"
+                android:value="true" />
+            <meta-data
+                android:name="com.android.settings.keyhint"
+                android:value="ashfall_handheld" />
+            <meta-data
+                android:name="com.android.settings.order"
+                android:value="1050" />
+        </activity>
+
+        <activity
+            android:name=".FanActivity"
+            android:configChanges="orientation|screenSize|screenLayout|keyboardHidden"
+            android:exported="true"
+            android:label="@string/fan_title"
+            android:theme="@style/Theme.AshFall.Settings" />
+
+        <activity
+            android:name=".PresetActivity"
+            android:configChanges="orientation|screenSize|screenLayout|keyboardHidden"
+            android:exported="true"
+            android:label="@string/presets_title"
+            android:theme="@style/Theme.AshFall.Settings" />
+
+        <activity
+            android:name=".CurveActivity"
+            android:configChanges="orientation|screenSize|screenLayout|keyboardHidden"
+            android:exported="true"
+            android:label="@string/curve_title"
+            android:theme="@style/Theme.AshFall.Settings" />
+
+        <activity
+            android:name=".LightingActivity"
+            android:configChanges="orientation|screenSize|screenLayout|keyboardHidden"
+            android:exported="true"
+            android:label="@string/lighting_title"
+            android:theme="@style/Theme.AshFall.Settings" />
+
+        <activity
+            android:name=".ControllerActivity"
+            android:configChanges="orientation|screenSize|screenLayout|keyboardHidden"
+            android:exported="true"
+            android:label="@string/controller_title"
+            android:theme="@style/Theme.AshFall.Settings" />
+
+        <activity
+            android:name=".TesterActivity"
+            android:configChanges="orientation|screenSize|screenLayout|keyboardHidden"
+            android:exported="false"
+            android:label="@string/tester_title"
+            android:screenOrientation="landscape"
+            android:theme="@style/Theme.AshFall.Settings" />
+
+        <activity
+            android:name=".CalibrationActivity"
+            android:configChanges="orientation|screenSize|screenLayout|keyboardHidden"
+            android:exported="false"
+            android:label="@string/calibration_title"
+            android:screenOrientation="landscape"
+            android:theme="@style/Theme.AshFall.Settings" />
+
+        <!-- Long-press target of both tiles (SystemUI resolves
+             ACTION_QS_TILE_PREFERENCES in the tile's package). -->
+        <activity
+            android:name=".qs.TilePreferencesActivity"
+            android:exported="true"
+            android:theme="@android:style/Theme.NoDisplay">
+            <intent-filter>
+                <action android:name="android.service.quicksettings.action.QS_TILE_PREFERENCES" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+        </activity>
+
+        <!-- Fan Quick Settings tile: tap opens the preset picker dialog. -->
+        <service
+            android:name=".qs.FanTileService"
+            android:exported="true"
+            android:icon="@drawable/ic_tile_fan"
+            android:label="@string/tile_fan"
+            android:permission="android.permission.BIND_QUICK_SETTINGS_TILE"
+            android:theme="@style/Theme.AshFall.QsDialog">
+            <intent-filter>
+                <action android:name="android.service.quicksettings.action.QS_TILE" />
+            </intent-filter>
+        </service>
+
+        <!-- Lighting Quick Settings tile: tap opens the lighting dialog. -->
+        <service
+            android:name=".qs.LightingTileService"
+            android:exported="true"
+            android:icon="@drawable/ic_tile_lighting"
+            android:label="@string/tile_lighting"
+            android:permission="android.permission.BIND_QUICK_SETTINGS_TILE"
+            android:theme="@style/Theme.AshFall.QsDialog">
+            <intent-filter>
+                <action android:name="android.service.quicksettings.action.QS_TILE" />
+            </intent-filter>
+        </service>
+    </application>
+</manifest>

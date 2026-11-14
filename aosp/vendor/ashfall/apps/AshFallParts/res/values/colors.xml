@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Copyright (C) 2026 The AshFall Project
+
+  Licensed under the Apache License, Version 2.0 (the "License");
+  you may not use this file except in compliance with the License.
+  You may obtain a copy of the License at
+
+       http://www.apache.org/licenses/LICENSE-2.0
+
+  Unless required by applicable law or agreed to in writing, software
+  distributed under the License is distributed on an "AS IS" BASIS,
+  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+  See the License for the specific language governing permissions and
+  limitations under the License.
+-->
+<resources>
+    <!-- AshFall ember red: the default stick colour in the daemons. -->
+    <color name="ashfall_red">#FFFF2020</color>
+    <color name="ashfall_red_dark">#FFB30F0F</color>
+
+    <!-- Colour presets offered by the colour picker.  Kept neutral so they
+         read well on both the light and the dark Settings theme. -->
+    <color name="swatch_white">#FFFFFFFF</color>
+    <color name="swatch_red">#FFFF2020</color>
+    <color name="swatch_orange">#FFFF7A00</color>
+    <color name="swatch_amber">#FFFFC107</color>
+    <color name="swatch_green">#FF2ECC40</color>
+    <color name="swatch_cyan">#FF00C8C8</color>
+    <color name="swatch_blue">#FF2979FF</color>
+    <color name="swatch_violet">#FF8E44FF</color>
+    <color name="swatch_off">#FF000000</color>
+
+    <!-- Status card -->
+    <color name="status_warning">#FFFF6D00</color>
+    <color name="status_ok">#FF2ECC40</color>
+</resources>

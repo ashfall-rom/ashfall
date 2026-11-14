@@ -1,0 +1,22 @@
+// Preview build of AshFall Parts for the Android emulator (see docs/parts.md
+// "Verification").  This is NOT used by the AOSP build: Soong builds the module
+// from ../Android.bp.  The preview only exists so the pages can be exercised on
+// an SDK image without an AOSP tree.
+pluginManagement {
+    repositories {
+        google()
+        mavenCentral()
+        gradlePluginPortal()
+    }
+}
+
+dependencyResolutionManagement {
+    repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
+    repositories {
+        google()
+        mavenCentral()
+    }
+}
+
+rootProject.name = "AshFallPartsPreview"
+include ":app"

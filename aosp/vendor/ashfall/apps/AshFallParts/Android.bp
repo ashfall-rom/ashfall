@@ -1,0 +1,53 @@
+//
+// Copyright (C) 2026 The AshFall Project
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//      http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+//
+
+// AshFall Parts: the "Handheld" Settings page (fan, lighting, controller) and
+// the Fan/Lighting Quick Settings tiles.  See docs/parts.md.
+//
+// The activity is injected into the Settings homepage through
+// com.android.settings.category.ia.homepage; Settings itself is not patched.
+// The pages are built with androidx.preference on top of SettingsLib's
+// CollapsingToolbarBaseActivity and Theme.SubSettingsBase.Expressive, which is
+// what makes them indistinguishable from the platform's own Settings pages.
+android_app {
+    name: "AshFallParts",
+
+    // Brings in SettingsLib (collapsing toolbar, Settings theme, preference
+    // theme overlay).  Same pattern as LineageParts.
+    defaults: ["SettingsLibDefaults"],
+
+    srcs: ["src/**/*.java"],
+    resource_dirs: ["res"],
+    manifest: "AndroidManifest.xml",
+
+    platform_apis: true,
+    certificate: "platform",
+    privileged: true,
+    system_ext_specific: true,
+
+    static_libs: [
+        "androidx.appcompat_appcompat",
+        "androidx.preference_preference",
+        "androidx.recyclerview_recyclerview",
+        "com.google.android.material_material",
+    ],
+
+    optimize: {
+        optimize: true,
+        proguard_flags_files: ["proguard.flags"],
+        shrink_resources: true,
+    },
+}
