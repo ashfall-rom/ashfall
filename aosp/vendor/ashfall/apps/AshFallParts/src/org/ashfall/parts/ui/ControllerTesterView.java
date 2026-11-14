@@ -543,45 +543,49 @@ public class ControllerTesterView extends View {
                 cy + radius + 22 * mDensity, mSmall);
     }
 
+    /**
+     * D-pad as a 3x3 cross (issue #105): the layout's {@code r} is one cell, the
+     * overall span is {@code 3*r*h}, and each direction is a pentagon "house"
+     * that shares only edges with its neighbours - never areas - so pressing
+     * two adjacent directions cannot merge their lit shapes.
+     */
     private void drawDpad(Canvas canvas, float w, float h) {
         final float cx = mLayout.dpad.x * w;
         final float cy = mLayout.dpad.y * h;
-        // The layout's r is the half-span (the editor draws 2*r*H across), not
-        // the offset to each arrow (issue #104).
-        final float a = mLayout.dpad.r * h;
-        final float arm = a * 0.5f;
-        final float shortHalf = a * 0.36f;
-        drawArrow(canvas, cx, cy - arm, shortHalf, arm, isPressed(BTN_UP), false, -1f);
-        drawArrow(canvas, cx, cy + arm, shortHalf, arm, isPressed(BTN_DOWN), false, 1f);
-        drawArrow(canvas, cx - arm, cy, arm, shortHalf, isPressed(BTN_LEFT), true, -1f);
-        drawArrow(canvas, cx + arm, cy, arm, shortHalf, isPressed(BTN_RIGHT), true, 1f);
+        final float cell = mLayout.dpad.r * h;
+        final float half = cell * 0.5f;
+
+        // Centre square: neutral, never lit by a direction.
+        mRect.set(cx - half, cy - half, cx + half, cy + half);
         mFill.setColor(Ui.fade(mPrimary, 0.04f));
-        mRect.set(cx - shortHalf, cy - shortHalf, cx + shortHalf, cy + shortHalf);
         canvas.drawRect(mRect, mFill);
+        mStroke.setColor(Ui.fade(mSecondary, 0.55f));
+        canvas.drawRect(mRect, mStroke);
+
+        drawDpadArm(canvas, cx, cy, cell, 0, isPressed(BTN_UP));
+        drawDpadArm(canvas, cx, cy, cell, 90, isPressed(BTN_RIGHT));
+        drawDpadArm(canvas, cx, cy, cell, 180, isPressed(BTN_DOWN));
+        drawDpadArm(canvas, cx, cy, cell, 270, isPressed(BTN_LEFT));
     }
 
-    private void drawArrow(Canvas canvas, float cx, float cy, float halfW, float halfH,
-            boolean pressed, boolean sideways, float sign) {
-        mRect.set(cx - halfW, cy - halfH, cx + halfW, cy + halfH);
-        mFill.setColor(pressed ? mAccent : Ui.fade(mPrimary, 0.04f));
-        canvas.drawRect(mRect, mFill);
-        mStroke.setColor(pressed ? mAccent : Ui.fade(mSecondary, 0.7f));
-        canvas.drawRect(mRect, mStroke);
-        // Small direction notch in the middle of the arm.
-        mFill.setColor(pressed ? mPrimary : Ui.fade(mSecondary, 0.55f));
-        final float notch = 7 * mDensity;
+    /** One 1-cell "house" arm, drawn pointing up and rotated by {@code degrees}. */
+    private void drawDpadArm(Canvas canvas, float cx, float cy, float cell, float degrees,
+            boolean pressed) {
+        final float half = cell * 0.5f;
+        canvas.save();
+        canvas.rotate(degrees, cx, cy);
         mPath.reset();
-        if (sideways) {
-            mPath.moveTo(cx + halfW * 0.5f * sign, cy);
-            mPath.lineTo(cx, cy - notch);
-            mPath.lineTo(cx, cy + notch);
-        } else {
-            mPath.moveTo(cx, cy + halfH * 0.5f * sign);
-            mPath.lineTo(cx - notch, cy);
-            mPath.lineTo(cx + notch, cy);
-        }
+        mPath.moveTo(cx - half, cy - half);
+        mPath.lineTo(cx + half, cy - half);
+        mPath.lineTo(cx + half, cy - cell);
+        mPath.lineTo(cx, cy - cell * 1.5f);
+        mPath.lineTo(cx - half, cy - cell);
         mPath.close();
+        mFill.setColor(pressed ? mAccent : Ui.fade(mPrimary, 0.04f));
         canvas.drawPath(mPath, mFill);
+        mStroke.setColor(pressed ? mAccent : Ui.fade(mSecondary, 0.7f));
+        canvas.drawPath(mPath, mStroke);
+        canvas.restore();
     }
 
     /**

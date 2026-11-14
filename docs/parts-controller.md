@@ -18,10 +18,11 @@ QS tiles) is described in `docs/parts.md`.
 | 4. "B, Back, Home, Select don't show" | The tester now sends `GRAB ON` on its raw-stream socket (§3).  Nothing is injected into uinput, so every button is only reported in the `RAW` mask and drawn.  Leaving: hold **Start + Select for 2 s** (progress bar under the pills) or tap **Close**.  The old "Select toggles the raw overlay" mode is gone; the raw values are always visible. |
 | 5. "Fun: light each side's LED ring with its activity" | `ashfall.ui.led_override` is published at <= 29 Hz (§4) and cleared on pause. |
 | 6. "Calibration waits for Start" | The wizard's timed steps were replaced by Start-paced steps (§5). |
-| 7. #104: "the app's D-pad is twice the editor's size" | `drawDpad` treated `r` as the offset to each arrow, so the total span was `4*r*H`; it now uses `r` as the half-span (`a = r*h`, arrows at ±a/2), matching the editor's `2*r*H`. |
+| 7. #104: "the app's D-pad is twice the editor's size" | `drawDpad` treated `r` as the offset to each arrow, so the total span was `4*r*H`; #104 changed it to `2*r*H`, and #105 rebuilt it as the 3x3 pentagon cross below (total `3*r*H`). |
 | 8. #104: "ABXY distances are not equal" | The view is not 16:9, so scaling x by width and y by height made the diamond rectangular.  The group centre and a single pixel offset are computed from the four layout circles; X/Y/A/B are placed on a square diamond (distance X-B = Y-A = 2*off, diagonals off*sqrt(2)). |
 | 9. #104: "L3/R3 labels" | The side label is gone; each stick has a capsule inside its top (0.9r x 0.34r) labelled L3/R3, accent-filled with the primary text colour while the stick is clicked. |
 | 10. #104: "L2/R2 fill sticks out" | The fill is a plain rectangle from the bottom, clipped to the inner bar (2 dp inset): below 10 % it stays inside, any value > 0 keeps a 2 dp sliver, 0 % is empty, the outline is drawn on top. |
+| 11. #105: "the direction rectangles overlap at the centre" | The D-pad is a 3x3 cross of four pentagon "house" arms (`cell = r*h`, total `3*r*h`, one cell per arm); the centre square stays neutral, so adjacent lit directions share only edges and never merge into one blob. |
 
 ## 2. The button layout
 
@@ -176,8 +177,8 @@ Schema v1 (all values are floats, sizes relative to the view):
 
 * `x`/`y` are the control's centre as a fraction of the view width/height.
 * Circles (`left_stick`, `right_stick`, `dpad`, `button_x/y/a/b`) use `r`, a
-  fraction of the view height.  For the D-pad `r` is **half of the total span**
-  (the editor draws `2*r*H` across).  The four face-button circles only define
+  fraction of the view height.  For the D-pad `r` is **one cell of the 3x3
+  cross** (the total span is `3*r*H`, the centre square is `r*H` square).  The four face-button circles only define
   the diamond's centre and one common pixel offset; the app keeps the diamond
   square on the non-16:9 tester view, so their exact per-axis positions are not
   honoured (each button keeps its own `r`).
@@ -258,16 +259,27 @@ Soong module:
 * Light and dark: the controls, labels and accent were resolved through the
   theme (window background `#FAFAFA` vs `#000000`, outlines and fills visible in
   both).  Pure black uses the same attributes.
-* #104 geometry (emulator, shipped layout): the D-pad spans 183 px = `2*r*H`
-  (Up bbox 287..379, Left bbox 247..338, centre 339/380); X/B are 197 px apart
-  vertically and Y/A 196 px horizontally, with diagonals 138 px = 98*sqrt(2)
-  (square diamond, `off` 98.1); the L3/R3 caps are 116x46 px at
-  `cy - 0.55r` and fill with the accent when THUMBL/THUMBR is pressed, with no
-  side label; a 0 % trigger is empty, 34 % and 59 % fills stay inside the 4.5 px
-  (2 dp) inset bar with a straight top edge; Select/Start render in the top row
-  (`y` 0.145) and Home/Back in the bottom row (`y` 0.885) with their labels.
-  Screenshots refreshed (light: X/A, Start top; dark: Y/B, Select top,
-  Home/Back bottom).
+* #104 geometry (emulator, shipped layout): X/B are 197 px apart vertically and
+  Y/A 196 px horizontally, with diagonals 138 px = 98*sqrt(2) (square diamond,
+  `off` 98.1); the L3/R3 caps are 116x46 px at `cy - 0.55r` and fill with the
+  accent when THUMBL/THUMBR is pressed, with no side label; a 0 % trigger is
+  empty, 34 % and 59 % fills stay inside the 4.5 px (2 dp) inset bar with a
+  straight top edge; Select/Start render in the top row (`y` 0.145) and
+  Home/Back in the bottom row (`y` 0.885) with their labels.
+* #105 D-pad (emulator, shipped layout, mock holding Up+Left): one cell is
+  91.5 px; the lit shapes are two pentagons with the centre square neutral
+  (zero accent pixels there) and zero accent pixels in the right/down arms, so
+  adjacent directions never merge.  The up arm is 95 px wide at its
+  base/shoulder and narrows to 13 px at the 1.5-cell tip; the left arm is
+  96 px tall and 15 px at its tip.  The neutral cross spans 198..478 px
+  horizontally and 242..520 px vertically (3*91.5 px plus the 2 dp outlines).
+  **Collision check against the saved layout:** the left stick clears the
+  D-pad by 26 px at the emulator's 715 px view height (0.0368h; 34 px at the
+  device's ~930 px).  L1's bottom edge is 1.0 px (0.00146h; 1.4 px at 930) above
+  the D-pad's top tip: the fills do not overlap, but the two 2 dp outlines
+  touch/overlap by ~3 px in their 0.15w horizontal overlap.  Reported, nothing
+  moved.  Screenshots refreshed (light: X/A with the Up pentagon; dark: Y/B,
+  Select top, Home/Back bottom).
 
 Not verified here: the RP5 hardware itself (owned by the native worker, and the
 device is serialised between workers).  The device checks to repeat are the real
