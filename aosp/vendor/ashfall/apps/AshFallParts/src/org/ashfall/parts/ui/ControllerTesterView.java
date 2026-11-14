@@ -68,7 +68,9 @@ import java.util.Locale;
  * kept as a fallback for a missing daemon (and for the emulator preview).
  *
  * <p>Only theme attributes are used, so the drawing follows the light, dark and
- * pure-black themes.
+ * pure-black themes.  All positions and sizes come from {@link TesterLayout}
+ * ({@code res/raw/tester_layout.json}), which the temporary layout editor can
+ * rewrite without touching this file.
  */
 public class ControllerTesterView extends View {
 
@@ -110,6 +112,7 @@ public class ControllerTesterView extends View {
     private long mLastRawAt;
     private boolean mGrabActive;
     private float mExitHold;
+    private final TesterLayout mLayout;
 
     private final Paint mFill = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Paint mStroke = new Paint(Paint.ANTI_ALIAS_FLAG);
@@ -140,6 +143,7 @@ public class ControllerTesterView extends View {
         mSmall.setTextSize(14 * mDensity);
         mSmall.setTypeface(Typeface.MONOSPACE);
         mDot.setStyle(Paint.Style.FILL);
+        mLayout = TesterLayout.load(context);
         setFocusable(false);
         setImportantForAccessibility(IMPORTANT_FOR_ACCESSIBILITY_YES);
         resolveTheme();
@@ -359,18 +363,12 @@ public class ControllerTesterView extends View {
         }
         resolveTheme();
 
-        // Sizes scale with the shorter axis so the controls stay large in
-        // landscape (1920x1080 / 853x480 dp) without overlapping.
-        final float stickRadius = Math.min(h * 0.175f, w * 0.10f);
-        final float dpadArm = Math.min(h * 0.130f, w * 0.072f);
-        final float faceRadius = Math.min(h * 0.057f, w * 0.030f);
-
         drawStatus(canvas, w, h);
         drawTriggerBars(canvas, w, h);
         drawShoulders(canvas, w, h);
-        drawSticks(canvas, w, h, stickRadius);
-        drawDpad(canvas, w, h, dpadArm);
-        drawFaceButtons(canvas, w, h, faceRadius);
+        drawSticks(canvas, w, h);
+        drawDpad(canvas, w, h);
+        drawFaceButtons(canvas, w, h);
         drawSystemButtons(canvas, w, h);
         drawExitHold(canvas, w, h);
     }
@@ -380,8 +378,8 @@ public class ControllerTesterView extends View {
      * It replaces the old "screen" of the silhouette; no body art is drawn.
      */
     private void drawStatus(Canvas canvas, float w, float h) {
-        final float x = w * 0.365f;
-        float y = h * 0.24f;
+        final float x = mLayout.status.x * w;
+        float y = mLayout.status.y * h;
         final float line = 22 * mDensity;
         mSmall.setTextSize(14 * mDensity);
         mLabel.setTextSize(18 * mDensity);
@@ -428,15 +426,18 @@ public class ControllerTesterView extends View {
         mSmall.setTextSize(14 * mDensity);
     }
 
-    /** L2/R2 as tall vertical analog bars on the outer edges: exact values. */
+    /** L2/R2 as vertical analog bars: exact values, drawn where the layout says. */
     private void drawTriggerBars(Canvas canvas, float w, float h) {
-        drawTriggerBar(canvas, w * 0.028f, h * 0.16f, h * 0.85f, mState.l2, "L2");
-        drawTriggerBar(canvas, w * 0.972f, h * 0.16f, h * 0.85f, mState.r2, "R2");
+        drawTriggerBar(canvas, mLayout.l2, w, h, mState.l2, "L2");
+        drawTriggerBar(canvas, mLayout.r2, w, h, mState.r2, "R2");
     }
 
-    private void drawTriggerBar(Canvas canvas, float cx, float top, float bottom, float value,
-            String label) {
-        final float halfW = 13 * mDensity;
+    private void drawTriggerBar(Canvas canvas, TesterLayout.Rect layout, float w, float h,
+            float value, String label) {
+        final float cx = layout.x * w;
+        final float halfW = layout.w * w * 0.5f;
+        final float top = (layout.y - layout.h * 0.5f) * h;
+        final float bottom = (layout.y + layout.h * 0.5f) * h;
         mRect.set(cx - halfW, top, cx + halfW, bottom);
         mFill.setColor(Ui.fade(mPrimary, 0.05f));
         canvas.drawRoundRect(mRect, halfW, halfW, mFill);
@@ -457,19 +458,22 @@ public class ControllerTesterView extends View {
     }
 
     private void drawShoulders(Canvas canvas, float w, float h) {
-        drawButton(canvas, w * 0.115f, h * 0.075f, w * 0.065f, h * 0.036f,
-                isPressed(BTN_L1), "L1");
-        drawButton(canvas, w * 0.885f, h * 0.075f, w * 0.065f, h * 0.036f,
-                isPressed(BTN_R1), "R1");
+        drawButton(canvas, mLayout.l1, w, h, isPressed(BTN_L1), "L1");
+        drawButton(canvas, mLayout.r1, w, h, isPressed(BTN_R1), "R1");
     }
 
     /**
      * Left stick above the D-pad, right stick below the face buttons: the
      * physical RP5 arrangement, without the body around it.
      */
-    private void drawSticks(Canvas canvas, float w, float h, float radius) {
-        drawStick(canvas, w * 0.165f, h * 0.30f, radius, mState.leftX, mState.leftY, true);
-        drawStick(canvas, w * 0.835f, h * 0.72f, radius, mState.rightX, mState.rightY, false);
+    private void drawSticks(Canvas canvas, float w, float h) {
+        drawStick(canvas, mLayout.leftStick, w, h, mState.leftX, mState.leftY, true);
+        drawStick(canvas, mLayout.rightStick, w, h, mState.rightX, mState.rightY, false);
+    }
+
+    private void drawStick(Canvas canvas, TesterLayout.Circle layout, float w, float h,
+            float nx, float ny, boolean left) {
+        drawStick(canvas, layout.x * w, layout.y * h, layout.r * h, nx, ny, left);
     }
 
     private void drawStick(Canvas canvas, float cx, float cy, float radius, float nx, float ny,
@@ -507,9 +511,10 @@ public class ControllerTesterView extends View {
                 cy + radius + 22 * mDensity, mSmall);
     }
 
-    private void drawDpad(Canvas canvas, float w, float h, float arm) {
-        final float cx = w * 0.165f;
-        final float cy = h * 0.72f;
+    private void drawDpad(Canvas canvas, float w, float h) {
+        final float cx = mLayout.dpad.x * w;
+        final float cy = mLayout.dpad.y * h;
+        final float arm = mLayout.dpad.r * h;
         final float half = arm * 0.36f;
         drawArrow(canvas, cx, cy - arm, half, arm, isPressed(BTN_UP), false, -1f);
         drawArrow(canvas, cx, cy + arm, half, arm, isPressed(BTN_DOWN), false, 1f);
@@ -544,19 +549,22 @@ public class ControllerTesterView extends View {
         canvas.drawPath(mPath, mFill);
     }
 
-    /** X top, Y left, A right, B bottom (physical RP5, issue #101). */
-    private void drawFaceButtons(Canvas canvas, float w, float h, float radius) {
-        final float cx = w * 0.835f;
-        final float cy = h * 0.32f;
-        final float offset = radius * 2.05f;
-        drawCircle(canvas, cx, cy - offset, radius, isPressed(BTN_X), "X");
-        drawCircle(canvas, cx - offset, cy, radius, isPressed(BTN_Y), "Y");
-        drawCircle(canvas, cx + offset, cy, radius, isPressed(BTN_A), "A");
-        drawCircle(canvas, cx, cy + offset, radius, isPressed(BTN_B), "B");
+    /**
+     * X top, Y left, A right, B bottom (physical RP5); the exact positions come
+     * from the layout file so the editor can move each button independently.
+     */
+    private void drawFaceButtons(Canvas canvas, float w, float h) {
+        drawCircle(canvas, mLayout.buttonX, w, h, isPressed(BTN_X), "X");
+        drawCircle(canvas, mLayout.buttonY, w, h, isPressed(BTN_Y), "Y");
+        drawCircle(canvas, mLayout.buttonA, w, h, isPressed(BTN_A), "A");
+        drawCircle(canvas, mLayout.buttonB, w, h, isPressed(BTN_B), "B");
     }
 
-    private void drawCircle(Canvas canvas, float cx, float cy, float radius, boolean pressed,
-            String label) {
+    private void drawCircle(Canvas canvas, TesterLayout.Circle layout, float w, float h,
+            boolean pressed, String label) {
+        final float cx = layout.x * w;
+        final float cy = layout.y * h;
+        final float radius = layout.r * h;
         mFill.setColor(pressed ? mAccent : Ui.fade(mPrimary, 0.05f));
         canvas.drawCircle(cx, cy, radius, mFill);
         mStroke.setColor(pressed ? mAccent : Ui.fade(mSecondary, 0.8f));
@@ -567,19 +575,18 @@ public class ControllerTesterView extends View {
     }
 
     private void drawSystemButtons(Canvas canvas, float w, float h) {
-        drawButton(canvas, w * 0.415f, h * 0.145f, w * 0.055f, h * 0.037f,
-                isPressed(BTN_BACK), "Back");
-        drawButton(canvas, w * 0.585f, h * 0.145f, w * 0.055f, h * 0.037f,
-                isPressed(BTN_HOME), "Home");
-
-        drawButton(canvas, w * 0.445f, h * 0.885f, w * 0.062f, h * 0.043f,
-                isPressed(BTN_SELECT), "Select");
-        drawButton(canvas, w * 0.555f, h * 0.885f, w * 0.062f, h * 0.043f,
-                isPressed(BTN_START), "Start");
+        drawButton(canvas, mLayout.back, w, h, isPressed(BTN_BACK), "Back");
+        drawButton(canvas, mLayout.home, w, h, isPressed(BTN_HOME), "Home");
+        drawButton(canvas, mLayout.select, w, h, isPressed(BTN_SELECT), "Select");
+        drawButton(canvas, mLayout.start, w, h, isPressed(BTN_START), "Start");
     }
 
-    private void drawButton(Canvas canvas, float cx, float cy, float halfW, float halfH,
+    private void drawButton(Canvas canvas, TesterLayout.Rect layout, float w, float h,
             boolean pressed, String label) {
+        final float cx = layout.x * w;
+        final float cy = layout.y * h;
+        final float halfW = layout.w * w * 0.5f;
+        final float halfH = layout.h * h * 0.5f;
         mRect.set(cx - halfW, cy - halfH, cx + halfW, cy + halfH);
         mFill.setColor(pressed ? mAccent : Ui.fade(mPrimary, 0.05f));
         canvas.drawRoundRect(mRect, halfH, halfH, mFill);

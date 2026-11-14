@@ -122,7 +122,10 @@ still cancels.
 | file | change |
 |---|---|
 | `src/org/ashfall/parts/TesterActivity.java` | grab/raw lifecycle, 2 s Start+Select exit, close button, LED reaction, fallback input |
-| `src/org/ashfall/parts/ui/ControllerTesterView.java` | controls-only layout (#101), mask-driven input, theme colours, exact trigger bars |
+| `src/org/ashfall/parts/ui/ControllerTesterView.java` | controls-only drawing, mask-driven input, theme colours, exact trigger bars; all geometry from `TesterLayout` |
+| `src/org/ashfall/parts/ui/TesterLayout.java` | loader/validator for `res/raw/tester_layout.json`, per-value fallbacks |
+| `res/raw/tester_layout.json` | control geometry, owned by the temporary web layout editor |
+| `tools/check_tester_layout.py` | host check: schema v1 keys and ranges |
 | `src/org/ashfall/parts/ui/LedFeedback.java` | new: `ashfall.ui.led_override` publisher |
 | `src/org/ashfall/parts/hw/PadState.java` | new: raw counts -> calibrated/deadzoned values on the app side |
 | `src/org/ashfall/parts/ipc/RawStream.java` | `GRAB ON/OFF` on the raw connection, reply handling |
@@ -135,12 +138,83 @@ still cancels.
 | `tools/mock/AshfallMockDaemon.c` | test-only: `GRAB`, mask animation, Start+Select hold hook |
 | `docs/parts/screenshots/tester*.png`, `calibration-*.png` | new emulator captures |
 
+### 6.1 Live layout file (`res/raw/tester_layout.json`)
+
+The tester's geometry is data, not code (issue #103), so the temporary web
+layout editor can move controls without a code change.  The file is owned by the
+editor/user; the app only reads it.
+
+Schema v1 (all values are floats, sizes relative to the view):
+
+```json
+{
+  "version": 1,
+  "controls": {
+    "left_stick":  {"x":0.165,"y":0.300,"r":0.175},
+    "right_stick": {"x":0.835,"y":0.720,"r":0.175},
+    "dpad":        {"x":0.165,"y":0.720,"r":0.128},
+    "button_x":    {"x":0.835,"y":0.2107,"r":0.0533},
+    "button_y":    {"x":0.7735,"y":0.320,"r":0.0533},
+    "button_a":    {"x":0.8965,"y":0.320,"r":0.0533},
+    "button_b":    {"x":0.835,"y":0.4293,"r":0.0533},
+    "l1":          {"x":0.115,"y":0.075,"w":0.130,"h":0.072},
+    "r1":          {"x":0.885,"y":0.075,"w":0.130,"h":0.072},
+    "l2":          {"x":0.028,"y":0.505,"w":0.0339,"h":0.690},
+    "r2":          {"x":0.972,"y":0.505,"w":0.0339,"h":0.690},
+    "back":        {"x":0.415,"y":0.145,"w":0.110,"h":0.074},
+    "home":        {"x":0.585,"y":0.145,"w":0.110,"h":0.074},
+    "select":      {"x":0.445,"y":0.885,"w":0.124,"h":0.086},
+    "start":       {"x":0.555,"y":0.885,"w":0.124,"h":0.086},
+    "status":      {"x":0.365,"y":0.240}
+  }
+}
+```
+
+* `x`/`y` are the control's centre as a fraction of the view width/height.
+* Circles (`left_stick`, `right_stick`, `dpad`, `button_x/y/a/b`) use `r`, a
+  fraction of the view height; for the D-pad `r` is the arm length.
+* Rectangles (`l1`, `r1`, `l2`, `r2`, `back`, `home`, `select`, `start`) use the
+  full `w` (fraction of width) and `h` (fraction of height), centred on `x`/`y`.
+  L2/R2 are drawn as vertical bars whose fill is the exact analog value.
+* `status` is the origin of the RAW/calibration/GRAB text block.
+
+`TesterLayout.load()` reads `R.raw.tester_layout` and validates every field:
+missing, non-numeric or out-of-range values fall back to the built-in defaults
+for that field; an unknown `version`, unreadable resource or malformed JSON falls
+back to the full defaults.  Nothing throws, so a bad save from the editor can
+never crash the tester.  Falling back is logged (`AshFallParts` tag).
+
+Before building a layout, run the host check (it is stricter than the app - it
+fails instead of falling back):
+
+```sh
+aosp/vendor/ashfall/apps/AshFallParts/tools/check_tester_layout.py
+# or: tools/check_tester_layout.py path/to/tester_layout.json
+```
+
 ## 7. Verification
 
 Emulator preview (Android 13, 1920x1080, density 360), same sources as the
 Soong module:
 
 * `preview/prepare.sh && gradle :app:assembleDebug` -> BUILD SUCCESSFUL.
+* `tools/check_tester_layout.py` -> `ok (schema v1, 16 controls)` for the shipped
+  file; a mutated copy (`version` 2, `r` 1.5, missing `start.h`, `dpad.x` -0.2)
+  -> four errors, exit 1.
+* Loader fallback, host JVM check of `TesterLayout.parse` (org.json, Android
+  `Log` stubbed): full valid file -> values used; partial file with an invalid
+  `button_x.r` and a missing `l1.h` -> per-value defaults; out-of-range
+  (`x` -1/`y` 2/`r` 0/`h` 1.5) -> defaults; `version` 2, broken JSON, empty and
+  null -> full defaults.  All assertions passed (exit 0) and the expected
+  warnings were logged.
+* Emulator: with the shipped layout every control landed on its schema position
+  (measured from the accent fills and ring edges).  A test layout copied into
+  the *preview build output* (never the owned file) moved the left stick to
+  0.5/0.5, X to 0.5/0.2 with `r` invalid and L1 to 0.5/0.1 with `h` missing:
+  only those positions moved, `r`/`h` fell back to the defaults and all other
+  controls stayed at the schema defaults.  Replacing it with `{ this is not
+  json` logged `tester layout: invalid JSON, using defaults` and drew the full
+  defaults - no crash.  The shipped file was not modified by any of this.
 * Mock daemon: `tools/mock/build.sh --run` (test-only, never installed in the
   image) with `setenforce 0` (the debug APK cannot write properties as a
   user build, the same limitation documented in `docs/parts.md` §6.2).
