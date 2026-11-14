@@ -106,6 +106,26 @@
     <string name="fan_throttle_confirm_title">Override throttling?</string>
     <string name="fan_throttle_confirm_body">This disables the kernel\'s software clock throttling (thermal cooling devices) so the CPU and GPU stay at full clock while the handheld heats up. Hardware limits stay in place, but sustained heavy use can make the device dangerously hot, drain the battery and shorten its life. The override is forgotten at the next reboot.</string>
     <string name="fan_throttle_confirm_enable">Enable</string>
+    <!-- GPU max frequency (docs/phase6.md §3) -->
+    <string name="fan_gpu_title">GPU max frequency</string>
+    <string name="fan_gpu_value_stock">670 MHz (stock, default)</string>
+    <string name="fan_gpu_value_765">765 MHz</string>
+    <string name="fan_gpu_value_850">850 MHz</string>
+    <string name="fan_gpu_value_940">940 MHz</string>
+    <string name="fan_gpu_value_experimental">1000 MHz (experimental)</string>
+    <string name="fan_gpu_summary_stock">670 MHz (stock)</string>
+    <string name="fan_gpu_summary_overclock">%1$d MHz · overclock</string>
+    <string name="fan_gpu_summary_value">%1$d MHz</string>
+    <string name="fan_gpu_summary_actual">Actual %1$d MHz · requested %2$d MHz</string>
+    <string name="fan_gpu_summary_clamped">Requested %1$d MHz — the throttle override clamps the GPU to stock %2$d MHz.</string>
+    <string name="fan_gpu_summary_not_applied">Requested %1$d MHz — the daemon reports %2$d MHz; the OC step is not available.</string>
+    <string name="fan_gpu_summary_unavailable">Requested %1$d MHz — the GPU cap is not available (ashfall-hwd is not reporting).</string>
+    <string name="fan_gpu_summary_no_sysfs">Requested %1$d MHz — the GPU clock interface is unavailable on this kernel.</string>
+    <string name="fan_gpu_warning_fan">Sustained clocks depend on the fan and thermal throttling; the fan is not forced.</string>
+    <string name="fan_gpu_mock_note">Preview mock: this value is simulated, no daemon is involved.</string>
+    <string name="fan_gpu_confirm_title">Run the GPU at 1000 MHz?</string>
+    <string name="fan_gpu_confirm_body">1000 MHz is outside Qualcomm\'s stock table and marginal on some SD865 units; 940 MHz is the common stable overclock. It raises the GPU voltage and needs the fan. If the device becomes unstable or too hot, select 940 MHz. The cap is applied by ashfall-hwd and survives a reboot.</string>
+    <string name="fan_gpu_confirm_enable">Use 1000 MHz</string>
     <string name="fan_advanced_category">Advanced</string>
     <string name="fan_advanced_permanent_title">Keep throttling override after reboot</string>
     <string name="fan_advanced_permanent_summary">Apply the throttling override at every boot. Dangerous if left on.</string>

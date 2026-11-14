@@ -66,6 +66,7 @@ public class FanFragment extends PreferenceFragmentCompat {
     private TogglePreference mKick;
     private TogglePreference mScreenOff;
     private TogglePreference mThrottle;
+    private Preference mGpu;
     private TogglePreference mPermanent;
     private PreferenceCategory mAdvancedCategory;
     private PreferenceScreen mScreen;
@@ -87,6 +88,7 @@ public class FanFragment extends PreferenceFragmentCompat {
     };
     private boolean mFirstResume = true;
     private AlertDialog mThrottleDialog;
+    private AlertDialog mGpuDialog;
 
     @Override
     public void onCreatePreferences(Bundle savedInstanceState, String rootKey) {
@@ -188,6 +190,19 @@ public class FanFragment extends PreferenceFragmentCompat {
         });
         performance.addPreference(mThrottle);
 
+        // GPU cap (docs/phase6.md §3): the selector lives in the same
+        // Performance section; the daemon publishes the actual cap and
+        // whether the throttle override clamps it.
+        mGpu = new Preference(requireContext());
+        mGpu.setKey("fan_gpu_max");
+        mGpu.setPersistent(false);
+        mGpu.setTitle(R.string.fan_gpu_title);
+        mGpu.setOnPreferenceClickListener(preference -> {
+            showGpuDialog();
+            return true;
+        });
+        performance.addPreference(mGpu);
+
         // Always build the hidden category (just above the version row) and
         // only make it visible once it has been unlocked, so its position is
         // identical whether it was unlocked now or in an earlier visit.
@@ -252,6 +267,10 @@ public class FanFragment extends PreferenceFragmentCompat {
         if (mThrottleDialog != null) {
             mThrottleDialog.dismiss();
             mThrottleDialog = null;
+        }
+        if (mGpuDialog != null) {
+            mGpuDialog.dismiss();
+            mGpuDialog = null;
         }
         super.onDestroyView();
     }
@@ -364,6 +383,107 @@ public class FanFragment extends PreferenceFragmentCompat {
         if (mPermanent != null) {
             mPermanent.setChecked(Perf.permanent());
         }
+        refreshGpu();
+    }
+
+    /** Keeps the GPU row's actual cap / clamp summary in step with the daemon. */
+    private void refreshGpu() {
+        if (mGpu == null) {
+            return;
+        }
+        final int requested = Perf.gpuRequestedMhz();
+        final int actual = Perf.gpuActualMhz();
+        final int oc = Perf.gpuOc();
+        final boolean aboveStock = requested > Perf.GPU_STOCK_MHZ;
+        final StringBuilder text = new StringBuilder();
+        if (oc == -1) {
+            text.append(getString(R.string.fan_gpu_summary_no_sysfs, requested));
+        } else if (oc == Integer.MIN_VALUE || oc < -1 || actual == Integer.MIN_VALUE) {
+            text.append(getString(R.string.fan_gpu_summary_unavailable, requested));
+        } else if (Perf.gpuClampedToStock()) {
+            // The daemon clamps the cap to stock while the phase-5 throttle
+            // override is active (docs/phase6.md §3); otherwise the requested
+            // OC step is simply missing from the GPU table.
+            text.append(Perf.overrideActive()
+                    ? getString(R.string.fan_gpu_summary_clamped, requested, actual)
+                    : getString(R.string.fan_gpu_summary_not_applied, requested, actual));
+        } else if (actual == requested) {
+            if (actual == Perf.GPU_STOCK_MHZ) {
+                text.append(getString(R.string.fan_gpu_summary_stock));
+            } else if (aboveStock) {
+                text.append(getString(R.string.fan_gpu_summary_overclock, actual));
+            } else {
+                text.append(getString(R.string.fan_gpu_summary_value, actual));
+            }
+        } else {
+            text.append(getString(R.string.fan_gpu_summary_actual, actual, requested));
+        }
+        if (aboveStock && !(oc == 0 && Perf.overrideActive())) {
+            text.append('\n').append(getString(R.string.fan_gpu_warning_fan));
+        }
+        if (Perf.mockEnabled()) {
+            text.append('\n').append(getString(R.string.fan_gpu_mock_note));
+        }
+        mGpu.setSummary(text);
+    }
+
+    /** Single-choice dialog with the five contract steps (stock is the default). */
+    private void showGpuDialog() {
+        if (!isAdded()) {
+            return;
+        }
+        final int[] values = Perf.GPU_STEPS;
+        final CharSequence[] labels = {
+                getString(R.string.fan_gpu_value_stock),
+                getString(R.string.fan_gpu_value_765),
+                getString(R.string.fan_gpu_value_850),
+                getString(R.string.fan_gpu_value_940),
+                getString(R.string.fan_gpu_value_experimental),
+        };
+        final int requested = Perf.gpuRequestedMhz();
+        int checked = -1;
+        for (int i = 0; i < values.length; i++) {
+            if (values[i] == requested) {
+                checked = i;
+            }
+        }
+        mGpuDialog = new AlertDialog.Builder(requireContext())
+                .setTitle(R.string.fan_gpu_title)
+                .setSingleChoiceItems(labels, checked, (dialog, which) -> {
+                    dialog.dismiss();
+                    onGpuStepSelected(values[which]);
+                })
+                .setNegativeButton(R.string.cancel, null)
+                .create();
+        mGpuDialog.show();
+    }
+
+    private void onGpuStepSelected(int mhz) {
+        if (mhz == Perf.GPU_EXPERIMENTAL_MHZ) {
+            confirmGpuExperimental(mhz);
+            return;
+        }
+        applyGpuStep(mhz);
+    }
+
+    /** 1000 MHz is opt-in and always goes through the thermal/stability warning. */
+    private void confirmGpuExperimental(int mhz) {
+        if (!isAdded()) {
+            return;
+        }
+        mGpuDialog = new AlertDialog.Builder(requireContext())
+                .setTitle(R.string.fan_gpu_confirm_title)
+                .setMessage(R.string.fan_gpu_confirm_body)
+                .setNegativeButton(R.string.cancel, null)
+                .setPositiveButton(R.string.fan_gpu_confirm_enable,
+                        (dialog, which) -> applyGpuStep(mhz))
+                .create();
+        mGpuDialog.show();
+    }
+
+    private void applyGpuStep(int mhz) {
+        Perf.setGpuRequestedMhz(mhz);
+        refreshGpu();
     }
 
     private void confirmThrottleOverride() {
