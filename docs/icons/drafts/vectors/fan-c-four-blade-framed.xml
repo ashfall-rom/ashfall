@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- AshFall icon draft (issue #85). Clean-room, original design.
+     C - Framed four-blade: The four-blade rotor inside a thin circular frame. Reads as a housed case fan and keeps a perfectly round row icon.
+     Preview only: not wired into the app. 24dp, single colour,
+     tintable. 960 viewport; 80 = 2dp where stroked. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="960"
+    android:viewportHeight="960"
+    android:tint="?android:attr/colorControlNormal">
+    <path
+        android:fillColor="@android:color/transparent"
+        android:strokeColor="@android:color/white"
+        android:strokeWidth="80"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:pathData="M120.00,480.00C120.00,281.18 281.18,120.00 480.00,120.00C678.82,120.00 840.00,281.18 840.00,480.00C840.00,678.82 678.82,840.00 480.00,840.00C281.18,840.00 120.00,678.82 120.00,480.00Z" />
+    <path
+        android:fillColor="@android:color/white"
+        android:pathData="M549.50,515.41C607.79,539.59 650.70,639.18 645.19,715.92Q572.39,782.19 474.97,767.96C523.73,704.99 559.08,601.77 515.41,549.50A78.00,78.00 0 0 0 549.50,515.41Z" />
+    <path
+        android:fillColor="@android:color/white"
+        android:pathData="M444.59,549.50C420.41,607.79 320.82,650.70 244.08,645.19Q177.81,572.39 192.04,474.97C255.01,523.73 358.23,559.08 410.50,515.41A78.00,78.00 0 0 0 444.59,549.50Z" />
+    <path
+        android:fillColor="@android:color/white"
+        android:pathData="M410.50,444.59C352.21,420.41 309.30,320.82 314.81,244.08Q387.61,177.81 485.03,192.04C436.27,255.01 400.92,358.23 444.59,410.50A78.00,78.00 0 0 0 410.50,444.59Z" />
+    <path
+        android:fillColor="@android:color/white"
+        android:pathData="M515.41,410.50C539.59,352.21 639.18,309.30 715.92,314.81Q782.19,387.61 767.96,485.03C704.99,436.27 601.77,400.92 549.50,444.59A78.00,78.00 0 0 0 515.41,410.50Z" />
+    <path
+        android:fillColor="@android:color/white"
+        android:pathData="M402.00,480.00C402.00,436.92 436.92,402.00 480.00,402.00C523.08,402.00 558.00,436.92 558.00,480.00C558.00,523.08 523.08,558.00 480.00,558.00C436.92,558.00 402.00,523.08 402.00,480.00Z" />
+</vector>
