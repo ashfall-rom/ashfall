@@ -1,7 +1,7 @@
 # AshFall Parts: controller tester and calibration wizard v2
 
-Follow-ups to `docs/parts.md` for the user tests of 2026-11-14 (issues **#84**
-and **#101**, contract `docs/phase5.md` §6.2/§6.3).  This page documents the
+Follow-ups to `docs/parts.md` for the user tests of 2026-11-14 (issues **#84**,
+**#101**, **#103** and **#104**, contract `docs/phase5.md` §6.2/§6.3).  This page documents the
 controller package only; the rest of AshFall Parts (root entry, fan, lighting,
 QS tiles) is described in `docs/parts.md`.
 
@@ -18,6 +18,10 @@ QS tiles) is described in `docs/parts.md`.
 | 4. "B, Back, Home, Select don't show" | The tester now sends `GRAB ON` on its raw-stream socket (§3).  Nothing is injected into uinput, so every button is only reported in the `RAW` mask and drawn.  Leaving: hold **Start + Select for 2 s** (progress bar under the pills) or tap **Close**.  The old "Select toggles the raw overlay" mode is gone; the raw values are always visible. |
 | 5. "Fun: light each side's LED ring with its activity" | `ashfall.ui.led_override` is published at <= 29 Hz (§4) and cleared on pause. |
 | 6. "Calibration waits for Start" | The wizard's timed steps were replaced by Start-paced steps (§5). |
+| 7. #104: "the app's D-pad is twice the editor's size" | `drawDpad` treated `r` as the offset to each arrow, so the total span was `4*r*H`; it now uses `r` as the half-span (`a = r*h`, arrows at ±a/2), matching the editor's `2*r*H`. |
+| 8. #104: "ABXY distances are not equal" | The view is not 16:9, so scaling x by width and y by height made the diamond rectangular.  The group centre and a single pixel offset are computed from the four layout circles; X/Y/A/B are placed on a square diamond (distance X-B = Y-A = 2*off, diagonals off*sqrt(2)). |
+| 9. #104: "L3/R3 labels" | The side label is gone; each stick has a capsule inside its top (0.9r x 0.34r) labelled L3/R3, accent-filled with the primary text colour while the stick is clicked. |
+| 10. #104: "L2/R2 fill sticks out" | The fill is a plain rectangle from the bottom, clipped to the inner bar (2 dp inset): below 10 % it stays inside, any value > 0 keeps a 2 dp sliver, 0 % is empty, the outline is drawn on top. |
 
 ## 2. The button layout
 
@@ -150,29 +154,35 @@ Schema v1 (all values are floats, sizes relative to the view):
 {
   "version": 1,
   "controls": {
-    "left_stick":  {"x":0.165,"y":0.300,"r":0.175},
-    "right_stick": {"x":0.835,"y":0.720,"r":0.175},
-    "dpad":        {"x":0.165,"y":0.720,"r":0.128},
-    "button_x":    {"x":0.835,"y":0.2107,"r":0.0533},
-    "button_y":    {"x":0.7735,"y":0.320,"r":0.0533},
-    "button_a":    {"x":0.8965,"y":0.320,"r":0.0533},
-    "button_b":    {"x":0.835,"y":0.4293,"r":0.0533},
-    "l1":          {"x":0.115,"y":0.075,"w":0.130,"h":0.072},
-    "r1":          {"x":0.885,"y":0.075,"w":0.130,"h":0.072},
-    "l2":          {"x":0.028,"y":0.505,"w":0.0339,"h":0.690},
-    "r2":          {"x":0.972,"y":0.505,"w":0.0339,"h":0.690},
-    "back":        {"x":0.415,"y":0.145,"w":0.110,"h":0.074},
-    "home":        {"x":0.585,"y":0.145,"w":0.110,"h":0.074},
-    "select":      {"x":0.445,"y":0.885,"w":0.124,"h":0.086},
-    "start":       {"x":0.555,"y":0.885,"w":0.124,"h":0.086},
-    "status":      {"x":0.365,"y":0.240}
+    "left_stick": {"x": 0.165, "y": 0.708271, "r": 0.175},
+    "right_stick": {"x": 0.835, "y": 0.72, "r": 0.175},
+    "dpad": {"x": 0.17631, "y": 0.304459, "r": 0.128},
+    "button_x": {"x": 0.835, "y": 0.2107, "r": 0.0533},
+    "button_y": {"x": 0.7735, "y": 0.32, "r": 0.0533},
+    "button_a": {"x": 0.8965, "y": 0.32, "r": 0.0533},
+    "button_b": {"x": 0.835, "y": 0.4293, "r": 0.0533},
+    "l1": {"x": 0.115, "y": 0.075, "w": 0.13, "h": 0.072},
+    "r1": {"x": 0.885, "y": 0.075, "w": 0.13, "h": 0.072},
+    "l2": {"x": 0.028, "y": 0.505, "w": 0.0339, "h": 0.69},
+    "r2": {"x": 0.972, "y": 0.505, "w": 0.0339, "h": 0.69},
+    "back": {"x": 0.6, "y": 0.885, "w": 0.11, "h": 0.074},
+    "home": {"x": 0.4, "y": 0.885, "w": 0.11, "h": 0.074},
+    "select": {"x": 0.4, "y": 0.145, "w": 0.124, "h": 0.086},
+    "start": {"x": 0.6, "y": 0.145, "w": 0.124, "h": 0.086},
+    "status": {"x": 0.365, "y": 0.3}
   }
 }
 ```
 
 * `x`/`y` are the control's centre as a fraction of the view width/height.
 * Circles (`left_stick`, `right_stick`, `dpad`, `button_x/y/a/b`) use `r`, a
-  fraction of the view height; for the D-pad `r` is the arm length.
+  fraction of the view height.  For the D-pad `r` is **half of the total span**
+  (the editor draws `2*r*H` across).  The four face-button circles only define
+  the diamond's centre and one common pixel offset; the app keeps the diamond
+  square on the non-16:9 tester view, so their exact per-axis positions are not
+  honoured (each button keeps its own `r`).
+* The shipped `res/raw/tester_layout.json`, not this example, is the source of
+  truth; the values above are the last save applied for testing.
 * Rectangles (`l1`, `r1`, `l2`, `r2`, `back`, `home`, `select`, `start`) use the
   full `w` (fraction of width) and `h` (fraction of height), centred on `x`/`y`.
   L2/R2 are drawn as vertical bars whose fill is the exact analog value.
@@ -248,6 +258,16 @@ Soong module:
 * Light and dark: the controls, labels and accent were resolved through the
   theme (window background `#FAFAFA` vs `#000000`, outlines and fills visible in
   both).  Pure black uses the same attributes.
+* #104 geometry (emulator, shipped layout): the D-pad spans 183 px = `2*r*H`
+  (Up bbox 287..379, Left bbox 247..338, centre 339/380); X/B are 197 px apart
+  vertically and Y/A 196 px horizontally, with diagonals 138 px = 98*sqrt(2)
+  (square diamond, `off` 98.1); the L3/R3 caps are 116x46 px at
+  `cy - 0.55r` and fill with the accent when THUMBL/THUMBR is pressed, with no
+  side label; a 0 % trigger is empty, 34 % and 59 % fills stay inside the 4.5 px
+  (2 dp) inset bar with a straight top edge; Select/Start render in the top row
+  (`y` 0.145) and Home/Back in the bottom row (`y` 0.885) with their labels.
+  Screenshots refreshed (light: X/A, Start top; dark: Y/B, Select top,
+  Home/Back bottom).
 
 Not verified here: the RP5 hardware itself (owned by the native worker, and the
 device is serialised between workers).  The device checks to repeat are the real
