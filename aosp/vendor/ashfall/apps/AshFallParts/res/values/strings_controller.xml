@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Copyright (C) 2026 The AshFall Project
+
+  Licensed under the Apache License, Version 2.0 (the "License");
+  you may not use this file except in compliance with the License.
+  You may obtain a copy of the License at
+
+       http://www.apache.org/licenses/LICENSE-2.0
+
+  Unless required by applicable law or agreed to in writing, software
+  distributed under the License is distributed on an "AS IS" BASIS,
+  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+  See the License for the specific language governing permissions and
+  limitations under the License.
+-->
+<resources>
+    <!-- Controller tester (issue #84).  All strings of the controller package
+         live in this file so the settings/fan/lighting work can change
+         res/values/strings.xml without conflicts. -->
+
+    <string name="tester_hint_v2">All buttons go to the tester.  Hold Start + Select for 2 s, or tap Close, to leave.  The stick rings follow each side\'s activity.</string>
+    <string name="tester_no_raw_v2">Input daemon not reachable: normal buttons are shown and B or Back leaves.  Start + Select and the LED reaction need ashfall-rp5-input.</string>
+    <string name="tester_grab_failed">The input daemon refused GRAB: Home, Back and Select may still reach the system.</string>
+    <string name="tester_close">Close</string>
+    <string name="tester_grab_state">GRAB ON</string>
+    <string name="tester_grab_state_off">GRAB OFF</string>
+
+    <!-- Calibration wizard (issue #84, item 6): each step waits for Start. -->
+    <string name="cal_step_release_body_v2">Put the handheld down, let go of both sticks and the triggers, then press Start to capture the centre position.</string>
+    <string name="cal_step_rotate_body_v2">Roll both sticks slowly around their full circle a few times, then press Start.  You can take as long as you need.</string>
+    <string name="cal_step_trigger_body_v2">Squeeze L2 and R2 all the way in and release them twice, then press Start.</string>
+    <string name="cal_step_review_body_v2">Check that every range looks sane.  Nothing is written until you press Save.</string>
+    <string name="cal_live_release">Samples: %1$d — hold still and press Start when the sticks are at rest</string>
+    <string name="cal_live_rotate">Left travel %1$d · right travel %2$d — press Start when you have rolled both sticks</string>
+    <string name="cal_live_trigger">L2 travel %1$d · R2 travel %2$d — press Start when both triggers have been pulled fully</string>
+    <string name="cal_wait_samples">Waiting for samples from ashfall-rp5-input…</string>
+    <string name="cal_start_hint">Start button: finish this step</string>
+
+    <!-- Controller page summaries. -->
+    <string name="controller_tester_summary_v2">Drawn RP5 outline, every button via GRAB, live sticks, triggers and LED reaction</string>
+    <string name="controller_grab_note">While the tester is open it takes every button from ashfall-rp5-input: A/B/X/Y, shoulders, L3/R3, D-pad, Start, Select, Home and Back.  Leave with Start + Select (2 s) or Close.</string>
+    <string name="controller_footer_v2">Deadzones are applied by ashfall-rp5-input after calibration, so every app and emulator sees them.  The tester reads raw MCU values, which is why it can show buttons that Android would normally consume.</string>
+</resources>

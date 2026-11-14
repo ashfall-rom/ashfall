@@ -37,9 +37,14 @@ import java.io.IOException;
 import java.util.Locale;
 
 /**
- * Calibration wizard: release the sticks, roll them, pull the triggers, review,
+ * Calibration wizard: centre the sticks, roll them, pull the triggers, review,
  * save via {@code SET CAL}.  Nothing is written until Save; Cancel leaves the
  * existing calibration untouched.
+ *
+ * <p>Every capture step runs until the user presses <b>Start</b> (or the
+ * on-screen button), so the instructions stay readable for as long as needed
+ * (issue #84, item 6).  The wizard never grabs the pad: Start has to reach the
+ * activity as a normal key event.
  */
 public class CalibrationActivity extends PartsActivity {
 
@@ -48,15 +53,15 @@ public class CalibrationActivity extends PartsActivity {
     private static final int STEP_TRIGGER = 2;
     private static final int STEP_REVIEW = 3;
 
-    private static final long DURATION_RELEASE = 2000;
-    private static final long DURATION_ROTATE = 8000;
-    private static final long DURATION_TRIGGER = 4000;
+    /** Enough samples to average the centre without waiting for the user. */
+    private static final int MIN_RELEASE_SAMPLES = 8;
 
     private TextView mTitleView;
     private TextView mBodyView;
     private TextView mProgressView;
     private TextView mErrorView;
     private TextView mReviewView;
+    private TextView mStartHint;
     private StickPreviewView mPreview;
     private Button mCancel;
     private Button mNext;
@@ -67,9 +72,10 @@ public class CalibrationActivity extends PartsActivity {
 
     private int mStep = STEP_RELEASE;
     private boolean mCapturing;
-    private long mStepStart;
     private int mRetryAction;
+    private int mRetryStep;
     private boolean mSaving;
+    private volatile boolean mResumed;
     private long mLastPreview;
 
     private int mSamples;
@@ -77,29 +83,10 @@ public class CalibrationActivity extends PartsActivity {
     private final float[] mMin = new float[6];
     private final float[] mMax = new float[6];
     private final float[] mCenter = new float[6];
-    private float[] mAxisMin = new float[4];
-    private float[] mAxisMax = new float[4];
+    private final float[] mAxisMin = new float[4];
+    private final float[] mAxisMax = new float[4];
     private final float[] mTriggerMin = new float[2];
     private final float[] mTriggerMax = new float[2];
-
-    private final Runnable mTick = new Runnable() {
-        @Override
-        public void run() {
-            if (!mCapturing) {
-                return;
-            }
-            final long duration = durationFor(mStep);
-            final long elapsed = SystemClock.uptimeMillis() - mStepStart;
-            final long remaining = Math.max(0, duration - elapsed);
-            mProgressView.setText(getString(R.string.cal_step_progress,
-                    (remaining + 999) / 1000));
-            if (elapsed >= duration) {
-                finishStep();
-            } else {
-                mHandler.postDelayed(this, 100);
-            }
-        }
-    };
 
     @Override
     protected int getPageTitle() {
@@ -119,6 +106,7 @@ public class CalibrationActivity extends PartsActivity {
         mProgressView = findViewById(R.id.cal_progress);
         mErrorView = findViewById(R.id.cal_error);
         mReviewView = findViewById(R.id.cal_review);
+        mStartHint = findViewById(R.id.cal_start_hint);
         mPreview = findViewById(R.id.cal_preview);
         mCancel = findViewById(R.id.cal_cancel);
         mNext = findViewById(R.id.cal_next);
@@ -128,20 +116,14 @@ public class CalibrationActivity extends PartsActivity {
         mNext.setVisibility(View.GONE);
         mCancel.requestFocus();
 
-        for (int i = 0; i < mMin.length; i++) {
-            mMin[i] = Float.MAX_VALUE;
-            mMax[i] = -Float.MAX_VALUE;
-        }
-        for (int i = 0; i < mAxisMin.length; i++) {
-            mAxisMin[i] = Float.MAX_VALUE;
-            mAxisMax[i] = -Float.MAX_VALUE;
-        }
+        resetRanges();
         connect();
     }
 
     @Override
     protected void onResume() {
         super.onResume();
+        mResumed = true;
         if (mStream == null && mStep != STEP_REVIEW && !mSaving) {
             // Reconnect after a pause; the current step restarts from scratch.
             connect();
@@ -150,9 +132,9 @@ public class CalibrationActivity extends PartsActivity {
 
     @Override
     protected void onPause() {
-        super.onPause();
+        mResumed = false;
         mCapturing = false;
-        mHandler.removeCallbacks(mTick);
+        super.onPause();
         stopStream();
     }
 
@@ -164,7 +146,6 @@ public class CalibrationActivity extends PartsActivity {
             CalClient client = null;
             CalData factory = null;
             RawStream stream = null;
-            String error = null;
             try {
                 client = CalClient.open();
                 try {
@@ -192,7 +173,7 @@ public class CalibrationActivity extends PartsActivity {
                     }
                 });
             } catch (IOException e) {
-                error = e.getMessage();
+                // Reported below.
             } finally {
                 CalClient.closeQuietly(client);
             }
@@ -200,7 +181,9 @@ public class CalibrationActivity extends PartsActivity {
             final RawStream rawStream = stream;
             final boolean failed = rawStream == null;
             mHandler.post(() -> {
-                if (isFinishing()) {
+                if (isFinishing() || !mResumed) {
+                    // Paused while connecting: drop the stream instead of
+                    // capturing in the background.
                     if (rawStream != null) {
                         rawStream.close();
                     }
@@ -255,13 +238,27 @@ public class CalibrationActivity extends PartsActivity {
         final long now = SystemClock.uptimeMillis();
         if (now - mLastPreview > 50) {
             mLastPreview = now;
-            mHandler.post(() -> mPreview.setRaw(sample));
+            mHandler.post(() -> {
+                mPreview.setRaw(sample);
+                updateLiveStatus();
+            });
         }
     }
 
     private void track(int channel, float value) {
         mMin[channel] = Math.min(mMin[channel], value);
         mMax[channel] = Math.max(mMax[channel], value);
+    }
+
+    private void resetRanges() {
+        for (int i = 0; i < mMin.length; i++) {
+            mMin[i] = Float.MAX_VALUE;
+            mMax[i] = -Float.MAX_VALUE;
+        }
+        for (int i = 0; i < mAxisMin.length; i++) {
+            mAxisMin[i] = Float.MAX_VALUE;
+            mAxisMax[i] = -Float.MAX_VALUE;
+        }
     }
 
     private void startStep(int step) {
@@ -278,8 +275,9 @@ public class CalibrationActivity extends PartsActivity {
         }
         mErrorView.setVisibility(View.GONE);
         mReviewView.setVisibility(View.GONE);
-        mNext.setVisibility(View.GONE);
         mRetryAction = 0;
+        mNext.setEnabled(true);
+        mStartHint.setVisibility(step == STEP_REVIEW ? View.GONE : View.VISIBLE);
 
         if (step == STEP_REVIEW) {
             showReview();
@@ -289,32 +287,59 @@ public class CalibrationActivity extends PartsActivity {
         switch (step) {
             case STEP_RELEASE:
                 mTitleView.setText(R.string.cal_step_release_title);
-                mBodyView.setText(R.string.cal_step_release_body);
+                mBodyView.setText(R.string.cal_step_release_body_v2);
                 break;
             case STEP_ROTATE:
                 mTitleView.setText(R.string.cal_step_rotate_title);
-                mBodyView.setText(R.string.cal_step_rotate_body);
+                mBodyView.setText(R.string.cal_step_rotate_body_v2);
                 break;
             case STEP_TRIGGER:
             default:
                 mTitleView.setText(R.string.cal_step_trigger_title);
-                mBodyView.setText(R.string.cal_step_trigger_body);
+                mBodyView.setText(R.string.cal_step_trigger_body_v2);
                 break;
         }
         mCapturing = true;
-        mStepStart = SystemClock.uptimeMillis();
-        mHandler.removeCallbacks(mTick);
-        mHandler.post(mTick);
+        mProgressView.setText(R.string.cal_wait_samples);
+        mNext.setText(R.string.cal_step_start);
+        mNext.setVisibility(View.VISIBLE);
+        mNext.postDelayed(mNext::requestFocus, 120);
     }
 
+    /** Live, readable progress for the current step (10 Hz). */
+    private void updateLiveStatus() {
+        if (!mCapturing) {
+            return;
+        }
+        switch (mStep) {
+            case STEP_RELEASE:
+                mProgressView.setText(getString(R.string.cal_live_release, mSamples));
+                break;
+            case STEP_ROTATE: {
+                final int left = (int) Math.max(0, mMax[0] - mMin[0]);
+                final int right = (int) Math.max(0, mMax[2] - mMin[2]);
+                mProgressView.setText(getString(R.string.cal_live_rotate, left, right));
+                break;
+            }
+            case STEP_TRIGGER:
+            default: {
+                final int l2 = (int) Math.max(0, mMax[4] - mMin[4]);
+                final int r2 = (int) Math.max(0, mMax[5] - mMin[5]);
+                mProgressView.setText(getString(R.string.cal_live_trigger, l2, r2));
+                break;
+            }
+        }
+    }
+
+    /** Start (or the button) ends the current step; validation happens here. */
     private void finishStep() {
         mCapturing = false;
-        mHandler.removeCallbacks(mTick);
         switch (mStep) {
             case STEP_RELEASE: {
                 synchronized (this) {
-                    if (mSamples == 0) {
-                        fail(R.string.cal_error_no_input, 2);
+                    if (mSamples < MIN_RELEASE_SAMPLES) {
+                        mCapturing = true;
+                        mProgressView.setText(R.string.cal_wait_samples);
                         return;
                     }
                     for (int i = 0; i < 4; i++) {
@@ -329,7 +354,7 @@ public class CalibrationActivity extends PartsActivity {
             case STEP_ROTATE: {
                 synchronized (this) {
                     for (int i = 0; i < 4; i++) {
-                        if (mMax[i] - mMin[i] <= 8f) {
+                        if (mMax[i] - mMin[i] < minimumTravel(AXIS_KEYS[i], 300f)) {
                             fail(R.string.cal_error_range, 2);
                             return;
                         }
@@ -342,7 +367,8 @@ public class CalibrationActivity extends PartsActivity {
             }
             case STEP_TRIGGER: {
                 synchronized (this) {
-                    if (mMax[4] - mMin[4] <= 8f || mMax[5] - mMin[5] <= 8f) {
+                    if (mMax[4] - mMin[4] < minimumTravel("l2", 80f)
+                            || mMax[5] - mMin[5] < minimumTravel("r2", 80f)) {
                         fail(R.string.cal_error_trigger, 2);
                         return;
                     }
@@ -359,9 +385,32 @@ public class CalibrationActivity extends PartsActivity {
         }
     }
 
+    private static final String[] AXIS_KEYS = {
+            "left_x", "left_y", "right_x", "right_y",
+    };
+
+    /**
+     * A quarter of the factory travel is the least that can still be called a
+     * full roll/full pull.  A user calibration can be different, but the factory
+     * copy (or the built-in defaults of the same unit) is a safe reference; the
+     * absolute floor keeps the check useful when GET CAL failed.
+     */
+    private float minimumTravel(String key, float floor) {
+        if (mFactory == null || !mFactory.isComplete()) {
+            return floor;
+        }
+        final float min = mFactory.get(key + "_min", 0);
+        final float max = mFactory.get(key + "_max", 0);
+        final float span = max - min;
+        if (span <= 0) {
+            return floor;
+        }
+        return Math.max(floor, span * 0.25f);
+    }
+
     private void fail(int messageRes, int retryAction) {
         mCapturing = false;
-        mHandler.removeCallbacks(mTick);
+        mStartHint.setVisibility(View.GONE);
         mErrorView.setText(messageRes);
         mErrorView.setVisibility(View.VISIBLE);
         mRetryAction = retryAction;
@@ -371,25 +420,32 @@ public class CalibrationActivity extends PartsActivity {
         mNext.postDelayed(mNext::requestFocus, 120);
     }
 
-    private int mRetryStep;
-
     private void onNext() {
-        if (mStep == STEP_REVIEW && mRetryAction == 0) {
-            save();
+        if (mSaving) {
             return;
         }
         if (mRetryAction == 1) {
             connect();
-        } else if (mRetryAction == 2) {
+            return;
+        }
+        if (mRetryAction == 2) {
             startStep(mRetryStep);
+            return;
+        }
+        if (mStep == STEP_REVIEW) {
+            save();
+            return;
+        }
+        if (mCapturing) {
+            finishStep();
         }
     }
 
     private void showReview() {
         mCapturing = false;
-        mHandler.removeCallbacks(mTick);
+        stopStream();
         mTitleView.setText(R.string.cal_step_review_title);
-        mBodyView.setText(R.string.cal_step_review_body);
+        mBodyView.setText(R.string.cal_step_review_body_v2);
         mProgressView.setText("");
         mErrorView.setVisibility(View.GONE);
         mNext.setText(R.string.save);
@@ -503,24 +559,18 @@ public class CalibrationActivity extends PartsActivity {
     }
 
     @Override
-    public boolean onKeyDown(int keyCode, KeyEvent event) {
-        if (keyCode == KeyEvent.KEYCODE_BUTTON_B) {
+    public boolean dispatchKeyEvent(KeyEvent event) {
+        if (event.getKeyCode() == KeyEvent.KEYCODE_BUTTON_START) {
+            if (event.getAction() == KeyEvent.ACTION_UP) {
+                onNext();
+            }
+            return true;
+        }
+        if (event.getKeyCode() == KeyEvent.KEYCODE_BUTTON_B
+                && event.getAction() == KeyEvent.ACTION_UP) {
             finish();
             return true;
         }
-        return super.onKeyDown(keyCode, event);
-    }
-
-    private long durationFor(int step) {
-        switch (step) {
-            case STEP_RELEASE:
-                return DURATION_RELEASE;
-            case STEP_ROTATE:
-                return DURATION_ROTATE;
-            case STEP_TRIGGER:
-                return DURATION_TRIGGER;
-            default:
-                return 0;
-        }
+        return super.dispatchKeyEvent(event);
     }
 }

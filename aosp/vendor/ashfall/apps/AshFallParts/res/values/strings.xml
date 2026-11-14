@@ -169,7 +169,6 @@
 
     <!-- Controller -->
     <string name="controller_tester_title">Controller tester</string>
-    <string name="controller_tester_summary">Live buttons, sticks, deadzones and trigger travel</string>
     <string name="controller_calibration_title">Calibration</string>
     <string name="controller_calibration_summary">Source: %1$s</string>
     <string name="controller_calibration_missing">No calibration available</string>
@@ -191,17 +190,7 @@
     <string name="controller_cal_reset_done">User calibration deleted</string>
     <string name="controller_cal_error">The input daemon refused the request: %1$s</string>
 
-    <!-- Tester -->
-    <string name="tester_left_stick">Left stick</string>
-    <string name="tester_right_stick">Right stick</string>
-    <string name="tester_triggers">Triggers</string>
-    <string name="tester_raw">Raw</string>
-    <string name="tester_calibrated">Calibrated</string>
-    <string name="tester_hint">B or Back exits.  Select toggles raw values.  D-pad and sticks move the markers, A/B/X/Y and the shoulder buttons light up.</string>
-    <string name="tester_hint_no_raw">Raw view hidden.  Select shows the raw stream again.</string>
-    <string name="tester_no_raw">Raw stream unavailable (input daemon not reachable)</string>
-    <string name="tester_buttons">Buttons</string>
-    <string name="tester_hold">Peak hold — press Select to clear</string>
+    <!-- The tester strings (issue #84) live in values/strings_controller.xml. -->
 
     <!-- Calibration wizard -->
     <string name="cal_step_release_title">Let go of the sticks</string>
@@ -246,6 +235,5 @@
 
     <!-- Placeholder/footers -->
     <string name="footer_fan">The daemon samples the hottest CPU/GPU sensor every 2 seconds.  The safety override runs the fan at 100%% in every mode.</string>
-    <string name="footer_controller">Deadzones are applied by ashfall-rp5-input after calibration, so every app and emulator sees them.</string>
     <string name="footer_lighting">Effect changes are visible immediately.  Brightness 0 turns the rings off without changing the colour.</string>
 </resources>
