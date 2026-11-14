@@ -88,13 +88,6 @@ public class LightingDialog extends Dialog {
         super.onCreate(savedInstanceState);
         requestWindowFeature(Window.FEATURE_NO_TITLE);
         setContentView(R.layout.dialog_lighting);
-        final Window window = getWindow();
-        if (window != null) {
-            window.addFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND);
-            window.clearFlags(WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE);
-            Ui.fitDialog(window, findViewById(R.id.qs_lighting_root),
-                    findViewById(R.id.qs_lighting_scroll), 480);
-        }
 
         mSwitch = findViewById(R.id.qs_lighting_switch);
         mTargetGroup = findViewById(R.id.qs_lighting_target);
@@ -113,6 +106,15 @@ public class LightingDialog extends Dialog {
         bindListeners();
         refresh();
         findViewById(R.id.qs_lighting_done).setOnClickListener(view -> dismiss());
+
+        // Size after the swatches exist so the footer is always on screen.
+        final Window window = getWindow();
+        if (window != null) {
+            window.addFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND);
+            window.clearFlags(WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE);
+            Ui.fitDialog(window, findViewById(R.id.qs_lighting_root),
+                    findViewById(R.id.qs_lighting_scroll), 480, 0f);
+        }
         mSwitch.requestFocus();
     }
 
@@ -302,8 +304,10 @@ public class LightingDialog extends Dialog {
             mSpeed.setProgress(Led.speed() - 1);
             mSpeedValue.setText(getContext().getString(
                     R.string.lighting_speed_summary, Led.speed()));
+            // Duo is animated by the daemon with led.speed as well (#100).
             final boolean animated = Led.MODE_BREATHING.equals(mode)
-                    || Led.MODE_RAINBOW.equals(mode);
+                    || Led.MODE_RAINBOW.equals(mode)
+                    || Led.MODE_DUO.equals(mode);
             mSpeed.setEnabled(animated);
             mSpeed.setAlpha(animated ? 1f : 0.5f);
         } finally {

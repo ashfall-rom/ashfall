@@ -25,11 +25,16 @@
         <item name="android:clipToPadding">false</item>
         <item name="android:clipChildren">false</item>
         <item name="android:listPreferredItemHeight">72dip</item>
-        <!-- Use exactly the Settings page background instead of the device
-             default window background (which is pure black in the dark theme
-             and made these pages look different from Settings).  Deriving it
-             from colorBackground also follows LineageOS' pure-black system
-             theme, because that is the attribute the platform theme changes. -->
-        <item name="android:windowBackground">?android:attr/colorBackground</item>
+        <!-- Use exactly the Settings page surface instead of the device
+             default window background (which resolves to black in this app and
+             made the page differ from Settings).  SettingsLib's colour is
+             @android:color/system_surface_container_dark (#17191F) in the dark
+             theme and turns #000000 under the LineageOS black-theme RRO, so
+             both modes match Settings without a runtime check. -->
+        <item name="android:colorBackground">@color/settingslib_materialColorSurfaceContainer</item>
+        <item name="android:windowBackground">@color/settingslib_materialColorSurfaceContainer</item>
+        <!-- Platform SettingsLib dialogs, used by AlertDialog.Builder for the
+             preset editor and the throttling confirmation. -->
+        <item name="android:alertDialogTheme">@style/Theme.DeviceDefault.AlertDialog.SettingsLib.Expressive</item>
     </style>
 </resources>

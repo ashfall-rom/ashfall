@@ -129,9 +129,13 @@ immediately to the properties from §2 of the contract; there is no Apply button
   both ordinary switch rows (`ui/TogglePreference`).
 * **Performance**: **Override throttling** writes the non-persistent
   `ashfall.perf.throttle_override`; enabling always goes through a danger
-  confirmation.  A hidden **Advanced** category, revealed by pressing the
-  version row seven times (remembered in the app's UI prefs), holds the
-  **Keep after reboot** switch
+  confirmation.  The row state is the daemon's own
+  `ashfall.status.perf.throttle` (1 active, 0 restored, -1 unsupported), so it
+  already shows ON after a reboot when the permanent override is applied; the
+  just-written runtime value wins while the daemon catches up, and
+  `Perf.permanent()` is the fallback before the first publish.  A hidden
+  **Advanced** category, revealed by pressing the version row seven times
+  (remembered in the app's UI prefs), holds the **Keep after reboot** switch
   (`persist.ashfall.perf.throttle_override_permanent`).  Enabling the hidden
   switch also applies the override immediately; turning the visible switch off
   releases the runtime override without touching the permanent flag.
@@ -227,9 +231,10 @@ The UI target selector maps onto the daemon's `led.sync`:
   `led.color_*` immediately, there is no Set step, only Done.  The row shows the
   left/right colours.
 * Brightness 0–100, effects static/breathing/rainbow/duo, speed 1–10 (enabled
-  for breathing/rainbow).  The screen-off option is **removed** (LEDs are
-  always off while the panel is off, re-applied on screen-on by the daemon);
-  there is no `led.screen_off` property any more.
+  for breathing, rainbow **and duo** — the daemon animates duo with
+  `led.speed` too).  The screen-off option is **removed** (LEDs are always off
+  while the panel is off, re-applied on screen-on by the daemon); there is no
+  `led.screen_off` property any more.
 * Everything applies live.
 
 ### 2.4 Controller
@@ -269,18 +274,25 @@ The UI target selector maps onto the daemon's `led.sync`:
 * Tap opens the dialog with `TileService.showDialog(dialog)` (window type
   `TYPE_QS_DIALOG`, so it behaves like the Internet/Bluetooth dialogs).  If the
   device is locked the action runs through `unlockAndRun`.
-* Both dialogs use the AppCompat DayNight dialog theme, so they follow the
-  system light/dark (and pure-black) theme, and both are **modal**: the window
-  is focusable, dims the panel and takes input focus, so neither touch nor the
-  gamepad can navigate the Quick Settings panel behind them.  The rounded card
-  is the window background itself (one outline/shadow); the theme no longer
-  adds a second background or elevation, which removed the stray shadows.
-* Their height is fitted by `ui.Ui.fitDialog()`: the dialog is measured with at
-  most 86 % of the display height, and if the content is taller only the
-  `ScrollView` is shrunk to the space the header and footer leave over.  A
-  plain `ScrollView` ignores `android:maxHeight`, which used to let the
-  Lighting content grow past the panel and clip the Done button into the
-  corner.  The colour picker dialog uses the same helper.
+* Both dialogs use SettingsLib's **platform** dialog theme
+  (`Theme.DeviceDefault.AlertDialog.SettingsLib.Expressive` via
+  `res/values-v36/styles.xml`), the same theme Settings uses: it follows the
+  system light/dark choice and, unlike AppCompat, the LineageOS black-theme
+  RRO reaches it, so its surface is `SurfaceContainerHigh` (#1D1F26 normally,
+  #171717 in pure black).  Both are **modal**: the window is focusable, dims
+  the panel and takes input focus, so neither touch nor the gamepad can
+  navigate the Quick Settings panel behind them.  The rounded card is the
+  window background itself (one outline/shadow); the theme adds no second
+  background or elevation, so there are no stray shadows.
+* Their height is fitted by `ui.Ui.fitDialog()`: after the runtime rows exist,
+  the card is measured and clamped to 85 % of the display height (the Fan
+  dialog has a 60 % minimum so it looks like a real dialog), and only the
+  `ScrollView` gets the space the fixed header and footer leave over.  The
+  header, "Edit presets" and Done never scroll and are always fully visible;
+  only the preset/control list scrolls when it genuinely overflows.  A plain
+  `ScrollView` ignores `android:maxHeight`, which used to let the Lighting
+  content push the Done button out of the window.  The colour picker dialog
+  uses the same helper and a 160 dp saturation/value square.
 * **Fan dialog**: header with the active preset and temperature, a
   single-choice preset list (applies immediately), “Edit presets” (opens the
   preset editor) and Done.  The header temperature refreshes every 500 ms and
@@ -583,7 +595,7 @@ The user-test changes of `docs/phase5.md` §6.3 were implemented on
   94 classes, no errors.  (An `R` class generated from the real `res/` tree was
   used, so every resource name referenced from Java had to exist.)
 * **Resource compile (build host, read-only).**  `aapt2 compile --dir res`
-  succeeds for all 25 resource files; the only unresolved references are the
+  succeeds for all 26 resource files; the only unresolved references are the
   external SettingsLib/AppCompat themes (`Theme.SubSettingsBase.Expressive`,
   `Theme.AppCompat.DayNight.*`), as expected outside the platform build.
 * **Icons (issue #85 selection).**  `docs/icons/drafts/vectors/fan-c-four-blade-framed.xml`
@@ -592,22 +604,25 @@ The user-test changes of `docs/phase5.md` §6.3 were implemented on
   `res/drawable/ic_ashfall_lighting.xml`; both compile with `aapt2` and are
   single-colour 24 dp vectors so Settings and SystemUI can tint them.  They
   replace the Fan/Lighting rows, page/dialog glyphs and both QS tile icons.
-* **Theme parity.**  The page theme now sets
-  `android:windowBackground=?android:attr/colorBackground` and both content
-  layouts draw `?android:attr/colorBackground`; `Theme.SubSettingsBase.Expressive`
-  sets that attribute to `settingslib_materialColorSurfaceContainer`
-  (`@android:color/system_surface_container_dark` on A17 night), i.e. exactly
-  the Settings page background instead of the DeviceDefault window background
-  (`@android:drawable/background_holo_dark` = pure black).  Because a
-  LineageOS pure-black theme also changes `colorBackground`, the pages follow
-  it without a second hard-coded colour.
-* **Dialogs.**  `Theme.AshFall.Dialog` is an AppCompat **DayNight** dialog
-  whose window background is the rounded card (`bg_dialog`); the extra
-  `android:background` and `android:elevation` that produced the second, stray
-  shadow are gone.  Both QS dialogs and the in-app colour picker make their
-  window focusable and dim the surface behind them (modal for touch and for the
-  gamepad).  `Ui.fitDialog()` measures the card and shrinks only the scroll
-  area, so the Done button can no longer be clipped into the corner.
+* **Theme parity (#97).**  The v36 theme now sets `android:colorBackground` and
+  `android:windowBackground` to
+  `@color/settingslib_materialColorSurfaceContainer`, and both content layouts
+  draw the same colour.  `?android:attr/colorBackground` resolved to black in
+  this app (measured #000000 against Settings' #171717), so it was replaced by
+  the explicit SettingsLib colour (`system_surface_container_dark` =
+  `#17191F`), which the LineageOS black RRO turns into `#000000`.  The earlier
+  claim that the attribute alone followed pure black was wrong and is fixed
+  above.
+* **Dialogs (#97/#98).**  On v36, `Theme.AshFall.Dialog` is re-parented in
+  `res/values-v36/styles.xml` to
+  `Theme.DeviceDefault.AlertDialog.SettingsLib.Expressive` with
+  `android:colorBackground = settingslib_materialColorSurfaceContainerHigh`
+  (#1D1F26, #171717 in pure black); `alertDialogTheme` points at the same
+  platform theme for the preset editor and throttle confirmation.  AppCompat
+  is only the pre-36 preview fallback.  `Ui.fitDialog()` now runs after the
+  runtime rows are built, clamps the card to 85 % of the screen (60 % minimum
+  for the Fan dialog) and gives the remainder to the scroll view, so the
+  header and Done footer never scroll; the saturation/value square is 160 dp.
 * **Live fan status.**  `ashfall.ui.fan_live=1` is written on resume/onStart of
   the Fan page, the curve editor and the QS Fan dialog and cleared when they
   leave; their polling period is 500 ms.  A counter in `Fan.setLive()` keeps
@@ -735,20 +750,27 @@ trampoline and the two `TileService`s.
   in-app Lighting page uses the standalone `ColorPickerDialog`.
 * The loop `tools/mock/` and `preview/` are development tooling; they are not
   installed into the image and are not referenced by `Android.bp`.
-* **Theme parity is derived, not copied.**  The app does not duplicate any
-  Settings colour: `android:windowBackground`/content backgrounds are
-  `?android:attr/colorBackground`, which `Theme.SubSettingsBase.Expressive`
-  points at `settingslib_materialColorSurfaceContainer`
-  (`@android:color/system_surface_container_dark` on A17 night).  LineageOS'
-  pure-black mode is `LineageBlackTheme`, an RRO that sets
+* **Theme parity uses SettingsLib's colours explicitly.**  The app does not
+  invent a grey and does not rely on `?android:attr/colorBackground` (in this
+  app that resolved to black, not the Settings surface — issue #97).
+  `android:colorBackground`, `android:windowBackground` and both content
+  layouts use `@color/settingslib_materialColorSurfaceContainer`
+  (`@android:color/system_surface_container_dark` = `#17191F` on A17 night).
+  LineageOS' pure-black mode is `LineageBlackTheme`, an RRO that sets
   `system_surface_container_dark` to `#000000`
   (`packages/overlays/Lineage/customizations/BlackTheme/res/values-night/colors.xml`),
-  so the pages turn pure black at the same moment the rest of Settings does,
-  without per-theme values in this app.
-* **Dialogs are DayNight, not themed by this app.**  Both the page dialog and
-  the two `TYPE_QS_DIALOG` windows use an AppCompat DayNight parent without a
-  forced `uiMode`; the system (and a LineageOS pure-black overlay) decides the
-  colours.  Modal behaviour comes from a focusable, dimming window, not from
+  so the pages turn pure black at the same moment the rest of Settings does.
+* **Dialogs use a platform SettingsLib theme, not AppCompat.**  The AppCompat
+  dialog theme is only the pre-36 preview fallback.  On Android 16+,
+  `res/values-v36/styles.xml` re-parents `Theme.AshFall.Dialog` (and therefore
+  `Theme.AshFall.QsDialog`) to
+  `Theme.DeviceDefault.AlertDialog.SettingsLib.Expressive`, sets the card
+  colour to `settingslib_materialColorSurfaceContainerHigh`, and points
+  `android:alertDialogTheme` at the same platform theme for the preset editor
+  and the throttling confirmation.  AppCompat's own resources are not touched
+  by the LineageOS black RRO, which is why the old dialogs stayed grey; the
+  SettingsLib/DeviceDefault surface is #1D1F26 normally and #171717 in pure
+  black.  Modal behaviour comes from a focusable, dimming window, not from
   consuming the gamepad keys in the app.
 * **Stress test scope.**  It is intentional load, not a benchmark: the CPU
   side uses a duty cycle per core and the GPU side renders an offscreen shader

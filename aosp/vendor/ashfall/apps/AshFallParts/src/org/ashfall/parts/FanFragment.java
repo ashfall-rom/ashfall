@@ -79,6 +79,9 @@ public class FanFragment extends PreferenceFragmentCompat {
             Fan.refreshLive();
             updateStatus();
             updateLiveSummaries();
+            // The daemon publishes ashfall.status.perf.throttle after boot and
+            // when the override changes; keep the switch in step (#99).
+            refreshToggles();
             mHandler.postDelayed(this, LIVE_TICK_MS);
         }
     };
@@ -345,12 +348,19 @@ public class FanFragment extends PreferenceFragmentCompat {
         }
         mKick.setChecked(Fan.kick());
         mScreenOff.setChecked(Fan.offWhileScreenOff());
-        mThrottle.setChecked(Perf.overrideActive());
-        mThrottle.setSummaryText(Perf.permanent()
-                ? getString(R.string.fan_throttle_summary_permanent)
-                : getString(Perf.overrideActive()
-                        ? R.string.fan_throttle_summary_on
-                        : R.string.fan_throttle_summary_off));
+        final boolean throttleActive = Perf.overrideActive();
+        mThrottle.setChecked(throttleActive);
+        final int throttleSummary;
+        if (!Perf.overrideSupported()) {
+            throttleSummary = R.string.fan_throttle_summary_unsupported;
+        } else if (throttleActive) {
+            throttleSummary = Perf.permanent()
+                    ? R.string.fan_throttle_summary_permanent
+                    : R.string.fan_throttle_summary_on;
+        } else {
+            throttleSummary = R.string.fan_throttle_summary_off;
+        }
+        mThrottle.setSummaryText(getString(throttleSummary));
         if (mPermanent != null) {
             mPermanent.setChecked(Perf.permanent());
         }
