@@ -18,6 +18,7 @@ package org.ashfall.parts.ui;
 
 import android.content.Context;
 import android.graphics.Canvas;
+import android.graphics.Color;
 import android.graphics.Paint;
 import android.graphics.Path;
 import android.graphics.RectF;
@@ -126,6 +127,7 @@ public class ControllerTesterView extends View {
     private int mAccent;
     private int mPrimary;
     private int mSecondary;
+    private int mBackground;
     private float mDensity;
 
     public ControllerTesterView(Context context) {
@@ -340,6 +342,9 @@ public class ControllerTesterView extends View {
         mAccent = themeColor(android.R.attr.colorAccent, 0xFFFF2020);
         mPrimary = themeColor(android.R.attr.textColorPrimary, 0xFFEEEEEE);
         mSecondary = themeColor(android.R.attr.textColorSecondary, 0xFF888888);
+        // The window background (styles.xml uses ?android:attr/colorBackground);
+        // the D-pad blends its subtle colours against it to keep them opaque.
+        mBackground = themeColor(android.R.attr.colorBackground, 0xFFFFFFFF);
         mFill.setColor(Ui.fade(mPrimary, 0.05f));
         mStroke.setColor(Ui.fade(mSecondary, 0.75f));
         mLabel.setColor(mPrimary);
@@ -545,47 +550,105 @@ public class ControllerTesterView extends View {
 
     /**
      * D-pad as a 3x3 cross (issue #105): the layout's {@code r} is one cell, the
-     * overall span is {@code 3*r*h}, and each direction is a pentagon "house"
-     * that shares only edges with its neighbours - never areas - so pressing
-     * two adjacent directions cannot merge their lit shapes.
+     * overall span is {@code 3*r*h}, and the plus is exactly four pentagons -
+     * one 1x1 arm plus the triangular quarter of the centre square each, with
+     * its tip at (cx, cy).  There is no separate centre rectangle: the four
+     * tips meet at the centre, the four triangles tile the centre square, and
+     * adjacent pentagons share only the diagonal seam edges - never areas - so
+     * pressed adjacent directions stay two complete shapes.
      */
     private void drawDpad(Canvas canvas, float w, float h) {
         final float cx = mLayout.dpad.x * w;
         final float cy = mLayout.dpad.y * h;
         final float cell = mLayout.dpad.r * h;
         final float half = cell * 0.5f;
+        final boolean[] pressed = {isPressed(BTN_UP), isPressed(BTN_RIGHT),
+                isPressed(BTN_DOWN), isPressed(BTN_LEFT)};
+        final int neutralFill = over(mPrimary, 0.04f, mBackground);
+        final int neutralStroke = over(mSecondary, 0.7f, mBackground);
 
-        // Centre square: neutral, never lit by a direction.
-        mRect.set(cx - half, cy - half, cx + half, cy + half);
-        mFill.setColor(Ui.fade(mPrimary, 0.04f));
-        canvas.drawRect(mRect, mFill);
-        mStroke.setColor(Ui.fade(mSecondary, 0.55f));
-        canvas.drawRect(mRect, mStroke);
+        // Fills: the four pentagons tile the plus and share only edges, so
+        // their order cannot overlap.
+        for (int i = 0; i < 4; i++) {
+            drawDpadArmFill(canvas, cx, cy, cell, i * 90f, pressed[i], neutralFill);
+        }
 
-        drawDpadArm(canvas, cx, cy, cell, 0, isPressed(BTN_UP));
-        drawDpadArm(canvas, cx, cy, cell, 90, isPressed(BTN_RIGHT));
-        drawDpadArm(canvas, cx, cy, cell, 180, isPressed(BTN_DOWN));
-        drawDpadArm(canvas, cx, cy, cell, 270, isPressed(BTN_LEFT));
+        // Centre seams: one line per shared edge, neutral first so a pressed
+        // arm's seam stays on top.  Opaque colours matter here: four
+        // translucent strokes meeting at the tips would stack into a dark dot.
+        final boolean[] seamPressed = {
+                pressed[0] || pressed[3], pressed[0] || pressed[1],
+                pressed[2] || pressed[3], pressed[2] || pressed[1]};
+        final float[] seamX = {cx - half, cx + half, cx - half, cx + half};
+        final float[] seamY = {cy - half, cy - half, cy + half, cy + half};
+        for (int pass = 0; pass < 2; pass++) {
+            for (int i = 0; i < 4; i++) {
+                if (seamPressed[i] == (pass == 1)) {
+                    drawDpadSeam(canvas, seamX[i], seamY[i], cx, cy,
+                            seamPressed[i], neutralStroke);
+                }
+            }
+        }
+
+        // Outer edges last, neutral first so a pressed arm stays on top.
+        for (int pass = 0; pass < 2; pass++) {
+            for (int i = 0; i < 4; i++) {
+                if (pressed[i] == (pass == 1)) {
+                    drawDpadArmOutline(canvas, cx, cy, cell, i * 90f, pressed[i],
+                            neutralStroke);
+                }
+            }
+        }
     }
 
-    /** One 1-cell "house" arm, drawn pointing up and rotated by {@code degrees}. */
-    private void drawDpadArm(Canvas canvas, float cx, float cy, float cell, float degrees,
-            boolean pressed) {
+    /** Fills one pentagon of the plus (the up arm, rotated by {@code degrees}). */
+    private void drawDpadArmFill(Canvas canvas, float cx, float cy, float cell, float degrees,
+            boolean pressed, int neutral) {
+        final float half = cell * 0.5f;
+        canvas.save();
+        canvas.rotate(degrees, cx, cy);
+        mPath.reset();
+        mPath.moveTo(cx - half, cy - cell * 1.5f);
+        mPath.lineTo(cx + half, cy - cell * 1.5f);
+        mPath.lineTo(cx + half, cy - half);
+        mPath.lineTo(cx, cy);
+        mPath.lineTo(cx - half, cy - half);
+        mPath.close();
+        mFill.setColor(pressed ? mAccent : neutral);
+        canvas.drawPath(mPath, mFill);
+        canvas.restore();
+    }
+
+    /** Strokes the three outer edges of one pentagon; the seams are shared. */
+    private void drawDpadArmOutline(Canvas canvas, float cx, float cy, float cell, float degrees,
+            boolean pressed, int neutral) {
         final float half = cell * 0.5f;
         canvas.save();
         canvas.rotate(degrees, cx, cy);
         mPath.reset();
         mPath.moveTo(cx - half, cy - half);
+        mPath.lineTo(cx - half, cy - cell * 1.5f);
+        mPath.lineTo(cx + half, cy - cell * 1.5f);
         mPath.lineTo(cx + half, cy - half);
-        mPath.lineTo(cx + half, cy - cell);
-        mPath.lineTo(cx, cy - cell * 1.5f);
-        mPath.lineTo(cx - half, cy - cell);
-        mPath.close();
-        mFill.setColor(pressed ? mAccent : Ui.fade(mPrimary, 0.04f));
-        canvas.drawPath(mPath, mFill);
-        mStroke.setColor(pressed ? mAccent : Ui.fade(mSecondary, 0.7f));
+        mStroke.setColor(pressed ? mAccent : neutral);
         canvas.drawPath(mPath, mStroke);
         canvas.restore();
+    }
+
+    /** One centre-square seam, from a corner to the centre (drawn once). */
+    private void drawDpadSeam(Canvas canvas, float x, float y, float cx, float cy,
+            boolean pressed, int neutral) {
+        mStroke.setColor(pressed ? mAccent : neutral);
+        canvas.drawLine(x, y, cx, cy, mStroke);
+    }
+
+    /** Opaque colour for {@code alpha} of {@code color} over {@code background}. */
+    private static int over(int color, float alpha, int background) {
+        final float a = Math.max(0f, Math.min(1f, alpha));
+        final int r = Math.round(Color.red(color) * a + Color.red(background) * (1f - a));
+        final int g = Math.round(Color.green(color) * a + Color.green(background) * (1f - a));
+        final int b = Math.round(Color.blue(color) * a + Color.blue(background) * (1f - a));
+        return 0xFF000000 | (r << 16) | (g << 8) | b;
     }
 
     /**
