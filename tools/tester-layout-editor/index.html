@@ -295,11 +295,13 @@ function shapeFor(key) {
     // D-pad is 3r x 3r.
     const a = c.r*H, half = a/2;
     const pent = (pts) => "M " + pts.map(p => p.join(" ")).join(" L ") + " Z";
-    const up = [[cx-half,cy-half],[cx+half,cy-half],[cx+half,cy-a],[cx,cy-1.5*a],[cx-half,cy-a]];
-    const down = [[cx-half,cy+half],[cx+half,cy+half],[cx+half,cy+a],[cx,cy+1.5*a],[cx-half,cy+a]];
-    const left = [[cx-half,cy-half],[cx-half,cy+half],[cx-a,cy+half],[cx-1.5*a,cy],[cx-a,cy-half]];
-    const right = [[cx+half,cy-half],[cx+half,cy+half],[cx+a,cy+half],[cx+1.5*a,cy],[cx+a,cy-half]];
-    el("rect", {...common, x:cx-half, y:cy-half, width:a, height:a}, g);
+    // Exactly four pentagons. Each is one 1x1 arm plus the triangular quarter
+    // of the 1x1 centre; all four tips meet at (cx,cy), so the union is the
+    // + shape and adjacent lit arms only share a diagonal seam.
+    const up = [[cx-half,cy-1.5*a],[cx+half,cy-1.5*a],[cx+half,cy-half],[cx,cy],[cx-half,cy-half]];
+    const down = [[cx-half,cy+1.5*a],[cx+half,cy+1.5*a],[cx+half,cy+half],[cx,cy],[cx-half,cy+half]];
+    const left = [[cx-1.5*a,cy-half],[cx-1.5*a,cy+half],[cx-half,cy+half],[cx,cy],[cx-half,cy-half]];
+    const right = [[cx+1.5*a,cy-half],[cx+1.5*a,cy+half],[cx+half,cy+half],[cx,cy],[cx+half,cy-half]];
     for (const pts of [up, down, left, right]) el("path", {...common, d:pent(pts)}, g);
     el("text", {x:cx, y:cy+1.5*a+34, class:"sub", "text-anchor":"middle", "font-size":"24"}, g).textContent = "D-pad";
   } else if (meta.shape === "circle") {
