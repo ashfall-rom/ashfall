@@ -139,6 +139,15 @@ static int make_sysfs(void)
     return 0;
 }
 
+static void remove_rel(const char *relative)
+{
+    char cmd[PATH_MAX + 32];
+
+    snprintf(cmd, sizeof(cmd), "rm -rf '%s%s'", g_root, relative);
+    if (system(cmd) != 0)
+        fprintf(stderr, "warning: could not remove %s\n", relative);
+}
+
 /* --- fan ----------------------------------------------------------------- */
 
 static void test_curve(void)
@@ -422,6 +431,201 @@ static void test_thermal(void)
     CHECK_EQ(thermal_raw_to_tenths(62), 620);
 }
 
+/* --- #72: turning off always attempts state=0 ---------------------------- */
+
+static void test_off_writes_state(void)
+{
+    fan_state fan;
+    char path[PATH_MAX];
+
+    memset(&fan, 0, sizeof(fan));
+    fan_settings_default(&fan.settings);
+    fan.out_pct = 50; /* running */
+
+    /* The duty node write fails (models a denied/failed attribute): state=0
+     * must still be written, and the output is unknown so the caller retries
+     * on the next tick. */
+    snprintf(path, sizeof(path), "%s/sys/class/gpio5_pwm2/duty", g_root);
+    unlink(path);
+    write_file("/sys/class/gpio5_pwm2/state", "1\n");
+    CHECK_EQ(fan_apply_pct(&fan, 0, 0), 0);
+    CHECK_EQ(read_int("/sys/class/gpio5_pwm2/state"), 0);
+    CHECK_EQ(fan.out_pct, -1);
+
+    /* duty is back: the retry completes and the cache becomes 0 */
+    write_file("/sys/class/gpio5_pwm2/duty", "0\n");
+    CHECK_EQ(fan_apply_pct(&fan, 0, 0), 0);
+    CHECK_EQ(fan.out_pct, 0);
+    CHECK_EQ(read_int("/sys/class/gpio5_pwm2/duty"), 0);
+}
+
+/* --- #73: no thermal sensor must never mean "fan off" -------------------- */
+
+static void test_sensor_fault(void)
+{
+    fan_state fan;
+    thermal_set set;
+
+    memset(&fan, 0, sizeof(fan));
+    fan_settings_default(&fan.settings);
+
+    /* No zone at all (zones can also appear after class core starts). */
+    remove_rel("/sys/class/thermal/thermal_zone1");
+    remove_rel("/sys/class/thermal/thermal_zone2");
+    thermal_scan(&set);
+    CHECK_EQ(set.count, 0);
+    CHECK_EQ(thermal_hottest_tenths(&set), -1);
+    CHECK_EQ(thermal_sweep(&set), -1);
+
+    /* A stopped fan first gets the spin-up kick (100 % for FAN_MIN_KICK_MS),
+     * then settles on the balanced preset: cooling, never off. */
+    CHECK_EQ(fan_control_tick(&fan, -1, 0), 100);
+    CHECK_EQ(fan_control_tick(&fan, -1, FAN_MIN_KICK_MS + 1),
+             FAN_PRESET_BALANCED_PCT);
+    CHECK(fan.sensor_fault);
+    CHECK(fan.safety);
+    CHECK_EQ(read_int("/sys/class/gpio5_pwm2/state"), 1);
+
+    /* Sensors are back and cool: the fault clears and the safety releases. */
+    mkdir_p("/sys/class/thermal/thermal_zone1");
+    mkdir_p("/sys/class/thermal/thermal_zone2");
+    write_file("/sys/class/thermal/thermal_zone1/type", "cpu0-usr\n");
+    write_file("/sys/class/thermal/thermal_zone1/temp", "40000\n");
+    write_file("/sys/class/thermal/thermal_zone2/type", "gpuss-0-usr\n");
+    write_file("/sys/class/thermal/thermal_zone2/temp", "42000\n");
+    thermal_scan(&set);
+    CHECK_EQ(set.count, 2);
+    CHECK_EQ(thermal_hottest_tenths(&set), 420);
+    CHECK_EQ(fan_control_tick(&fan, thermal_hottest_tenths(&set), 1000), 0);
+    CHECK(!fan.sensor_fault);
+    CHECK(!fan.safety);
+}
+
+/* --- fan tach must never be read while the fan is disabled --------------- */
+
+static void test_rpm_while_off(void)
+{
+    write_file("/sys/class/gpio5_pwm2/state", "0\n");
+    write_file("/sys/class/gpio5_pwm2/speed", "9999\n");
+    CHECK_EQ(fan_read_rpm(), 0); /* no read at all while state=0 */
+
+    write_file("/sys/class/gpio5_pwm2/state", "1\n");
+    CHECK_EQ(fan_read_rpm(), 9999);
+
+    remove_rel("/sys/class/gpio5_pwm2/speed");
+    CHECK_EQ(fan_read_rpm(), -1);
+    write_file("/sys/class/gpio5_pwm2/speed", "2400\n");
+}
+
+/* --- #69: LED nodes present but not yet writable, then writable ---------- */
+
+static void test_led_retry(void)
+{
+    led_state led;
+    rgb_t frame[2] = {{1, 2, 3}, {4, 5, 6}};
+    char buf[64];
+    char path[PATH_MAX];
+
+    /* Model the vendor-chmod race: the attribute exists (present) but opening
+     * it for write fails.  A directory in place of the file makes the write
+     * fail even for root, which is how this looks to the daemon when the
+     * vendor chmod has not run yet. */
+    snprintf(path, sizeof(path), "%s/sys/class/sn3112l/led/brightness", g_root);
+    unlink(path);
+    if (mkdir(path, 0777) != 0) {
+        fprintf(stderr, "cannot create %s\n", path);
+        exit(2);
+    }
+
+    led_state_init(&led, 0);
+    CHECK_EQ(led.backend, LED_BACKEND_SN3112);
+    CHECK(!led.applied);
+    CHECK(!led_apply(&led, frame, true));
+    CHECK(!led.applied);
+
+    remove_rel("/sys/class/sn3112l/led/brightness");
+    write_file("/sys/class/sn3112l/led/brightness", "0-0:0:0\n");
+    CHECK(led_apply(&led, frame, true));
+    CHECK(led.applied);
+    CHECK_EQ(read_int("/sys/class/sn3112l/led/enable"), 1);
+    CHECK(!read_file("/sys/class/sn3112l/led/brightness", buf, sizeof(buf)));
+    CHECK(!strcmp(buf, "1-1:2:3"));
+
+    /* A fresh state (boot) must turn off a ring the bootloader/stock left on,
+     * even though its own cache is empty. */
+    {
+        led_state fresh;
+
+        led_state_init(&fresh, 0);
+        CHECK(led_disable(&fresh));
+        CHECK_EQ(read_int("/sys/class/sn3112l/led/enable"), 0);
+        CHECK_EQ(read_int("/sys/class/sn3112r/led/enable"), 0);
+        CHECK(!read_file("/sys/class/sn3112l/led/brightness", buf,
+                         sizeof(buf)));
+        CHECK(!strcmp(buf, "0-0:0:0"));
+    }
+}
+
+/* --- #74: out-of-range numeric properties use the contract default ------- */
+
+static void test_prop_range(void)
+{
+    const char *name = "persist.ashfall.test.range";
+
+    unsetenv(name);
+    CHECK_EQ(prop_get_int_range(name, 50, 0, 100), 50);
+    setenv(name, "42", 1);
+    CHECK_EQ(prop_get_int_range(name, 50, 0, 100), 42);
+    setenv(name, "0", 1);
+    CHECK_EQ(prop_get_int_range(name, 50, 0, 100), 0);
+    setenv(name, "100", 1);
+    CHECK_EQ(prop_get_int_range(name, 50, 0, 100), 100);
+    setenv(name, "200", 1);
+    CHECK_EQ(prop_get_int_range(name, 50, 0, 100), 50);
+    setenv(name, "-1", 1);
+    CHECK_EQ(prop_get_int_range(name, 50, 0, 100), 50);
+    setenv(name, "abc", 1);
+    CHECK_EQ(prop_get_int_range(name, 50, 0, 100), 50);
+    setenv(name, "5 %", 1);
+    CHECK_EQ(prop_get_int_range(name, 50, 0, 100), 50);
+    unsetenv(name);
+}
+
+/* --- thermal: only the hottest few zones are sampled per tick ------------ */
+
+static void test_thermal_watch(void)
+{
+    thermal_set set;
+
+    /* Two cooler zones that will not be watched after the sweep. */
+    mkdir_p("/sys/class/thermal/thermal_zone3");
+    mkdir_p("/sys/class/thermal/thermal_zone4");
+    write_file("/sys/class/thermal/thermal_zone3/type", "cpu-1-3\n");
+    write_file("/sys/class/thermal/thermal_zone3/temp", "30000\n");
+    write_file("/sys/class/thermal/thermal_zone4/type", "cpu-0-0\n");
+    write_file("/sys/class/thermal/thermal_zone4/temp", "20000\n");
+
+    thermal_scan(&set);
+    CHECK_EQ(set.count, 4);
+    CHECK_EQ(set.watch_count, THERMAL_MAX_WATCH);
+    CHECK_EQ(thermal_hottest_tenths(&set), 420); /* gpuss-0-usr */
+
+    /* A zone outside the watch set is not read per tick (that is the whole
+     * point: each read spams the kernel log), a periodic sweep catches it. */
+    write_file("/sys/class/thermal/thermal_zone4/temp", "99000\n");
+    CHECK_EQ(thermal_hottest_tenths(&set), 420);
+    CHECK_EQ(thermal_sweep(&set), 990);
+    CHECK_EQ(thermal_hottest_tenths(&set), 990);
+
+    /* Restore the baseline tree for the earlier tests' assumptions. */
+    remove_rel("/sys/class/thermal/thermal_zone3");
+    remove_rel("/sys/class/thermal/thermal_zone4");
+    write_file("/sys/class/thermal/thermal_zone1/temp", "55000\n");
+    write_file("/sys/class/thermal/thermal_zone2/temp", "62000\n");
+    thermal_scan(&set);
+    CHECK_EQ(thermal_hottest_tenths(&set), 620);
+}
+
 int main(void)
 {
     if (make_sysfs() < 0) {
@@ -439,6 +643,12 @@ int main(void)
     test_led_colour();
     test_led_effects();
     test_led_apply();
+    test_off_writes_state();
+    test_sensor_fault();
+    test_rpm_while_off();
+    test_led_retry();
+    test_prop_range();
+    test_thermal_watch();
 
     /* best effort cleanup */
     {

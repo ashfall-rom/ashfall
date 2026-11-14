@@ -35,6 +35,12 @@ int control_pollfds(const struct control *control, struct pollfd *fds, int max);
 /* Handle the revents of the entries appended by control_pollfds(). */
 void control_dispatch(struct control *control, struct pollfd *fds, int nfds);
 
+/* Wait up to timeout_ms for control traffic and dispatch it.  This is the
+ * "outside a session" entry point: the socket must be serviced even when the
+ * MCU or /dev/uinput is unavailable (GET/SET CAL must always answer).
+ * Returns poll()'s result, or 0 when there is no socket/traffic. */
+int control_poll(struct control *control, int timeout_ms);
+
 /* Stream a raw sample to every subscribed client (100 Hz cap per client). */
 void control_stream_raw(struct control *control, int64_t now_ms,
                         const struct raw_sample *sample);

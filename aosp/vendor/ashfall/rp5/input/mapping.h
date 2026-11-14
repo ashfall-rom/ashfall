@@ -13,7 +13,16 @@ struct deadzones {
     int trigger_pct; /* 0..30 of trigger travel */
 };
 
+#define PROP_DZ_INNER "persist.ashfall.pad.deadzone_inner"
+#define PROP_DZ_OUTER "persist.ashfall.pad.deadzone_outer"
+#define PROP_DZ_TRIGGER "persist.ashfall.pad.trigger_deadzone"
+
 void deadzones_default(struct deadzones *dz);
+
+/* Read persist.ashfall.pad.* into *dz.  Missing or out-of-range values use
+ * the documented defaults (5/3/3, docs/phase5.md §2.3) instead of being
+ * clamped, and are logged once. */
+void deadzones_read(struct deadzones *dz);
 
 /* Calibrated stick axis value in -32768..32767.  The MCU ADC direction is
  * opposite to Android's, so the raw value is mirrored around the centre (same

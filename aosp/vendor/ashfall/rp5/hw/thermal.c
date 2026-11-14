@@ -26,6 +26,65 @@ static bool interesting_type(const char *type)
     return false;
 }
 
+static int zone_tenths(const thermal_zone *zone)
+{
+    int raw;
+
+    if (sysfs_read_int(zone->temp_path, &raw) < 0)
+        return -1;
+    if (raw <= 0 || raw > 200000)
+        return -1;
+    return thermal_raw_to_tenths(raw);
+}
+
+int thermal_sweep(thermal_set *set)
+{
+    int tenths[THERMAL_MAX_ZONES];
+    thermal_zone picked[THERMAL_MAX_WATCH];
+    int picked_tenths[THERMAL_MAX_WATCH];
+    int picked_count = 0;
+    int hottest = -1;
+
+    /* Read every zone exactly once: each read makes the stock tsens driver
+     * print a KERN_FATAL line, so the values are cached for the selection. */
+    for (int i = 0; i < set->count; i++) {
+        tenths[i] = zone_tenths(&set->zone[i]);
+        if (tenths[i] > hottest)
+            hottest = tenths[i];
+    }
+
+    /* Keep the hottest THERMAL_MAX_WATCH zones, hottest first. */
+    for (int i = 0; i < set->count; i++) {
+        int pos = picked_count;
+
+        if (tenths[i] < 0)
+            continue;
+        while (pos > 0 && picked_tenths[pos - 1] < tenths[i])
+            pos--;
+        if (pos >= THERMAL_MAX_WATCH)
+            continue;
+        if (picked_count < THERMAL_MAX_WATCH)
+            picked_count++;
+        for (int j = picked_count - 1; j > pos; j--) {
+            picked[j] = picked[j - 1];
+            picked_tenths[j] = picked_tenths[j - 1];
+        }
+        picked[pos] = set->zone[i];
+        picked_tenths[pos] = tenths[i];
+    }
+
+    if (picked_count != set->watch_count ||
+        memcmp(picked, set->watch, sizeof(picked[0]) * (size_t)picked_count) !=
+            0) {
+        memcpy(set->watch, picked, sizeof(picked[0]) * (size_t)picked_count);
+        set->watch_count = picked_count;
+        for (int i = 0; i < picked_count; i++)
+            ah_logf(AH_LOG_INFO, "thermal: watching %s (%.1f C)",
+                    picked[i].type, picked_tenths[i] / 10.0);
+    }
+    return hottest;
+}
+
 void thermal_scan(thermal_set *set)
 {
     DIR *dir;
@@ -66,6 +125,7 @@ void thermal_scan(thermal_set *set)
     }
     for (int i = 0; i < set->count; i++)
         ah_logf(AH_LOG_INFO, "thermal: zone %d type=%s", i, set->zone[i].type);
+    thermal_sweep(set);
 }
 
 int thermal_raw_to_tenths(int raw)
@@ -81,15 +141,9 @@ int thermal_hottest_tenths(const thermal_set *set)
 {
     int best = -1;
 
-    for (int i = 0; i < set->count; i++) {
-        int raw;
-        int tenths;
+    for (int i = 0; i < set->watch_count; i++) {
+        int tenths = zone_tenths(&set->watch[i]);
 
-        if (sysfs_read_int(set->zone[i].temp_path, &raw) < 0)
-            continue;
-        if (raw <= 0 || raw > 200000)
-            continue;
-        tenths = thermal_raw_to_tenths(raw);
         if (tenths > best)
             best = tenths;
     }

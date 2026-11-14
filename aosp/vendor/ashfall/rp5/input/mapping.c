@@ -4,14 +4,30 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 #include "mapping.h"
+#include "plat.h"
 
 #include <math.h>
+#include <string.h>
 
 void deadzones_default(struct deadzones *dz)
 {
     dz->inner_pct = 5;
     dz->outer_pct = 3;
     dz->trigger_pct = 3;
+}
+
+void deadzones_read(struct deadzones *dz)
+{
+    struct deadzones next = *dz;
+
+    next.inner_pct = prop_get_int_range(PROP_DZ_INNER, 5, 0, 30);
+    next.outer_pct = prop_get_int_range(PROP_DZ_OUTER, 3, 0, 20);
+    next.trigger_pct = prop_get_int_range(PROP_DZ_TRIGGER, 3, 0, 30);
+    if (memcmp(&next, dz, sizeof(next)) != 0) {
+        *dz = next;
+        ah_logf(AH_LOG_INFO, "deadzones: inner=%d%% outer=%d%% trigger=%d%%",
+                dz->inner_pct, dz->outer_pct, dz->trigger_pct);
+    }
 }
 
 static double clampd(double v, double lo, double hi)

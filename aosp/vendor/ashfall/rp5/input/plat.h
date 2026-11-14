@@ -25,5 +25,8 @@ int64_t ah_now_ms(void);
 
 int prop_get_str(const char *name, char *buf, size_t len);
 int prop_get_int(const char *name, int fallback);
+/* An int property constrained to [lo, hi].  Missing, malformed or
+ * out-of-range values use the documented default (docs/phase5.md §2). */
+int prop_get_int_range(const char *name, int fallback, int lo, int hi);
 
 #endif /* ASHFALL_INPUT_PLAT_H */

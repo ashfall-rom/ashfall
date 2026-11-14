@@ -9,10 +9,12 @@
 #include "input.h"
 #include "mapping.h"
 #include "plat.h"
+#include "session.h"
 
 #include <errno.h>
 #include <fcntl.h>
 #include <limits.h>
+#include <linux/input.h>
 #include <poll.h>
 #include <stdbool.h>
 #include <stdio.h>
@@ -466,6 +468,172 @@ static void test_control_socket(void)
     remove_file(g_socket);
 }
 
+/* --- #71: releasing a lost MCU session ----------------------------------- */
+
+struct captured {
+    int count;
+    struct {
+        uint16_t type;
+        uint16_t code;
+        int32_t value;
+    } ev[64];
+};
+
+static void capture(void *ctx, uint16_t type, uint16_t code, int32_t value)
+{
+    struct captured *cap = ctx;
+
+    if (cap->count < (int)(sizeof(cap->ev) / sizeof(cap->ev[0]))) {
+        cap->ev[cap->count].type = type;
+        cap->ev[cap->count].code = code;
+        cap->ev[cap->count].value = value;
+    }
+    cap->count++;
+}
+
+static const uint16_t test_keymap[SESSION_KEY_BITS] = {
+    BTN_TL,      BTN_TR, BTN_SELECT, BTN_START, BTN_THUMBL, BTN_THUMBR,
+    KEY_HOMEPAGE, KEY_BACK, 0, 0, 0, 0, BTN_X, BTN_Y, BTN_A, BTN_B,
+};
+
+/* Same order as the daemon's AXIS_* enum (L2, R2, LX, LY, RX, RY, HATX,
+ * HATY); session_release() takes the codes, so the test pins the layout. */
+enum { T_L2, T_R2, T_LX, T_LY, T_RX, T_RY, T_HATX, T_HATY };
+
+static const uint16_t test_axes[SESSION_MAX_AXES] = {
+    ABS_BRAKE, ABS_GAS, ABS_X, ABS_Y, ABS_Z, ABS_RZ, ABS_HAT0X, ABS_HAT0Y,
+};
+
+static void test_session_release(void)
+{
+    session_state st;
+    struct captured cap;
+
+    /* A held face button, a deflected stick and a D-pad direction. */
+    memset(&st, 0, sizeof(st));
+    memset(&cap, 0, sizeof(cap));
+    st.keys = (uint16_t)((1u << 14) | (1u << 10)); /* BTN_A + D-pad right */
+    st.axis_count = SESSION_MAX_AXES;
+    st.axes[T_LX] = 12000;
+    st.axes[T_HATX] = 1; /* the rest are 0, i.e. already at rest */
+
+    CHECK_EQ(session_release(&st, test_keymap, test_axes, capture, &cap), 3);
+    CHECK_EQ(cap.count, 4); /* + SYN */
+    CHECK_EQ(cap.ev[0].type, EV_KEY);
+    CHECK_EQ(cap.ev[0].code, BTN_A);
+    CHECK_EQ(cap.ev[0].value, 0);
+    CHECK_EQ(cap.ev[1].type, EV_ABS);
+    CHECK_EQ(cap.ev[1].code, ABS_X);
+    CHECK_EQ(cap.ev[1].value, 0);
+    CHECK_EQ(cap.ev[2].type, EV_ABS);
+    CHECK_EQ(cap.ev[2].code, ABS_HAT0X);
+    CHECK_EQ(cap.ev[3].type, EV_SYN);
+
+    /* The state is clean and dirty-marked: nothing is released twice, and the
+     * next frame re-reports every axis. */
+    CHECK_EQ(st.keys, 0);
+    for (int i = 0; i < SESSION_MAX_AXES; i++)
+        CHECK_EQ(st.axes[i], INT_MIN);
+    memset(&cap, 0, sizeof(cap));
+    CHECK_EQ(session_release(&st, test_keymap, test_axes, capture, &cap), 0);
+    CHECK_EQ(cap.count, 0);
+
+    /* A clean session must not emit anything (no spurious SYN). */
+    memset(&st, 0, sizeof(st));
+    memset(&cap, 0, sizeof(cap));
+    st.axis_count = SESSION_MAX_AXES;
+    for (int i = 0; i < SESSION_MAX_AXES; i++)
+        st.axes[i] = INT_MIN;
+    CHECK_EQ(session_release(&st, test_keymap, test_axes, capture, &cap), 0);
+    CHECK_EQ(cap.count, 0);
+}
+
+/* --- #70: the control socket answers without any MCU session ------------- */
+static void test_control_without_mcu(void)
+{
+    struct input_ctx ctx;
+    struct control *control;
+    char reply[1200] = "";
+    int client;
+    bool answered = false;
+
+    memset(&ctx, 0, sizeof(ctx));
+    deadzones_default(&ctx.dz);
+    ctx.on_calibration_changed = NULL;
+    input_reload_calibration(&ctx);
+
+    control = control_create(&ctx);
+    CHECK(control != NULL);
+    if (!control)
+        return;
+    client = connect_client();
+    CHECK(client >= 0);
+    if (client < 0) {
+        control_destroy(control);
+        return;
+    }
+    if (send(client, "GET CAL\n", 8, 0) < 0) {
+        close(client);
+        control_destroy(control);
+        return;
+    }
+
+    /* Exactly what the daemon does while there is no MCU/uinput: only
+     * control_poll(), never the session loop. */
+    for (int i = 0; i < 10 && !answered; i++) {
+        ssize_t n;
+
+        control_poll(control, 100);
+        n = recv(client, reply, sizeof(reply) - 1, MSG_DONTWAIT);
+        if (n > 0) {
+            reply[n] = '\0';
+            answered = true;
+        }
+    }
+    CHECK(answered);
+    CHECK(strncmp(reply, "OK ", 3) == 0);
+    CHECK(strstr(reply, "left_x_center=") != NULL);
+
+    close(client);
+    control_destroy(control);
+}
+
+/* --- #74: out-of-range deadzone properties use the contract default ------ */
+static void test_deadzone_props(void)
+{
+    struct deadzones dz;
+
+    deadzones_default(&dz);
+    unsetenv("persist.ashfall.pad.deadzone_inner");
+    unsetenv("persist.ashfall.pad.deadzone_outer");
+    unsetenv("persist.ashfall.pad.trigger_deadzone");
+    deadzones_read(&dz);
+    CHECK_EQ(dz.inner_pct, 5);
+    CHECK_EQ(dz.outer_pct, 3);
+    CHECK_EQ(dz.trigger_pct, 3);
+
+    setenv("persist.ashfall.pad.deadzone_inner", "12", 1);
+    setenv("persist.ashfall.pad.deadzone_outer", "0", 1);
+    setenv("persist.ashfall.pad.trigger_deadzone", "30", 1);
+    deadzones_read(&dz);
+    CHECK_EQ(dz.inner_pct, 12);
+    CHECK_EQ(dz.outer_pct, 0);
+    CHECK_EQ(dz.trigger_pct, 30);
+
+    /* Out of range is invalid, not "clamp to the boundary". */
+    setenv("persist.ashfall.pad.deadzone_inner", "99", 1);
+    setenv("persist.ashfall.pad.deadzone_outer", "99", 1);
+    setenv("persist.ashfall.pad.trigger_deadzone", "-1", 1);
+    deadzones_read(&dz);
+    CHECK_EQ(dz.inner_pct, 5);
+    CHECK_EQ(dz.outer_pct, 3);
+    CHECK_EQ(dz.trigger_pct, 3);
+
+    unsetenv("persist.ashfall.pad.deadzone_inner");
+    unsetenv("persist.ashfall.pad.deadzone_outer");
+    unsetenv("persist.ashfall.pad.trigger_deadzone");
+}
+
 int main(void)
 {
     make_dir();
@@ -479,6 +647,9 @@ int main(void)
     test_mapping();
     test_deadzones();
     test_control_socket();
+    test_session_release();
+    test_control_without_mcu();
+    test_deadzone_props();
 
     {
         char cmd[PATH_MAX + 32];

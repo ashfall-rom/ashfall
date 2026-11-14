@@ -44,6 +44,12 @@
 
 #define STATUS_INTERVAL_MS 2000
 #define IDLE_WAIT_MS 500
+/* Retry period for LED writes that failed (vendor init chmod race, node not
+ * there yet): lighting must not stay dark for the whole boot. */
+#define LED_RETRY_MS 500
+/* Full thermal sweep period: re-picks the hottest zones (a few temp reads,
+ * see thermal.h for why the daemon does not read all 16 zones per tick). */
+#define THERMAL_SWEEP_MS 300000
 
 static volatile sig_atomic_t g_running = 1;
 
@@ -61,11 +67,6 @@ struct status_cache {
     bool valid;
 };
 
-static int clamp_int(int value, int lo, int hi)
-{
-    return value < lo ? lo : value > hi ? hi : value;
-}
-
 static void read_fan_settings(fan_settings *out, bool *changed)
 {
     fan_settings next;
@@ -81,10 +82,12 @@ static void read_fan_settings(fan_settings *out, bool *changed)
         if (fan_parse_mode(buf, &mode))
             next.mode = mode;
     }
+    /* Out-of-range values are invalid per docs/phase5.md §2 and fall back to
+     * the documented default instead of being clamped to the boundary. */
     next.manual_pct =
-        clamp_int(prop_get_int(PROP_FAN_MANUAL, defaults.manual_pct), 0, 100);
+        prop_get_int_range(PROP_FAN_MANUAL, defaults.manual_pct, 0, 100);
     next.safety_c =
-        clamp_int(prop_get_int(PROP_FAN_SAFETY, defaults.safety_c), 70, 95);
+        prop_get_int_range(PROP_FAN_SAFETY, defaults.safety_c, 70, 95);
     if (prop_get_str(PROP_FAN_CURVE, buf, sizeof(buf)) > 0) {
         fan_curve curve;
 
@@ -122,9 +125,8 @@ static void read_led_settings(led_settings *out, bool *changed)
         next.right = colour;
     next.sync = prop_get_bool(PROP_LED_SYNC, defaults.sync);
     next.brightness =
-        clamp_int(prop_get_int(PROP_LED_BRIGHTNESS, defaults.brightness), 0,
-                  100);
-    next.speed = clamp_int(prop_get_int(PROP_LED_SPEED, defaults.speed), 1, 10);
+        prop_get_int_range(PROP_LED_BRIGHTNESS, defaults.brightness, 0, 100);
+    next.speed = prop_get_int_range(PROP_LED_SPEED, defaults.speed, 1, 10);
     if (prop_get_str(PROP_LED_SCREEN_OFF, buf, sizeof(buf)) > 0)
         next.screen_off_keep = !strcmp(buf, "keep");
 
@@ -184,6 +186,7 @@ int main(void)
     int64_t next_fan_ms;
     int64_t next_led_ms = 0;
     int64_t next_status_ms = 0;
+    int64_t next_thermal_ms;
     int last_temp = -1;
     bool led_on = false;
     bool force_led = true;
@@ -213,6 +216,7 @@ int main(void)
         read_led_settings(&led.settings, &changed);
     }
     last_temp = thermal_hottest_tenths(&thermal);
+    next_thermal_ms = now + THERMAL_SWEEP_MS;
     fan_control_tick(&fan, last_temp, now);
     next_fan_ms = now + FAN_SAMPLE_MS;
     publish_status(&fan, last_temp, &status, &next_status_ms, now);
@@ -239,7 +243,15 @@ int main(void)
 
         fan_due = now >= next_fan_ms;
         if (fan_due) {
-            last_temp = thermal_hottest_tenths(&thermal);
+            /* Re-pick the watched zones periodically, and immediately while
+             * no zone is readable (they can appear after class core starts). */
+            if (last_temp < 0 || now >= next_thermal_ms) {
+                last_temp = thermal_sweep(&thermal);
+                next_thermal_ms =
+                    now + (last_temp < 0 ? 0 : THERMAL_SWEEP_MS);
+            } else {
+                last_temp = thermal_hottest_tenths(&thermal);
+            }
             fan_control_tick(&fan, last_temp, now);
             next_fan_ms = now + FAN_SAMPLE_MS;
         } else if (changed) {
@@ -259,14 +271,19 @@ int main(void)
             bool want_on = have_raw && (screen_is_on() ||
                                         led.settings.screen_off_keep);
 
-            if (force_led || led_due) {
+            /* !applied retries a failed/never-attempted write: vendor init
+             * chmods the nodes in its own "on boot" action, i.e. possibly
+             * after this daemon started. */
+            if (force_led || led_due || !led.applied) {
                 rgb_t frame[2];
 
                 led_frame(&led, now, frame);
                 led_apply(&led, frame, want_on);
                 led_on = want_on;
                 force_led = false;
-                if (have_raw && led_is_animated(&led) && want_on)
+                if (!led.applied)
+                    next_led_ms = now + LED_RETRY_MS;
+                else if (have_raw && led_is_animated(&led) && want_on)
                     next_led_ms = now + LED_FRAME_MS;
                 else
                     next_led_ms = 0;

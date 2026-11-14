@@ -308,6 +308,28 @@ Example (userdebug, as root):
 printf 'GET CAL\n' | nc -U -q1 /dev/socket/ashfall_input
 ```
 
+### Session handling and the control socket (issues #70, #71)
+
+The control socket is serviced **independently of the MCU session**.  The
+uinput retry loop, the MCU reconnect wait and the MCU-quiet wait all call
+`control_poll()` instead of `sleep(1)`, so `GET CAL`/`SET CAL` answer even when
+`/dev/ttyHS1` or `/dev/uinput` is missing - exactly the situation in which they
+are needed for diagnosis.
+
+The screen-off/on path cycles the MCU's power, not the UART: `/dev/ttyHS1`
+stays open and the MCU just stops sending status frames.  When no valid status
+frame has arrived for 2 s the daemon now calls `session_release()`
+(`session.c`) once: a key-up for every key it last reported (D-pad bits have no
+key, they are HAT axes), a `0` for every axis that is not at rest, one
+`SYN_REPORT`, and then marks all axes dirty (`INT_MIN`) so the next frame
+re-reports them.  A button or stick held while the MCU loses power can no
+longer stay logically pressed in Android.  The same release runs before a UART
+reconnect.
+
+Numeric `persist.ashfall.pad.*` values are invalid -> default, not clamped:
+`deadzone_inner` outside 0..30, `deadzone_outer` outside 0..20 and
+`trigger_deadzone` outside 0..30 use 5/3/3 and log the bad value once.
+
 ### On-device verification (2026-11-13)
 
 The daemons are not in build `20261113-213314`; the static NDK binary was

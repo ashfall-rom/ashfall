@@ -158,6 +158,39 @@ int prop_get_int(const char *name, int fallback)
     return (int)value;
 }
 
+int prop_get_int_range(const char *name, int fallback, int lo, int hi)
+{
+    /* Log a bad value once per distinct value, not once per daemon tick. */
+    static const char *logged_name[16];
+    static int logged_value[16];
+    int value = prop_get_int(name, fallback);
+    int slot = -1;
+
+    if (value >= lo && value <= hi)
+        return value;
+
+    for (int i = 0; i < 16; i++) {
+        if (logged_name[i] == name) {
+            slot = i;
+            break;
+        }
+        if (!logged_name[i] && slot < 0) {
+            slot = i;
+            logged_name[i] = name;
+            logged_value[i] = INT_MIN;
+            break;
+        }
+    }
+    if (slot >= 0) {
+        if (logged_value[slot] != value) {
+            logged_value[slot] = value;
+            ah_logf(AH_LOG_WARN, "%s=%d outside %d..%d, using default %d", name,
+                    value, lo, hi, fallback);
+        }
+    }
+    return fallback;
+}
+
 bool prop_get_bool(const char *name, bool fallback)
 {
     char buf[64];
@@ -291,6 +324,14 @@ int sysfs_write_int(const char *path, int value)
 
     snprintf(buf, sizeof(buf), "%d", value);
     return sysfs_write_str(path, buf);
+}
+
+bool sysfs_present(const char *path)
+{
+    char real[PATH_MAX];
+
+    host_path(path, real, sizeof(real));
+    return access(real, F_OK) == 0;
 }
 
 bool sysfs_writable(const char *path)

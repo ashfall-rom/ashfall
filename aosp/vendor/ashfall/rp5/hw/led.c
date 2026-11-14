@@ -91,35 +91,41 @@ bool led_parse_colour(const char *value, rgb_t *out)
     return true;
 }
 
-void led_state_init(led_state *state, int64_t now_ms)
+bool led_probe(led_state *state)
 {
     char path[128];
 
+    state->backend = LED_BACKEND_NONE;
+    for (int i = 0; i < 2; i++) {
+        state->side_dir[i][0] = '\0';
+        /* The attributes are write-only (reading returns EIO), so presence is
+         * an existence check and never a read or a DAC check: vendor init
+         * may not have chmod'ed them yet. */
+        snprintf(path, sizeof(path), SN3112_BRIGHTNESS_FMT, side_dirs[i]);
+        if (!sysfs_present(path))
+            continue;
+        snprintf(state->side_dir[i], sizeof(state->side_dir[i]), "%s",
+                 side_dirs[i]);
+        state->backend = LED_BACKEND_SN3112;
+    }
+    return state->backend != LED_BACKEND_NONE;
+}
+
+void led_state_init(led_state *state, int64_t now_ms)
+{
     memset(state, 0, sizeof(*state));
     led_settings_default(&state->settings);
     state->anim_start_ms = now_ms;
     state->backend = LED_BACKEND_NONE;
+    state->en_state[0] = state->en_state[1] = -1;
 
-    for (int i = 0; i < 2; i++) {
-        /* The sn3112 attributes are write-only (reading them returns EIO), so
-         * presence is detected by writability, never by a read. */
-        snprintf(path, sizeof(path), SN3112_BRIGHTNESS_FMT, side_dirs[i]);
-        if (!sysfs_writable(path))
-            continue;
-        snprintf(state->side_dir[i], sizeof(state->side_dir[i]), "%s",
-                 side_dirs[i]);
-        snprintf(path, sizeof(path), SN3112_ENABLE_FMT, side_dirs[i]);
-        state->have_enable[i] = sysfs_writable(path);
-        state->backend = LED_BACKEND_SN3112;
-    }
-    if (state->backend == LED_BACKEND_SN3112) {
+    if (led_probe(state)) {
         ah_logf(AH_LOG_INFO, "led: sn3112 backend (left=%s right=%s)",
                 state->side_dir[0][0] ? "yes" : "no",
                 state->side_dir[1][0] ? "yes" : "no");
         return;
     }
-
-    ah_logf(AH_LOG_WARN, "led: no LED nodes found; lighting disabled");
+    ah_logf(AH_LOG_WARN, "led: no LED nodes found (yet); will retry");
 }
 
 bool led_is_animated(const led_state *state)
@@ -244,60 +250,87 @@ void led_frame(const led_state *state, int64_t now_ms, rgb_t out[2])
     out[1] = scale(right, brightness * level);
 }
 
-static void write_side(led_state *state, int side, rgb_t colour, bool enabled)
+static bool write_side(led_state *state, int side, rgb_t colour, bool enabled)
 {
     char path[128];
     char value[32];
+    bool ok = true;
 
     if (side < 0 || side > 1 || !state->side_dir[side][0])
-        return;
+        return true; /* side not present: nothing to do */
 
     if (!enabled) {
-        if (state->shown_on[side] && state->have_enable[side]) {
+        if (state->en_state[side] != 0 ||
+            (state->shown_valid[side] &&
+             (state->shown[side].r || state->shown[side].g ||
+              state->shown[side].b))) {
+            snprintf(path, sizeof(path), SN3112_BRIGHTNESS_FMT,
+                     state->side_dir[side]);
+            if (sysfs_write_str(path, "0-0:0:0") != 0)
+                ok = false;
             snprintf(path, sizeof(path), SN3112_ENABLE_FMT,
                      state->side_dir[side]);
-            if (sysfs_write_str(path, "0") == 0)
-                state->shown_on[side] = false;
+            if (sysfs_write_str(path, "0") != 0)
+                ok = false;
         }
-        return;
+        if (ok) {
+            state->shown[side] = (rgb_t){0, 0, 0};
+            state->shown_valid[side] = true;
+            state->en_state[side] = 0;
+        } else {
+            state->en_state[side] = -1;
+        }
+        return ok;
     }
 
-    if (!state->shown_valid[side] || memcmp(&state->shown[side], &colour,
-                                            sizeof(colour)) != 0) {
+    if (!state->shown_valid[side] ||
+        memcmp(&state->shown[side], &colour, sizeof(colour)) != 0) {
         snprintf(path, sizeof(path), SN3112_BRIGHTNESS_FMT,
                  state->side_dir[side]);
         snprintf(value, sizeof(value), "1-%u:%u:%u", colour.r, colour.g,
                  colour.b);
-        if (sysfs_write_str(path, value) != 0)
-            return; /* keep the colour dirty and retry on the next frame */
+        if (sysfs_write_str(path, value) != 0) {
+            state->shown_valid[side] = false;
+            state->en_state[side] = -1;
+            return false;
+        }
         state->shown[side] = colour;
         state->shown_valid[side] = true;
     }
-    if (!state->shown_on[side]) {
-        if (state->have_enable[side]) {
-            snprintf(path, sizeof(path), SN3112_ENABLE_FMT,
-                     state->side_dir[side]);
-            if (sysfs_write_str(path, "1") != 0)
-                return;
+    if (state->en_state[side] != 1) {
+        snprintf(path, sizeof(path), SN3112_ENABLE_FMT,
+                 state->side_dir[side]);
+        if (sysfs_write_str(path, "1") != 0) {
+            state->en_state[side] = -1;
+            return false;
         }
-        state->shown_on[side] = true;
+        state->en_state[side] = 1;
     }
+    return true;
 }
 
-void led_disable(led_state *state)
+bool led_disable(led_state *state)
 {
-    if (state->backend != LED_BACKEND_SN3112)
-        return;
-    write_side(state, 0, state->shown[0], false);
-    write_side(state, 1, state->shown[1], false);
+    bool ok0, ok1;
+
+    if (!led_probe(state))
+        return false;
+    ok0 = write_side(state, 0, state->shown[0], false);
+    ok1 = write_side(state, 1, state->shown[1], false);
+    state->applied = ok0 && ok1;
+    return state->applied;
 }
 
-void led_apply(led_state *state, const rgb_t frame[2], bool enabled)
+bool led_apply(led_state *state, const rgb_t frame[2], bool enabled)
 {
-    if (!enabled || state->backend != LED_BACKEND_SN3112) {
-        led_disable(state);
-        return;
-    }
-    write_side(state, 0, frame[0], true);
-    write_side(state, 1, frame[1], true);
+    bool ok0, ok1;
+
+    if (!enabled)
+        return led_disable(state);
+    if (!led_probe(state))
+        return false;
+    ok0 = write_side(state, 0, frame[0], true);
+    ok1 = write_side(state, 1, frame[1], true);
+    state->applied = ok0 && ok1;
+    return state->applied;
 }

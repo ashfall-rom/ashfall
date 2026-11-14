@@ -53,10 +53,10 @@ typedef struct {
     led_settings settings;
     led_backend backend;
     char side_dir[2][64]; /* sn3112 left/right attribute directories */
-    bool have_enable[2];
     rgb_t shown[2];
-    bool shown_on[2];
     bool shown_valid[2];
+    int8_t en_state[2]; /* -1 unknown, 0 off, 1 on (last successful write) */
+    bool applied;       /* result of the last led_apply() */
     int64_t anim_start_ms;
 } led_state;
 
@@ -68,16 +68,26 @@ bool led_parse_colour(const char *value, rgb_t *out);
 
 void led_state_init(led_state *state, int64_t now_ms);
 
+/* (Re)detect the LED class devices; true when at least one side is present.
+ * Safe to call repeatedly: the vendor init chmod and the LED driver probe can
+ * both happen after class core has already started the daemon, so presence is
+ * an existence check only and the first writes retry until they succeed. */
+bool led_probe(led_state *state);
+
 /* True while the current mode needs a per-frame animation timer. */
 bool led_is_animated(const led_state *state);
 
 /* Colour of both sticks at time now_ms (brightness already applied). */
 void led_frame(const led_state *state, int64_t now_ms, rgb_t out[2]);
 
-/* Push a frame to the hardware.  Only changed attributes are written. */
-void led_apply(led_state *state, const rgb_t frame[2], bool enabled);
+/* Push a frame to the hardware.  Attributes whose last write succeeded are
+ * skipped; failed writes are retried by the caller.  Returns true when every
+ * present side was written successfully. */
+bool led_apply(led_state *state, const rgb_t frame[2], bool enabled);
 
-/* Turn both rings off (screen-off handling / mode off). */
-void led_disable(led_state *state);
+/* Turn both rings off (screen-off handling / mode off).  Always attempts the
+ * writes, so a ring left on by the bootloader/stock firmware is turned off
+ * even after a fresh start. */
+bool led_disable(led_state *state);
 
 #endif /* ASHFALL_LED_H */

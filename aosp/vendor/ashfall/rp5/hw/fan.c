@@ -216,8 +216,14 @@ int fan_apply_pct(fan_state *state, int pct, int64_t now_ms)
 
     if (pct == 0) {
         if (state->out_pct != 0) {
-            if (sysfs_write_int(FAN_DUTY_NODE, 0) != 0 ||
-                sysfs_write_int(FAN_STATE_NODE, 0) != 0) {
+            int state_rc, duty_rc;
+
+            /* state=0 is the safe half and the two attributes are
+             * independent: stop first, then zero the duty, and attempt both
+             * even when the other fails. */
+            state_rc = sysfs_write_int(FAN_STATE_NODE, 0);
+            duty_rc = sysfs_write_int(FAN_DUTY_NODE, 0);
+            if (state_rc != 0 || duty_rc != 0) {
                 /* Unknown state: try again on the next tick. */
                 state->out_pct = -1;
                 return 0;
@@ -275,6 +281,25 @@ int fan_control_tick(fan_state *state, int temp_tenths, int64_t now_ms)
     fan_settings *set = &state->settings;
     int pct = 0;
 
+    if (temp_tenths < 0) {
+        /* No usable CPU/GPU sensor.  Failing safe means cooling, never off:
+         * without a temperature there is no way to know whether the SoC is
+         * overheating, so latch the safety state and keep the balanced preset
+         * running until a sensor is readable again.  The caller re-scans the
+         * zones (they can appear after class core starts). */
+        if (!state->sensor_fault)
+            ah_logf(AH_LOG_WARN,
+                    "fan: no thermal sensor data; failing safe at %d%%",
+                    FAN_PRESET_BALANCED_PCT);
+        state->sensor_fault = true;
+        state->safety = true;
+        return fan_apply_pct(state, FAN_PRESET_BALANCED_PCT, now_ms);
+    }
+    if (state->sensor_fault) {
+        ah_logf(AH_LOG_INFO, "fan: thermal sensor data available again");
+        state->sensor_fault = false;
+    }
+
     /* Safety override: latches at safety_c, releases 10 C below it, and runs
      * in every mode including off. */
     if (temp_tenths >= 0) {
@@ -308,11 +333,6 @@ int fan_control_tick(fan_state *state, int temp_tenths, int64_t now_ms)
             break;
         case FAN_MODE_SMART:
         default:
-            if (temp_tenths < 0) {
-                /* No usable sensor: hold the last computed target. */
-                pct = state->target_pct;
-                break;
-            }
             {
                 double temp_c = temp_tenths / 10.0;
 
@@ -347,8 +367,19 @@ int fan_control_tick(fan_state *state, int temp_tenths, int64_t now_ms)
 
 int fan_read_rpm(void)
 {
+    int state;
     int value;
 
+    /*
+     * Never touch the tach while the fan is disabled: the stock gpio5_pwm
+     * driver's speed_show() calls enable_irq(), and with state=0 the kernel
+     * warns "Unbalanced enable for IRQ ..." (seen on the RP5).  A stopped fan
+     * reports 0 RPM, so return that without opening the node at all.
+     */
+    if (sysfs_read_int(FAN_STATE_NODE, &state) < 0)
+        return -1; /* enable state unknown: do not risk the WARN */
+    if (state == 0)
+        return 0;
     if (sysfs_read_int(FAN_SPEED_NODE, &value) < 0)
         return -1;
     if (value < 0)

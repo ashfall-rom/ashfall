@@ -9,8 +9,10 @@ CFLAGS ?= -std=gnu11 -O2 -g -Wall -Wextra -Wno-unused-parameter -DASHFALL_HOST
 CPPFLAGS += -I..
 LDLIBS += -lm
 
-SRCS = test_input.c ../calib.c ../control.c ../input.c ../mapping.c ../plat.c
-HDRS = ../calib.h ../control.h ../input.h ../mapping.h ../plat.h
+SRCS = test_input.c ../calib.c ../control.c ../input.c ../mapping.c ../plat.c \
+       ../session.c
+HDRS = ../calib.h ../control.h ../input.h ../mapping.h ../plat.h \
+       ../session.h
 
 test_input: $(SRCS) $(HDRS)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ $(SRCS) $(LDLIBS)

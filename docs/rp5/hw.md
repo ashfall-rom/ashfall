@@ -112,12 +112,33 @@ Final constants and presets:
   starting with `cpu`, `cpuss`, `gpu` or `gpuss` (`cpu0-usr`, `cpuss-0-usr`,
   `gpuss-0-usr`, ...).  Stock Smart read `thermal_zone0` = `pm8150_tz`, a PMIC
   sensor, which is not SoC temperature and is deliberately not copied.
+* **Only a few zones are read per tick** (measured constraint): every `temp`
+  read makes the stock kona tsens driver print at `KERN_FATAL`
+  (`temp_show ...`), 2 688 lines shortly after boot with all 16 zones at 2 s.
+  The daemon therefore picks the `THERMAL_MAX_WATCH` (3) hottest zones with a
+  full sweep at start and every 5 min (`THERMAL_SWEEP_MS`), and reads only
+  those between sweeps (3 reads / 2 s instead of 16, ~5x less log spam).  The
+  trade-off: a sudden hotspot in a *previously cool* zone is seen at the next
+  sweep (up to 5 min later).  Because the watched set is the hottest three,
+  the hottest of them is still the fan's input; the safety threshold has
+  10 °C of headroom to the hardware throttle point.
+* **The tach (`speed`) is never read while `state=0`.**  `speed_show()` in the
+  stock `gpio5_pwm.ko` calls `enable_irq()`; with the fan disabled the kernel
+  prints `Unbalanced enable for IRQ ...` (seen on the device).  A stopped fan
+  is reported as `0` RPM without opening the node at all.
+* `off` writes **`state=0` first and always attempts it**, then `duty=0`; the
+  two attributes are independent, so a failed duty write can no longer leave
+  the fan spinning (`out_pct = -1` makes the next tick retry).
+* **No readable sensor fails safe, never off:** if no zone is readable the fan
+  runs the balanced preset (46 %, ~8 100 RPM), `safety` latches, one warning is
+  logged, and the zones are re-scanned every 2 s until data returns.
 * Smart mode samples every 2 s, smooths with an EMA (`alpha = 0.35`) and applies
   a 3 °C hysteresis on the way down (the target is only lowered once the
   smoothed temperature is a full 3 °C below the last decision point).
-* Spin-up kick: a 0 -> nonzero transition runs the fan at 100 % for 1.5 s
-  (`FAN_MIN_KICK_MS`) before dropping to the requested speed, because the
-  motor does not start reliably at a low duty.
+* Spin-up kick: a 0 -> nonzero transition runs the fan at 100 % for 500 ms
+  (`FAN_MIN_KICK_MS`) before dropping to the requested speed.  The measured
+  minimum duty (4 000 ns) starts reliably on its own, so this is insurance for
+  a cold unit; set the constant to 0 to disable it.
 * **Safety override, every mode including `off`:** at or above
   `persist.ashfall.fan.safety_c` (70..95 °C, default 85) the fan runs at 100 %
   until the temperature is 10 °C below the threshold.
@@ -128,11 +149,24 @@ Final constants and presets:
 |---|---|
 | `ashfall.status.fan.temp` | hottest CPU/GPU temperature, tenths of °C (`563` = 56.3 °C) |
 | `ashfall.status.fan.pct` | current fan output 0..100 (100 during a kick, `-1` if the sysfs write failed) |
-| `ashfall.status.fan.rpm` | `speed` node value, `-1` when unavailable |
+| `ashfall.status.fan.rpm` | `speed` node value, `0` while the fan is off (never read then), `-1` when unavailable |
 | `ashfall.status.fan.safety` | `1` while the safety override is active |
 
 `persist.ashfall.fan.preset` is UI-only (the active preset id, <= 32 chars); the
 daemon ignores it and only ever reads `mode`, `manual_pct` and `curve`.
+
+Numbers are invalid -> default, not clamped: `manual_pct` outside 0..100,
+`safety_c` outside 70..95, `led.brightness` outside 0..100 and `led.speed`
+outside 1..10 use the documented default (50, 85, 60, 5), and each distinct bad
+value is logged once.
+
+> **Tuning note (2026-11-14):** the RP5 idles at **~66 °C** (hottest CPU zone,
+  screen on, no load), where the contract's default curve
+  (`45:0,55:30,65:55,75:80,82:100`) asks for ~57 %.  On this handheld that is
+  clearly audible while idle, and the user set `fan.mode=off` for silence.
+  A device-tuned default (e.g. `55:0,65:20,75:55,82:80,88:100`, or presets in
+  the Parts app) is worth considering - that is a contract/UI decision, so the
+  daemon keeps the documented default.
 
 ## 4. Lighting
 
@@ -156,6 +190,43 @@ Animation runs at 30 fps in the daemon.  The hardware `breath` attribute is
 **not usable** by the daemon: on the device it is `--w--w----  root root`
 (write-only for root), while the daemon runs as `system`.  Software animation
 also covers `duo` and `rainbow`, which the hardware does not offer.
+
+### Boot ordering and write retries (issue #69)
+
+Presence is detected **by existence only** (`access(F_OK)`), never by a read
+(the attributes are write-only) and never by a DAC check: `ashfall-hwd` is
+`class core`, and vendor init only `chmod 0666`s the nodes in its own
+`on boot` action, which is parsed *after* `class_start core`.  A writability
+test at startup would therefore permanently disable the `enable` write.
+
+Any failed write leaves `led.applied = false` and the daemon retries the whole
+frame **every 500 ms** (`LED_RETRY_MS`) until it succeeds, including with
+`mode=off` (so a ring the bootloader/stock left on is switched off) and after
+the animation code stops calling `led_apply()` (static mode).
+
+### Which driver backs `sn3112*` (issue #68)
+
+The **sysfs class is named `sn3112l`/`sn3112r` but the drivers are
+`htr3212l`/`htr3212r`** (LHT, I2C).  Verified on the booted device:
+
+```
+$ ls /sys/bus/i2c/drivers/ | grep -i htr
+HTR3212L
+HTR3212R
+$ ls -l /sys/bus/i2c/drivers/HTR3212L/ 1-003c ...
+lrwxrwxrwx 1-003c -> ../../../../devices/platform/soc/.../i2c-1/1-003c
+lrwxrwxrwx module -> ../../../../module/htr3212l
+$ ls -d /sys/class/htr*        -> none
+$ ls -d /sys/class/sn3112*     -> /sys/class/sn3112l /sys/class/sn3112r
+$ readlink -f /sys/class/sn3112l/led -> /sys/devices/virtual/sn3112l/led
+$ echo 0 > /sys/class/sn3112l/led/enable ; echo $?   -> 0
+$ echo 0-0:0:0 > /sys/class/sn3112r/led/brightness   -> 0
+```
+
+So the LED controller *is* the htr3212 (as issue #68 says about the vendor
+driver), but its class devices are registered under the `sn3112` name, which is
+why the sysfs ABI used here works.  There are no `/sys/class/htr3212*` nodes
+to support; the backend is correct as written.
 
 ### On-device findings (2026-11-13)
 

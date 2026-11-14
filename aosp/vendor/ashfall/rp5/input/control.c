@@ -335,6 +335,23 @@ static void read_client(struct control *control, int index)
     handle_command(control, control->clients[index].fd, buf);
 }
 
+int control_poll(struct control *control, int timeout_ms)
+{
+    struct pollfd fds[CONTROL_MAX_CLIENTS + 1];
+    int nfds;
+    int rc;
+
+    if (!control)
+        return 0;
+    nfds = control_pollfds(control, fds, (int)(sizeof(fds) / sizeof(fds[0])));
+    if (nfds <= 0)
+        return 0;
+    rc = poll(fds, (nfds_t)nfds, timeout_ms);
+    if (rc > 0)
+        control_dispatch(control, fds, nfds);
+    return rc;
+}
+
 void control_dispatch(struct control *control, struct pollfd *fds, int nfds)
 {
     if (!control || !fds)

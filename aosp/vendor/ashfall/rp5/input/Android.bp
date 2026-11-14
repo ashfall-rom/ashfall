@@ -12,6 +12,7 @@ cc_binary {
         "input.c",
         "mapping.c",
         "plat.c",
+        "session.c",
     ],
     cflags: [
         "-Wall",

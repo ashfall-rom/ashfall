@@ -26,6 +26,7 @@
 #include "input.h"
 #include "mapping.h"
 #include "plat.h"
+#include "session.h"
 
 #include <errno.h>
 #include <fcntl.h>
@@ -47,10 +48,6 @@
 
 #define MCU_DEV "/dev/ttyHS1"
 #define MCU_DEV_STOCK "/dev/rscom"
-
-#define PROP_DZ_INNER "persist.ashfall.pad.deadzone_inner"
-#define PROP_DZ_OUTER "persist.ashfall.pad.deadzone_outer"
-#define PROP_DZ_TRIGGER "persist.ashfall.pad.trigger_deadzone"
 
 #define PROP_REFRESH_MS 250
 
@@ -278,25 +275,6 @@ static int create_uinput(void)
     return fd;
 }
 
-static int clamp_int(int value, int lo, int hi)
-{
-    return value < lo ? lo : value > hi ? hi : value;
-}
-
-static void read_deadzones(struct deadzones *dz)
-{
-    struct deadzones next = *dz;
-
-    next.inner_pct = clamp_int(prop_get_int(PROP_DZ_INNER, 5), 0, 30);
-    next.outer_pct = clamp_int(prop_get_int(PROP_DZ_OUTER, 3), 0, 20);
-    next.trigger_pct = clamp_int(prop_get_int(PROP_DZ_TRIGGER, 3), 0, 30);
-    if (memcmp(&next, dz, sizeof(next)) != 0) {
-        *dz = next;
-        ah_logf(AH_LOG_INFO, "deadzones: inner=%d%% outer=%d%% trigger=%d%%",
-                dz->inner_pct, dz->outer_pct, dz->trigger_pct);
-    }
-}
-
 static void on_calibration_changed(struct input_ctx *ctx)
 {
     ah_logf(AH_LOG_INFO, "calibration applied (source=%s)",
@@ -362,6 +340,47 @@ static void decode_status(const uint8_t *data, size_t len,
 
     if (keys_out)
         *keys_out = keys;
+}
+
+/*
+ * Release everything Android may still think is held.  The decision logic
+ * lives in session.c so the host tests can cover it; this is the uinput
+ * adapter.
+ */
+static void sink_emit(void *ctx, uint16_t type, uint16_t code, int32_t value)
+{
+    emit_event(*(int *)ctx, type, code, value);
+}
+
+static void release_all(int uinput_fd, uint16_t *prev_keys, int *prev_axes)
+{
+    session_state st;
+
+    st.keys = *prev_keys;
+    st.axis_count = AXIS_COUNT;
+    for (int i = 0; i < AXIS_COUNT; i++)
+        st.axes[i] = prev_axes[i];
+    if (session_release(&st, mcu_keymap, axis_codes, sink_emit, &uinput_fd) > 0)
+        ah_logf(AH_LOG_INFO, "released input held across an MCU session loss");
+    *prev_keys = st.keys;
+    for (int i = 0; i < AXIS_COUNT; i++)
+        prev_axes[i] = st.axes[i];
+}
+
+/*
+ * Service the control socket while the daemon is not in an MCU session
+ * (uinput retry, MCU reconnect wait, MCU quiet).  Without this a client
+ * connects to /dev/socket/ashfall_input but GET/SET CAL never get a reply,
+ * exactly when the calibration path is needed for diagnosis.
+ */
+static void control_wait(struct control *control, int timeout_ms)
+{
+    if (!control) {
+        usleep((useconds_t)timeout_ms * 1000);
+        return;
+    }
+    if (control_poll(control, timeout_ms) < 0 && errno != EINTR)
+        ah_logf(AH_LOG_WARN, "control poll: %s", strerror(errno));
 }
 
 static void handle_status(const uint8_t *data, size_t len, int uinput_fd,
@@ -488,7 +507,7 @@ int main(void)
     ah_log_set_tag("ashfall-rp5-input");
     memset(&ctx, 0, sizeof(ctx));
     deadzones_default(&ctx.dz);
-    read_deadzones(&ctx.dz);
+    deadzones_read(&ctx.dz);
     ctx.on_calibration_changed = on_calibration_changed;
     input_reload_calibration(&ctx);
 
@@ -502,7 +521,7 @@ int main(void)
     while (g_running && uinput_fd < 0) {
         uinput_fd = create_uinput();
         if (uinput_fd < 0)
-            sleep(1);
+            control_wait(control, 1000);
     }
     if (uinput_fd < 0)
         return 1;
@@ -513,18 +532,12 @@ int main(void)
     while (g_running) {
         /* The MCU lost power with buttons held: release everything the kernel
          * still thinks is down before the new session starts. */
-        if (prev_keys != 0) {
-            for (int i = 0; i < 16; i++) {
-                if (!(prev_keys & (1u << i)) || mcu_keymap[i] == 0)
-                    continue;
-                emit_event(uinput_fd, EV_KEY, mcu_keymap[i], 0);
-            }
-            emit_sync(uinput_fd);
-        }
+        if (prev_keys != 0 || prev_axes[AXIS_LX] != INT_MIN)
+            release_all(uinput_fd, &prev_keys, prev_axes);
 
         mcu_fd = mcu_open();
         if (mcu_fd < 0) {
-            sleep(1);
+            control_wait(control, 1000); /* CAL must answer without the MCU */
             continue;
         }
 
@@ -564,7 +577,7 @@ int main(void)
 
             now = ah_now_ms();
             if (now - last_props_ms >= PROP_REFRESH_MS) {
-                read_deadzones(&ctx.dz);
+                deadzones_read(&ctx.dz);
                 last_props_ms = now;
             }
 
@@ -573,7 +586,17 @@ int main(void)
 
             if (rc == 0) {
                 if (!good_frames || now - last_status_ms > 2000) {
-                    /* MCU not ready yet, or it stopped after a screen cycle. */
+                    /* MCU not ready yet, or it stopped after a screen cycle.
+                     * The UART usually stays open (rs_gpio cycles the MCU's
+                     * power, not the TTY), so this is the only place a stuck
+                     * button/axis is noticed: release before re-initialising
+                     * the session. */
+                    if (good_frames) {
+                        release_all(uinput_fd, &prev_keys, prev_axes);
+                        good_frames = 0;
+                        ah_logf(AH_LOG_INFO,
+                                "MCU went quiet; released held input");
+                    }
                     if (now - last_init_ms >= 500) {
                         mcu_send_init(mcu_fd);
                         last_init_ms = now;
@@ -675,7 +698,7 @@ int main(void)
         close(mcu_fd);
         mcu_fd = -1;
         if (g_running)
-            sleep(1);
+            control_wait(control, 1000);
     }
 
     ah_logf(AH_LOG_INFO, "stopping");

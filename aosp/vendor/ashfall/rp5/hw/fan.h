@@ -80,7 +80,8 @@ typedef struct {
 
     /* last applied output (0..100, -1 = unknown) */
     int out_pct;
-    bool safety;      /* safety override latched */
+    bool safety;       /* safety override latched (or no sensor: fail-safe) */
+    bool sensor_fault; /* no readable CPU/GPU thermal zone */
     double ema_c;     /* smoothed temperature */
     bool have_ema;
     int anchor_c;     /* hysteresis anchor (-1 = none) */
