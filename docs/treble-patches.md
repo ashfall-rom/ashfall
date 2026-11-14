@@ -37,7 +37,7 @@ unnecessary, or kept as an explicit `maybe` with the first-boot trigger that wou
 | `docs/stock/**` (PR #10) | kernel config/version, VINTF manifests + FCM report, props, fstab, init scripts, partition layout |
 
 "Applies with `git am`" was never accepted as "needed"; each verdict cites the A17 code path
-and/or the stock artefact. Verifier issues [#15](https://github.com/Epickitrolaz/ashfall/issues/15)–[#19](https://github.com/Epickitrolaz/ashfall/issues/19), [#24](https://github.com/Epickitrolaz/ashfall/issues/24) and [#25](https://github.com/Epickitrolaz/ashfall/issues/25) are folded in.
+and/or the stock artefact. Verifier issues [#15](https://github.com/ashfall-rom/ashfall/issues/15)–[#19](https://github.com/ashfall-rom/ashfall/issues/19), [#24](https://github.com/ashfall-rom/ashfall/issues/24) and [#25](https://github.com/ashfall-rom/ashfall/issues/25) are folded in.
 
 ## Triage table
 
@@ -76,7 +76,7 @@ on this device (it makes `bpfloader` load a 5.10-era program set on a 5.15 kerne
 | Source patch | What it fixes | Needed? | Reason |
 |---|---|---|---|
 | `system_bpf/0001,0002,0003` non-fatal BPF loading | `bpfloader` exits/panics on load failure | no | nothing in the stock 5.15 kernel rejects the A17 program set; the patch would hide genuine BPF breakage |
-| `system_sepolicy/0002` generic `fs_bpf` for `network_stack` | Tethering denied on kernels < 5.10 | no | 5.15 can label the per-purpose `/sys/fs/bpf` subdirectories. **Also: as specified it does not build** — see [#15](https://github.com/Epickitrolaz/ashfall/issues/15) |
+| `system_sepolicy/0002` generic `fs_bpf` for `network_stack` | Tethering denied on kernels < 5.10 | no | 5.15 can label the per-purpose `/sys/fs/bpf` subdirectories. **Also: as specified it does not build** — see [#15](https://github.com/ashfall-rom/ashfall/issues/15) |
 | `system_sepolicy/0001` revert "Remove 28.0 compat" | vendor policy compat for API 28 | no | vendor is API 33 |
 | `system_netd/0001..0004` rpfilter/FTP/no-bpf exits | tethering/BPF failure handling | no | no BPF failures expected; the exits remain correct for genuinely broken BPF |
 | `Connectivity/0001..0009` BPF-less degradation | firewall/stats/tethering fallbacks | no | same |
@@ -123,7 +123,7 @@ device. Removal is a product decision (below).
 
 ### cgroups (maybe)
 
-Verifier issue [#18](https://github.com/Epickitrolaz/ashfall/issues/18) is right that the stock **vendor** init scripts use cgroup **v1**
+Verifier issue [#18](https://github.com/ashfall-rom/ashfall/issues/18) is right that the stock **vendor** init scripts use cgroup **v1**
 paths (`/sys/fs/cgroup/memory/.../tasks`, `mount cgroup none /dev/blkio blkio` in
 `vendor/etc/init/hw/init.qcom.rc`) while A17 init mounts its own cgroup2 hierarchy from
 `/system/etc/cgroups.json` (`blkio`, `cpu`, `cpuset`) — a mixed-hierarchy setup. A17 still
@@ -155,17 +155,17 @@ If any appears, port TD `system_core/0018` (init) and/or `frameworks_base/0039`
 It keeps the original author in `From:` and cites the TrebleDroid **blob** URL in
 `Ported-from:` — the `blob/` URLs are the only ones that resolve; the original `From:` commit
 ids do not exist in `ponces/treble_aosp`
-([#19](https://github.com/Epickitrolaz/ashfall/issues/19),
-[#25](https://github.com/Epickitrolaz/ashfall/issues/25)). It does not touch
+([#19](https://github.com/ashfall-rom/ashfall/issues/19),
+[#25](https://github.com/ashfall-rom/ashfall/issues/25)). It does not touch
 `system/sepolicy`, so the neverallow problem of
-[#15](https://github.com/Epickitrolaz/ashfall/issues/15) cannot recur.
+[#15](https://github.com/ashfall-rom/ashfall/issues/15) cannot recur.
 
 The vendor-mismatch dialog patch (TD `frameworks_base/0001`) was **removed** in round 3: A17
 still ships `android.frameworks.sensorservice@1.0` HIDL
 (`frameworks/hardware/interfaces/sensorservice/1.0/`, verified at the pinned revision) and
 libvintf does not enforce the device matrix's `optional="false"` HAL entries at runtime, so
 `verifyBuildAtBoot()` is expected to pass on this stock vendor
-([#24](https://github.com/Epickitrolaz/ashfall/issues/24)). It is listed as a `maybe` above,
+([#24](https://github.com/ashfall-rom/ashfall/issues/24)). It is listed as a `maybe` above,
 with the first-boot trigger that brings it back.
 
 ## Recommendations for `aosp/vendor/ashfall` (issue #4)
@@ -202,7 +202,7 @@ only place the 4.19 assumptions apply. In that world, re-introduce — in this o
    the modern program set and must not boot-loop.
 3. The generic `fs_bpf` sepolicy rule (TD `system_sepolicy/0002`) **plus** an amendment to
    `private/bpfloader.te:57` adding `-network_stack` to the neverallow exception list, exactly
-   as [#15](https://github.com/Epickitrolaz/ashfall/issues/15) describes. Without both, `m sepolicy` fails on the neverallow; TrebleDroid
+   as [#15](https://github.com/ashfall-rom/ashfall/issues/15) describes. Without both, `m sepolicy` fails on the neverallow; TrebleDroid
    only gets away with it because `device_phh_treble/base.mk` sets
    `SELINUX_IGNORE_NEVERALLOWS := true`, which LineageOS does not.
 4. `system/vold` exFAT `sdfat`/`texfat` fallbacks (TD `0004`) — a 4.19 Qualcomm/Samsung kernel
@@ -243,7 +243,7 @@ The patch was applied with `git am --3way` onto a **pristine** `lineage-24.0` ch
 and on the build host, the latter cloned from the real synced tree. It does not touch
 `system/sepolicy`, `system/bpf` or `system/vold`, so there are no neverallow or kernel-gated
 code paths to build-check (the sepolicy patch of an earlier head, which
-[#15](https://github.com/Epickitrolaz/ashfall/issues/15) proved uncompilable, is gone).
+[#15](https://github.com/ashfall-rom/ashfall/issues/15) proved uncompilable, is gone).
 
 Local:
 

@@ -1,6 +1,6 @@
 # Stock RP5 firmware analysis for an Android 17 (LineageOS 24.0) GSI
 
-Issue: [#2](https://github.com/Epickitrolaz/ashfall/issues/2) · Phase 1 research.
+Issue: [#2](https://github.com/ashfall-rom/ashfall/issues/2) · Phase 1 research.
 Target: Retroid Pocket 5 (SM8250 "kona"), stock Android 13, unlocked bootloader.
 
 **Bottom line:** an Android 17 GSI can boot on the *stock* vendor. The vendor

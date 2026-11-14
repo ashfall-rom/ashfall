@@ -10,8 +10,9 @@ the complete state of the project as left by the first orchestrator session.
   every brief starts with "Load the skill `t3-worker-subagents`" + `gh issue view N`.
   Verifiers = separate threads, zero owned paths, file issues. Waits: `t3_thread_wait`
   with `timeoutMs: 240000` (or 3000000 only for >50 min jobs).
-- GitHub is the system of record: repo **Epickitrolaz/ashfall** (private), org
-  **ashfall-rom** exists for future forks (unused so far). Issues first, one PR per worker.
+- GitHub is the system of record: repo **ashfall-rom/ashfall** (private; transferred from the
+  personal account on 2026-11-14, old URLs redirect). Org **ashfall-rom** is the project home.
+  Issues first, one PR per worker.
 - The user tests on hardware and reports; the orchestrator builds, flashes, coordinates.
   Ask the user (question tool) between steps; the user wants to be talked to.
 - **Never let two workers use the RP5 at the same time** (it happened: #50/#51 vs #52).

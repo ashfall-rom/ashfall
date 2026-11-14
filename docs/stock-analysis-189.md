@@ -1,7 +1,7 @@
 # RP5 `1.0.0.189` full OTA vs `1.0.0.31` — analysis and Phase 5 reference
 
 Status: 2026-11-13. After the safety check
-([issue #57 comment](https://github.com/Epickitrolaz/ashfall/issues/57#issuecomment-6864298164))
+([issue #57 comment](https://github.com/ashfall-rom/ashfall/issues/57#issuecomment-6864298164))
 the decision is: **AshFall stays on the pre-release `.31` base** (Android 13 vendor, API 33,
 VNDK 33, VINTF target-level 7, 5.15 GKI). This document records why `.189` is not a drop-in
 upgrade, and the Retroid system-side fan/RGB/MCU interfaces that `.189` changes for Phase 5.

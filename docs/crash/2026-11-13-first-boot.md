@@ -1,6 +1,6 @@
 # 2026-11-13 — first AshFall GSI boot ends in Qualcomm crash dump (05c6:900e)
 
-Triage for [#39](https://github.com/Epickitrolaz/ashfall/issues/39).
+Triage for [#39](https://github.com/ashfall-rom/ashfall/issues/39).
 
 Image: `20261113-050255-ashfall_gsi_arm64-userdebug-fb3ee9c0baf3` (main `fb3ee9c`,
 EROFS, 1.63 GiB, sha256 `bfca6e0f…3925`), flashed to `system_a` + stock
