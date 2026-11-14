@@ -12,6 +12,7 @@
  */
 
 #include "fan.h"
+#include "gpu.h"
 #include "led.h"
 #include "plat.h"
 #include "thermal.h"
@@ -45,12 +46,15 @@
 
 #define PROP_PERF_OVERRIDE "ashfall.perf.throttle_override"
 #define PROP_PERF_PERMANENT "persist.ashfall.perf.throttle_override_permanent"
+#define PROP_GPU_MAX_MHZ "persist.ashfall.perf.gpu_max_mhz"
 
 #define STATUS_FAN_TEMP "ashfall.status.fan.temp"
 #define STATUS_FAN_PCT "ashfall.status.fan.pct"
 #define STATUS_FAN_RPM "ashfall.status.fan.rpm"
 #define STATUS_FAN_SAFETY "ashfall.status.fan.safety"
 #define STATUS_PERF_THROTTLE "ashfall.status.perf.throttle"
+#define STATUS_GPU_MAX_MHZ "ashfall.status.perf.gpu_max_mhz"
+#define STATUS_GPU_OC "ashfall.status.perf.gpu_oc"
 
 #define STATUS_INTERVAL_MS 2000
 /* ashfall.ui.fan_live=1: a fan page/editor/QS dialog is visible, publish the
@@ -63,6 +67,8 @@
 /* Full thermal sweep period: re-picks the hottest zones (a few temp reads,
  * see thermal.h for why the daemon does not read all 16 zones per tick). */
 #define THERMAL_SWEEP_MS 300000
+/* Retry while the kgsl devfreq node is not up yet (vendor init/class core). */
+#define GPU_RETRY_MS 5000
 
 static volatile sig_atomic_t g_running = 1;
 
@@ -77,6 +83,12 @@ struct status_cache {
     int pct;
     int rpm;
     int safety;
+    bool valid;
+};
+
+struct gpu_status_cache {
+    int mhz;
+    int oc;
     bool valid;
 };
 
@@ -204,6 +216,23 @@ static bool perf_override_requested(bool *requested)
     return true;
 }
 
+static void publish_gpu_status(const gpu_state *gpu,
+                               struct gpu_status_cache *cache)
+{
+    int mhz = gpu_status_mhz(gpu);
+    int oc = gpu_status_oc(gpu);
+
+    if (!cache->valid || cache->mhz != mhz) {
+        prop_set_int(STATUS_GPU_MAX_MHZ, mhz);
+        cache->mhz = mhz;
+    }
+    if (!cache->valid || cache->oc != oc) {
+        prop_set_int(STATUS_GPU_OC, oc);
+        cache->oc = oc;
+    }
+    cache->valid = true;
+}
+
 static void publish_throttle_status(const throttle_state *throttle,
                                     int *cache)
 {
@@ -264,8 +293,13 @@ int main(void)
     led_state led;
     led_screen screen;
     throttle_state throttle;
+    gpu_state gpu;
     struct status_cache status;
+    struct gpu_status_cache gpu_status;
     int throttle_status_cache = -2; /* force the first publish */
+    int gpu_request = GPU_STOCK_MHZ;
+    bool gpu_override = false;
+    int64_t next_gpu_ms = 0;
     int64_t now;
     int64_t next_fan_ms;
     int64_t next_led_ms = 0;
@@ -293,6 +327,8 @@ int main(void)
     led_screen_init(&screen, screen_on, now);
     thermal_scan(&thermal);
     memset(&status, 0, sizeof(status));
+    memset(&gpu_status, 0, sizeof(gpu_status));
+    gpu_state_init(&gpu);
 
     /* Apply the persisted settings once at boot: the daemon is the only
      * writer of the fan/LED nodes, so nothing else restores them. */
@@ -322,6 +358,15 @@ int main(void)
             throttle_set(&throttle, requested);
         publish_throttle_status(&throttle, &throttle_status_cache);
     }
+
+    /* GPU cap: apply the persisted request once at boot, clamped to the DT
+     * table and to 670 MHz while the throttle override is active. */
+    gpu_request = prop_get_int_range(PROP_GPU_MAX_MHZ, GPU_STOCK_MHZ,
+                                     GPU_MIN_MHZ, GPU_MAX_MHZ);
+    gpu_override = throttle.active;
+    gpu_apply(&gpu, gpu_request, gpu_override);
+    publish_gpu_status(&gpu, &gpu_status);
+    next_gpu_ms = now + (gpu.available && gpu.applied ? 0 : GPU_RETRY_MS);
 
     while (g_running) {
         bool changed = false;
@@ -379,6 +424,25 @@ int main(void)
                 requested != throttle.active)
                 throttle_set(&throttle, requested);
             publish_throttle_status(&throttle, &throttle_status_cache);
+        }
+
+        /* --- GPU cap ------------------------------------------------------
+         * Re-evaluated when the property or the throttle override changes,
+         * and retried while the kgsl devfreq node is not available yet. */
+        {
+            int request = prop_get_int_range(PROP_GPU_MAX_MHZ, GPU_STOCK_MHZ,
+                                             GPU_MIN_MHZ, GPU_MAX_MHZ);
+            bool override = throttle.active;
+            bool retry = (!gpu.available || !gpu.applied) && now >= next_gpu_ms;
+
+            if (request != gpu_request || override != gpu_override || retry) {
+                gpu_apply(&gpu, request, override);
+                gpu_request = request;
+                gpu_override = override;
+                next_gpu_ms = now + ((gpu.available && gpu.applied)
+                                         ? 0 : GPU_RETRY_MS);
+                publish_gpu_status(&gpu, &gpu_status);
+            }
         }
 
         /* A settings, curve-preview or screen change must re-evaluate the

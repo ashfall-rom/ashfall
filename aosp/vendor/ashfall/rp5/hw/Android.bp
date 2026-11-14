@@ -8,6 +8,7 @@ cc_binary {
     srcs: [
         "ashfall_hwd.c",
         "fan.c",
+        "gpu.c",
         "led.c",
         "plat.c",
         "thermal.c",

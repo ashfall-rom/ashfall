@@ -25,11 +25,11 @@ merged into the contexts the image build and libselinux use.  The old
 
 | file | contents |
 |---|---|
-| `ashfall_hwd.te` | `ashfall_hwd` domain, sysfs types for fan/LED attributes, thermal read + trip write for the performance override |
+| `ashfall_hwd.te` | `ashfall_hwd` domain, sysfs types for fan/LED attributes, thermal read + trip write for the performance override, GPU devfreq cap type |
 | `ashfall_rp5_input.te` | `ashfall_rp5_input` domain, `/data/misc/ashfall`, control socket |
 | `ashfall_props.te` | `ashfall_prop` (`persist.ashfall.`), `ashfall_status_prop` (`ashfall.status.`), `ashfall_ui_prop` (`ashfall.ui.`) and `ashfall_perf_prop` (`ashfall.perf.`, `persist.ashfall.perf.`) |
 | `file_contexts` | binaries, `/dev/socket/ashfall_input`, `/data/misc/ashfall` |
-| `genfs_contexts` | sysfs types for `gpio5_pwm2` and the `sn3112` LED classes |
+| `genfs_contexts` | sysfs types for `gpio5_pwm2`, the `sn3112` LED classes and the three relabelled kgsl devfreq attributes |
 | `property_contexts` | the four property prefixes (the `persist.ashfall.perf.` entry is more specific than `persist.ashfall.`) |
 
 ## Notes
@@ -46,3 +46,17 @@ merged into the contexts the image build and libselinux use.  The old
 * `genfs_contexts` lists the plausible resolved paths for the fan/LED class
   devices; verify them on the device (`readlink -f /sys/class/...`) after the
   first flash and trim the list (docs/rp5/hw.md §5).
+* **GPU cap (phase 6).**  `/sys/class/kgsl/**` is labelled `vendor_sysfs_kgsl`
+  by the stock vendor policy.  A system_ext policy cannot reference vendor
+  types, and the node's label is stored by userspace `restorecon` from
+  `vendor_file_contexts` (which is loaded *after* `system_ext_file_contexts`),
+  so a plain allow/genfscon is not enough.  `file_contexts` relabels exactly
+  `gpu_available_frequencies`, `devfreq/.../max_freq` and
+  `devfreq/.../min_freq` with `ashfall_gpu_sysfs`, using **exact pathnames**
+  (every dot escaped).  libselinux `sort_specs()` moves exact pathnames behind
+  all regex specifications, so they win over the vendor regexes regardless of
+  load order; `genfs_contexts` carries the same three paths as a fallback.
+  Directory traversal needs no new rule: the stock vendor policy grants
+  `search` on `vendor_sysfs_kgsl:dir` to all domains.  Verify on the device
+  after the system build with `ls -Z` on the three files (docs/rp5/gpu.md
+  §verification).

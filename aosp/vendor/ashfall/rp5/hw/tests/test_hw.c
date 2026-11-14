@@ -6,6 +6,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 #include "fan.h"
+#include "gpu.h"
 #include "led.h"
 #include "plat.h"
 #include "thermal.h"
@@ -127,6 +128,14 @@ static int make_sysfs(void)
     write_file("/sys/class/sn3112l/led/brightness", "0-0:0:0\n");
     write_file("/sys/class/sn3112r/led/enable", "0\n");
     write_file("/sys/class/sn3112r/led/brightness", "0-0:0:0\n");
+
+    /* GPU devfreq cap (phase 6): stock DT table, 670 MHz top. */
+    mkdir_p("/sys/class/kgsl/kgsl-3d0/devfreq");
+    write_file("/sys/class/kgsl/kgsl-3d0/devfreq/max_freq", "670000000\n");
+    write_file("/sys/class/kgsl/kgsl-3d0/devfreq/min_freq", "305000000\n");
+    write_file("/sys/class/kgsl/kgsl-3d0/gpu_available_frequencies",
+               "670000000 587000000 525000000 490000000 441600000 400000000 "
+               "305000000\n");
 
     mkdir_p("/sys/class/thermal/thermal_zone0");
     mkdir_p("/sys/class/thermal/thermal_zone1");
@@ -1024,6 +1033,85 @@ static void test_throttle(void)
     remove_rel("/sys/class/thermal/thermal_zone2/cdev0");
 }
 
+
+/* --- phase 6: GPU max-frequency cap ------------------------------------- */
+
+static void test_gpu(void)
+{
+    const char *prop = "persist.ashfall.perf.gpu_max_mhz";
+    const char *max_freq = "/sys/class/kgsl/kgsl-3d0/devfreq/max_freq";
+    gpu_state gpu;
+
+    gpu_state_init(&gpu);
+    CHECK_EQ(gpu_apply(&gpu, 670, false), 670);
+    CHECK_EQ(read_int(max_freq), 670000000);
+    CHECK_EQ(gpu_status_mhz(&gpu), 670);
+    CHECK_EQ(gpu_status_oc(&gpu), 0);
+
+    /* Stock DT table: 1000 MHz is not a step yet - logged no-op, not a crash. */
+    CHECK_EQ(gpu_apply(&gpu, 1000, false), 670);
+    CHECK_EQ(read_int(max_freq), 670000000);
+    CHECK_EQ(gpu_status_oc(&gpu), 0);
+
+    /* After the OC vendor_boot, the OC steps are selectable. */
+    write_file("/sys/class/kgsl/kgsl-3d0/gpu_available_frequencies",
+               "1000000000 940000000 850000000 765000000 670000000 587000000 "
+               "525000000 490000000 441600000 400000000 305000000\n");
+    gpu_state_init(&gpu);
+    CHECK_EQ(gpu_apply(&gpu, 1000, false), 1000);
+    CHECK_EQ(read_int(max_freq), 1000000000);
+    CHECK_EQ(gpu_status_mhz(&gpu), 1000);
+    CHECK_EQ(gpu_status_oc(&gpu), 1);
+
+    /* Highest available step <= the request. */
+    CHECK_EQ(gpu_apply(&gpu, 900, false), 850);
+    CHECK_EQ(read_int(max_freq), 850000000);
+    CHECK_EQ(gpu_apply(&gpu, 441, false), 400); /* 441.6 MHz is above 441 */
+    CHECK_EQ(gpu_apply(&gpu, 305, false), 305);
+    CHECK_EQ(read_int(max_freq), 305000000);
+    CHECK_EQ(gpu_apply(&gpu, 670, false), 670);
+
+    /* The phase-5 throttle override clamps the cap to stock 670 MHz. */
+    CHECK_EQ(gpu_apply(&gpu, 1000, true), 670);
+    CHECK_EQ(read_int(max_freq), 670000000);
+    CHECK_EQ(gpu_status_mhz(&gpu), 670);
+    CHECK_EQ(gpu_status_oc(&gpu), 0);
+    /* ... and leaving the override re-applies the persisted request. */
+    CHECK_EQ(gpu_apply(&gpu, 1000, false), 1000);
+    CHECK_EQ(read_int(max_freq), 1000000000);
+
+    /* The property is 305..1000, default 670, invalid -> 670. */
+    unsetenv(prop);
+    CHECK_EQ(prop_get_int_range(prop, GPU_STOCK_MHZ, GPU_MIN_MHZ, GPU_MAX_MHZ),
+             670);
+    setenv(prop, "305", 1);
+    CHECK_EQ(prop_get_int_range(prop, GPU_STOCK_MHZ, GPU_MIN_MHZ, GPU_MAX_MHZ),
+             305);
+    setenv(prop, "940", 1);
+    CHECK_EQ(prop_get_int_range(prop, GPU_STOCK_MHZ, GPU_MIN_MHZ, GPU_MAX_MHZ),
+             940);
+    setenv(prop, "1000", 1);
+    CHECK_EQ(prop_get_int_range(prop, GPU_STOCK_MHZ, GPU_MIN_MHZ, GPU_MAX_MHZ),
+             1000);
+    setenv(prop, "1001", 1);
+    CHECK_EQ(prop_get_int_range(prop, GPU_STOCK_MHZ, GPU_MIN_MHZ, GPU_MAX_MHZ),
+             670);
+    setenv(prop, "0", 1);
+    CHECK_EQ(prop_get_int_range(prop, GPU_STOCK_MHZ, GPU_MIN_MHZ, GPU_MAX_MHZ),
+             670);
+    setenv(prop, "fast", 1);
+    CHECK_EQ(prop_get_int_range(prop, GPU_STOCK_MHZ, GPU_MIN_MHZ, GPU_MAX_MHZ),
+             670);
+    unsetenv(prop);
+
+    /* A missing kgsl devfreq node is a logged no-op, not a crash. */
+    remove_rel("/sys/class/kgsl");
+    gpu_state_init(&gpu);
+    CHECK_EQ(gpu_apply(&gpu, 1000, false), -1);
+    CHECK_EQ(gpu_status_mhz(&gpu), -1);
+    CHECK_EQ(gpu_status_oc(&gpu), -1);
+}
+
 int main(void)
 {
     if (make_sysfs() < 0) {
@@ -1052,6 +1140,7 @@ int main(void)
     test_prop_range();
     test_thermal_watch();
     test_throttle();
+    test_gpu();
 
     /* best effort cleanup */
     {
