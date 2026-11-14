@@ -24,6 +24,7 @@ import android.opengl.EGLSurface;
 import android.opengl.GLES20;
 import android.os.Handler;
 import android.os.Looper;
+import android.os.Process;
 import android.os.SystemClock;
 import android.util.Log;
 
@@ -32,14 +33,25 @@ import java.nio.ByteOrder;
 import java.nio.FloatBuffer;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 
 /**
  * The curve-editor stress test (docs/phase5.md §6.3).
  *
  * <p>CPU load: one worker thread per (up to eight) core, each running a busy
  * loop with a duty cycle equal to the requested percentage.  GPU load: an
- * offscreen EGL pbuffer that renders a deliberately expensive fragment shader
- * every frame with {@code glFinish()} and the same duty cycle.
+ * offscreen 1920x1080 EGL pbuffer that renders several full-screen passes of a
+ * deliberately expensive fragment shader per submission with
+ * {@code glFinish()} and the same duty cycle.
+ *
+ * <p>The GPU workload has to be GPU-bound, not submission-bound: a single
+ * 512x512 draw finished in well under a millisecond, the GPU starved between
+ * the {@code glFinish()} and the next draw (~82 % busy) and the
+ * {@code msm-adreno-tz} governor stayed at 587 MHz instead of ramping to the
+ * 940 MHz cap (#118).  The passes of one submission are queued back-to-back
+ * (one {@code glFinish()} for the whole group), the render target matches the
+ * panel and the shader runs a long dependent sin/cos chain, so the GPU, not
+ * the EGL/driver submission thread, is the bottleneck.
  *
  * <p>A session always stops itself after ten minutes and is stopped by the
  * editor when it leaves the foreground.  Nothing here touches the daemons; the
@@ -51,7 +63,18 @@ public final class Stress {
 
     private static final String TAG = "AshFallParts";
     private static final int MAX_CPU_THREADS = 8;
-    private static final int GPU_SIZE = 512;
+    /** Preferred offscreen render target; clamped to the pbuffer limit. */
+    private static final int GPU_TARGET_WIDTH = 1920;
+    private static final int GPU_TARGET_HEIGHT = 1080;
+    /** Full-screen passes queued before the single {@code glFinish()}. */
+    private static final int GPU_PASSES = 4;
+    /**
+     * Iterations of the fragment shader's dependent sin/cos chain.  Keep in
+     * step with the loop bound in {@link GpuWorker#buildProgram()}.
+     */
+    private static final int GPU_SHADER_ITERATIONS = 128;
+    /** How often the GPU worker reports its frame load to logcat. */
+    private static final long GPU_LOG_INTERVAL_NS = 5 * 1000 * 1000 * 1000L;
     private static final long CPU_WINDOW_NS = 20 * 1000 * 1000L;
 
     private static final Stress sInstance = new Stress();
@@ -273,6 +296,15 @@ public final class Stress {
             EGLSurface surface = EGL14.EGL_NO_SURFACE;
             boolean ready = false;
             try {
+                // The CPU workers stay at the default app priority.  Raise the
+                // GL submission thread above them so a 100 % CPU slider cannot
+                // leave the GPU waiting for the next draw; display priority is
+                // still a normal (preemptible) app-render priority.
+                try {
+                    Process.setThreadPriority(Process.THREAD_PRIORITY_DISPLAY);
+                } catch (SecurityException | IllegalArgumentException e) {
+                    Log.w(TAG, "GPU stress: could not raise thread priority", e);
+                }
                 display = EGL14.eglGetDisplay(EGL14.EGL_DEFAULT_DISPLAY);
                 if (display == EGL14.EGL_NO_DISPLAY) {
                     return;
@@ -297,13 +329,22 @@ public final class Stress {
                         || count[0] < 1) {
                     return;
                 }
-                final int[] surfaceAttribs = {
-                        EGL14.EGL_WIDTH, GPU_SIZE,
-                        EGL14.EGL_HEIGHT, GPU_SIZE,
-                        EGL14.EGL_NONE,
-                };
-                surface = EGL14.eglCreatePbufferSurface(display, configs[0], surfaceAttribs, 0);
+                // Drivers cap the pbuffer size; stay inside the config limit.
+                int width = limit(GPU_TARGET_WIDTH,
+                        configAttrib(display, configs[0], EGL14.EGL_MAX_PBUFFER_WIDTH));
+                int height = limit(GPU_TARGET_HEIGHT,
+                        configAttrib(display, configs[0], EGL14.EGL_MAX_PBUFFER_HEIGHT));
+                surface = createPbuffer(display, configs[0], width, height);
                 if (surface == EGL14.EGL_NO_SURFACE) {
+                    // Memory pressure on a small pbuffer heap: retry smaller
+                    // once before giving up on GPU load.
+                    width = Math.max(640, width / 2);
+                    height = Math.max(360, height / 2);
+                    Log.w(TAG, "GPU stress: pbuffer retry at " + width + "x" + height);
+                    surface = createPbuffer(display, configs[0], width, height);
+                }
+                if (surface == EGL14.EGL_NO_SURFACE) {
+                    Log.w(TAG, "GPU stress: no pbuffer surface");
                     return;
                 }
                 final int[] contextAttribs = {
@@ -325,27 +366,63 @@ public final class Stress {
                 vertices.put(new float[] {-1f, -1f, 3f, -1f, -1f, 3f}).position(0);
                 final int position = GLES20.glGetAttribLocation(program, "aPosition");
                 final int time = GLES20.glGetUniformLocation(program, "uTime");
+                final int pass = GLES20.glGetUniformLocation(program, "uPass");
                 GLES20.glUseProgram(program);
                 GLES20.glEnableVertexAttribArray(position);
                 GLES20.glVertexAttribPointer(position, 2, GLES20.GL_FLOAT, false, 0, vertices);
-                GLES20.glViewport(0, 0, GPU_SIZE, GPU_SIZE);
+                GLES20.glViewport(0, 0, width, height);
                 ready = true;
+                // Diagnostics for the device test: the render size, the number
+                // of queued passes and the renderer are what confirm that the
+                // load is GPU-bound rather than submission-bound.
+                Log.i(TAG, "GPU stress: " + width + "x" + height + " pbuffer, "
+                        + GPU_PASSES + " passes, " + GPU_SHADER_ITERATIONS
+                        + " shader iterations, renderer "
+                        + GLES20.glGetString(GLES20.GL_RENDERER));
 
+                long logFrames = 0;
+                long logBusyNs = 0;
+                long logSubmitNs = 0;
+                long logSince = System.nanoTime();
+                int logPct = -1;
                 while (mRunning) {
                     final int pct = mStress.mGpuPct;
                     if (pct <= 0) {
+                        logFrameLoad(logPct, logFrames, logBusyNs, logSubmitNs);
+                        logFrames = 0;
+                        logBusyNs = 0;
+                        logSubmitNs = 0;
                         sleepQuietly(50);
                         continue;
                     }
                     final long start = System.nanoTime();
                     GLES20.glUniform1f(time, (start % 1_000_000_000L) / 1_000_000f);
-                    GLES20.glDrawArrays(GLES20.GL_TRIANGLES, 0, 3);
+                    // Queue the whole group before waiting: the GPU stays busy
+                    // across the passes instead of idling between submissions.
+                    for (int i = 0; i < GPU_PASSES && mRunning; i++) {
+                        GLES20.glUniform1f(pass, (float) i);
+                        GLES20.glDrawArrays(GLES20.GL_TRIANGLES, 0, 3);
+                    }
+                    final long submitted = System.nanoTime();
                     GLES20.glFinish();
-                    final long busy = System.nanoTime() - start;
+                    final long end = System.nanoTime();
+                    final long busy = end - start;
+                    logFrames++;
+                    logBusyNs += busy;
+                    logSubmitNs += submitted - start;
+                    logPct = pct;
+                    if (end - logSince >= GPU_LOG_INTERVAL_NS) {
+                        logFrameLoad(logPct, logFrames, logBusyNs, logSubmitNs);
+                        logFrames = 0;
+                        logBusyNs = 0;
+                        logSubmitNs = 0;
+                        logSince = end;
+                    }
                     if (pct < 100) {
                         sleepNanosQuietly(busy * (100L - pct) / pct);
                     }
                 }
+                logFrameLoad(logPct, logFrames, logBusyNs, logSubmitNs);
                 GLES20.glDeleteProgram(program);
             } catch (Throwable t) {
                 Log.w(TAG, "GPU stress unavailable", t);
@@ -369,23 +446,63 @@ public final class Stress {
             }
         }
 
+        /** Zero means "no advertised limit"; otherwise never exceed it. */
+        private static int limit(int target, int max) {
+            return max > 0 ? Math.min(target, max) : target;
+        }
+
+        private static int configAttrib(EGLDisplay display, EGLConfig config, int attrib) {
+            final int[] value = new int[1];
+            if (!EGL14.eglGetConfigAttrib(display, config, attrib, value, 0)) {
+                return 0;
+            }
+            return value[0];
+        }
+
+        private static EGLSurface createPbuffer(EGLDisplay display, EGLConfig config,
+                int width, int height) {
+            final int[] surfaceAttribs = {
+                    EGL14.EGL_WIDTH, width,
+                    EGL14.EGL_HEIGHT, height,
+                    EGL14.EGL_NONE,
+            };
+            return EGL14.eglCreatePbufferSurface(display, config, surfaceAttribs, 0);
+        }
+
+        private static void logFrameLoad(int pct, long frames, long busyNs, long submitNs) {
+            if (frames <= 0) {
+                return;
+            }
+            final double frameMs = busyNs / (double) frames / 1_000_000.0;
+            final double submitMs = submitNs / (double) frames / 1_000_000.0;
+            Log.i(TAG, String.format(Locale.US,
+                    "GPU stress: %d%% %.1f ms/frame (submit %.2f ms, gpu %.1f ms)",
+                    pct, frameMs, submitMs, Math.max(0.0, frameMs - submitMs)));
+        }
+
         private static int buildProgram() {
             final int vertexShader = compile(GLES20.GL_VERTEX_SHADER,
                     "attribute vec2 aPosition;\n"
                             + "void main() {\n"
                             + "  gl_Position = vec4(aPosition, 0.0, 1.0);\n"
                             + "}\n");
+            // The chain is deliberately serial (d feeds the next sin argument):
+            // it keeps the fragment ALU busy for a long, predictable time per
+            // pixel and discourages the driver from collapsing the loop.
             final int fragmentShader = compile(GLES20.GL_FRAGMENT_SHADER,
                     "precision mediump float;\n"
                             + "uniform float uTime;\n"
+                            + "uniform float uPass;\n"
                             + "void main() {\n"
-                            + "  vec2 p = gl_FragCoord.xy * 0.01;\n"
+                            + "  vec2 p = (gl_FragCoord.xy + vec2(uPass * 37.0)) * 0.002 - 1.0;\n"
                             + "  float v = 0.0;\n"
-                            + "  for (int i = 0; i < 64; i++) {\n"
+                            + "  float d = 0.0;\n"
+                            + "  for (int i = 0; i < " + GPU_SHADER_ITERATIONS + "; i++) {\n"
                             + "    float f = float(i) + 1.0;\n"
-                            + "    v += sin(p.x * f + uTime) * cos(p.y * f - uTime) / f;\n"
+                            + "    v += sin(p.x * f + uTime + d) * cos(p.y * f - uTime) / f;\n"
+                            + "    d += v * 0.01;\n"
                             + "  }\n"
-                            + "  gl_FragColor = vec4(abs(v), abs(v) * 0.5, 0.25, 1.0);\n"
+                            + "  gl_FragColor = vec4(abs(v) * 0.5, abs(v), d * 0.25 + 0.25, 1.0);\n"
                             + "}\n");
             if (vertexShader == 0 || fragmentShader == 0) {
                 return 0;
