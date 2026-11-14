@@ -280,7 +280,14 @@ function shapeFor(key) {
     el("line", {x1:cx-r, y1:cy, x2:cx+r, y2:cy, stroke:"#31405e", "stroke-width":"2"}, g);
     el("line", {x1:cx, y1:cy-r, x2:cx, y2:cy+r, stroke:"#31405e", "stroke-width":"2"}, g);
     el("circle", {cx, cy, r:Math.max(8, r*0.08), fill:"#8aa4ff"}, g);
-    el("text", {x:cx+r*0.72, y:cy+r*0.18, class:"label", "font-size":"30"}, g).textContent = meta.sub;
+    // L3/R3 live inside a cap at the top of the stick; the app fills the
+    // whole cap with the accent when the stick is clicked.
+    const capW = r * 0.90, capH = r * 0.32;
+    const capX = cx - capW / 2, capY = cy - r * 0.70;
+    el("rect", {x:capX, y:capY, width:capW, height:capH, rx:capH/2,
+                fill:"rgba(138,164,255,0.16)", stroke:"#5a6f9e", "stroke-width":"3"}, g);
+    el("text", {x:cx, y:capY + capH * 0.68, class:"label", "text-anchor":"middle",
+                "font-size":"24"}, g).textContent = meta.sub;
     el("text", {x:cx, y:cy+r+34, class:"sub", "text-anchor":"middle", "font-size":"24"}, g).textContent = "0.00, 0.00";
   } else if (meta.shape === "dpad") {
     const a = c.r*H, b = a*0.36;
@@ -294,8 +301,17 @@ function shapeFor(key) {
   } else if (meta.shape === "vbar") {
     const w = c.w*W, h = c.h*H, x = cx-w/2, y = cy-h/2;
     el("rect", {...common, x, y, width:w, height:h, rx:Math.min(w/2,24)}, g);
-    const fillH = h*0.5;
-    el("rect", {x:x+3, y:y+h-fillH, width:Math.max(0,w-6), height:Math.max(0,fillH-3), rx:Math.min(w/2,18), fill:"rgba(98,214,168,0.35)", stroke:"none"}, g);
+    // The app clips the fill to an inset inner capsule, so a low value stays
+    // inside the bar instead of poking out as a short rounded line.
+    const inset = 3;
+    const iw = Math.max(0, w - 2*inset), ih = Math.max(0, h - 2*inset);
+    const clipId = "clip-" + key;
+    const defs = el("defs", {}, g);
+    const clip = el("clipPath", {id:clipId}, defs);
+    el("rect", {x:x+inset, y:y+inset, width:iw, height:ih, rx:Math.min(iw/2,20)}, clip);
+    const fillH = ih*0.5;
+    el("rect", {x:x+inset, y:y+h-inset-fillH, width:iw, height:fillH,
+                fill:"rgba(98,214,168,0.35)", "clip-path":`url(#${clipId})`}, g);
     el("text", {x:cx, y:y-18, class:"label", "text-anchor":"middle", "font-size":"28"}, g).textContent = meta.text;
     el("text", {x:cx, y:y+h+30, class:"sub", "text-anchor":"middle", "font-size":"22"}, g).textContent = "50%";
   } else if (meta.shape === "rect") {
