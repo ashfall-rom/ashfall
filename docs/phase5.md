@@ -188,3 +188,52 @@ and a PR; the orchestrator builds both branches together (`integ/phase5`), flash
 user tests on hardware. Standalone compile checks are fine (NDK clang for the daemons;
 aapt2/javac/d8 for the app, optionally against SettingsLib/androidx jars copied read-only
 from the build host's `out/soong/.intermediates`).
+
+## 6. Follow-ups v2 (user test 2026-11-14) - contract additions
+
+Supersedes the matching parts of §2/§3. Issue numbers in the per-area issues.
+
+### 6.1 Properties (new / changed)
+
+| Property | Type | Writer -> reader | Values / meaning |
+|---|---|---|---|
+| `persist.ashfall.fan.kick` | `ashfall_prop` | app -> hwd | `1` (default) = spin-up kick enabled |
+| `persist.ashfall.fan.kick_pct` | `ashfall_prop` | app -> hwd | 10..60, default `30` (kick level; never 100 %) |
+| `persist.ashfall.fan.screen_off` | `ashfall_prop` | app -> hwd | `off` (default: fan off while the screen is off) or `run`; on screen-on the fan resumes with a kick if enabled |
+| `persist.ashfall.fan.safety_c` | - | - | **removed** (no UI). hwd keeps a fixed, undocumented last-resort rule: 100 % at >= 90 C (also with the screen off), released at 80 C |
+| `ashfall.ui.fan_live` | new `ashfall_ui_prop` (non-persist) | app -> hwd | `1` while a fan UI (page/editor/QS dialog) is visible: status every 500 ms (else 2 s) |
+| `ashfall.ui.fan_preview_curve` | `ashfall_ui_prop` | app -> hwd | curve string; while non-empty and the active mode is `smart`, hwd uses it instead of `persist.ashfall.fan.curve` (live curve editing); the app clears it when the editor closes |
+| `persist.ashfall.led.screen_off` | - | - | **removed**; LEDs are always off while the screen is off and are re-applied on screen-on |
+| `ashfall.ui.led_override` | `ashfall_ui_prop` | app -> hwd | `` (empty = normal) or `RRGGBB:RRGGBB` (left:right, final colours incl. intensity); used by the gamepad tester (<= 30 Hz) |
+| `ashfall.perf.throttle_override` | new `ashfall_perf_prop` (non-persist => resets on reboot) | app -> hwd | `1` = disable software clock throttling (kernel thermal mitigation / cooling devices; hardware limits stay) |
+| `persist.ashfall.perf.throttle_override_permanent` | `ashfall_perf_prop` | app -> hwd | `1` = apply the override at every boot (hidden "developer" switch, see §6.4) |
+
+Lighting: rainbow base speed = previous speed / 3; breathing uses a gamma-corrected
+brightness curve and a smoother update cadence (no visible steps at speed 5).
+
+### 6.2 Input control socket (additions to §2.3)
+
+| Command | Effect |
+|---|---|
+| `GRAB ON` / `GRAB OFF` | while ON (and only while this client stays connected) the daemon releases all held inputs and injects **nothing** into uinput; all inputs incl. Home, Back, Select, Start, B go only to `RAW` frames. Disconnect = automatic `GRAB OFF`. |
+
+`RAW` frames must contain every button of the RP5 (face, shoulders, L3/R3, Start, Select,
+Home, Back, D-pad) with a documented bit layout (docs/rp5/input.md).
+
+### 6.3 App (AshFall Parts)
+
+- Root entry renamed **"AshFall settings"**; looks identical to Settings in every theme
+  (light, dark, LineageOS pure-black); all dialogs/QS dialogs follow the system theme and are
+  modal (no focus/navigation of windows behind them, also with the gamepad).
+- Fan: Manual mode in the UI, kick on/off, fan-off-with-screen-off switch, live curve preview,
+  **stress test** in the curve editor (CPU 0-100 %, GPU 0-100 % sliders, roughly that load;
+  stops when the editor closes and after max. 10 min), safety threshold removed.
+- **Override throttling** (Fan or a "Performance" section): confirmation dialog warning that it
+  is dangerous if misused; resets on reboot. A hidden switch deep in the settings (e.g. an
+  "Advanced" screen revealed by tapping the version 7 times) makes it permanent; README mentions
+  it only vaguely.
+- Lighting: live hue preview, no screen-off option, same hue picker in page and QS dialog.
+- Controller tester: RP5 silhouette, all buttons via `GRAB ON`, exit by holding Start+Select 2 s
+  or an on-screen close button, LED reaction via `ashfall.ui.led_override`, no Select setting;
+  calibration pauses after each step until Start is pressed.
+- QS dialogs: no stray shadows, Done button not clipped.
