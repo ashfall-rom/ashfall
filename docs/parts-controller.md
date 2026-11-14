@@ -18,11 +18,11 @@ QS tiles) is described in `docs/parts.md`.
 | 4. "B, Back, Home, Select don't show" | The tester now sends `GRAB ON` on its raw-stream socket (§3).  Nothing is injected into uinput, so every button is only reported in the `RAW` mask and drawn.  Leaving: hold **Start + Select for 2 s** (progress bar under the pills) or tap **Close**.  The old "Select toggles the raw overlay" mode is gone; the raw values are always visible. |
 | 5. "Fun: light each side's LED ring with its activity" | `ashfall.ui.led_override` is published at <= 29 Hz (§4) and cleared on pause. |
 | 6. "Calibration waits for Start" | The wizard's timed steps were replaced by Start-paced steps (§5). |
-| 7. #104: "the app's D-pad is twice the editor's size" | `drawDpad` treated `r` as the offset to each arrow, so the total span was `4*r*H`; #104 changed it to `2*r*H`, and #105 rebuilt it as the 3x3 pentagon cross below (total `3*r*H`). |
+| 7. #104: "the app's D-pad is twice the editor's size" | `drawDpad` treated `r` as the offset to each arrow, so the total span was `4*r*H`; #104 changed it to `2*r*H`, and #105 rebuilt it as the four-pentagon 3x3 cross below (total `3*r*H`). |
 | 8. #104: "ABXY distances are not equal" | The view is not 16:9, so scaling x by width and y by height made the diamond rectangular.  The group centre and a single pixel offset are computed from the four layout circles; X/Y/A/B are placed on a square diamond (distance X-B = Y-A = 2*off, diagonals off*sqrt(2)). |
 | 9. #104: "L3/R3 labels" | The side label is gone; each stick has a capsule inside its top (0.9r x 0.34r) labelled L3/R3, accent-filled with the primary text colour while the stick is clicked. |
 | 10. #104: "L2/R2 fill sticks out" | The fill is a plain rectangle from the bottom, clipped to the inner bar (2 dp inset): below 10 % it stays inside, any value > 0 keeps a 2 dp sliver, 0 % is empty, the outline is drawn on top. |
-| 11. #105: "the direction rectangles overlap at the centre" | The D-pad is a 3x3 cross of four pentagon "house" arms (`cell = r*h`, total `3*r*h`, one cell per arm); the centre square stays neutral, so adjacent lit directions share only edges and never merge into one blob. |
+| 11. #105: "the direction rectangles overlap at the centre" | The D-pad is exactly four pentagons (`cell = r*h`, total `3*r*h`): each one is a 1x1 arm plus the triangular quarter of the 1x1 centre, so all four tips meet at the exact centre.  There is no separate centre rectangle; adjacent pentagons share only the diagonal seam edges, so pressing two shows two complete shapes and never one merged blob. |
 
 ## 2. The button layout
 
@@ -48,9 +48,9 @@ arrangement); the retest showed that A/B were still swapped in the drawing, so
 #101 swapped only the drawn positions of bits 14 and 15.  The daemon, the
 `GRAB`/`RAW` protocol and the `SET CAL` format are untouched.
 
-The sticks keep the physical arrangement without the body around it: the left
-stick sits above the D-pad, the right stick below the face buttons.  Start/Select
-are large pills at the bottom centre, Home/Back at the top centre.
+The controls follow the layout file: the left stick sits below the D-pad and the
+right stick below the face buttons; Start/Select are large pills at the top
+centre and Home/Back at the bottom centre.
 
 ## 3. GRAB lifecycle
 
@@ -157,7 +157,7 @@ Schema v1 (all values are floats, sizes relative to the view):
   "controls": {
     "left_stick": {"x": 0.165, "y": 0.708271, "r": 0.175},
     "right_stick": {"x": 0.835, "y": 0.72, "r": 0.175},
-    "dpad": {"x": 0.17631, "y": 0.304459, "r": 0.128},
+    "dpad": {"x": 0.17631, "y": 0.314459, "r": 0.128},
     "button_x": {"x": 0.835, "y": 0.2107, "r": 0.0533},
     "button_y": {"x": 0.7735, "y": 0.32, "r": 0.0533},
     "button_a": {"x": 0.8965, "y": 0.32, "r": 0.0533},
@@ -257,8 +257,9 @@ Soong module:
   step 3 validated the trigger travel, and step 4 showed the 16 values with
   Save/Cancel.
 * Light and dark: the controls, labels and accent were resolved through the
-  theme (window background `#FAFAFA` vs `#000000`, outlines and fills visible in
-  both).  Pure black uses the same attributes.
+  theme (`?android:attr/colorBackground`: `#FAFAFA` light, `#303030` in this
+  AVD's dark theme; pure black uses the same attributes), outlines and fills
+  visible in both.
 * #104 geometry (emulator, shipped layout): X/B are 197 px apart vertically and
   Y/A 196 px horizontally, with diagonals 138 px = 98*sqrt(2) (square diamond,
   `off` 98.1); the L3/R3 caps are 116x46 px at `cy - 0.55r` and fill with the
@@ -267,19 +268,28 @@ Soong module:
   straight top edge; Select/Start render in the top row (`y` 0.145) and
   Home/Back in the bottom row (`y` 0.885) with their labels.
 * #105 D-pad (emulator, shipped layout, mock holding Up+Left): one cell is
-  91.5 px; the lit shapes are two pentagons with the centre square neutral
-  (zero accent pixels there) and zero accent pixels in the right/down arms, so
-  adjacent directions never merge.  The up arm is 95 px wide at its
-  base/shoulder and narrows to 13 px at the 1.5-cell tip; the left arm is
-  96 px tall and 15 px at its tip.  The neutral cross spans 198..478 px
-  horizontally and 242..520 px vertically (3*91.5 px plus the 2 dp outlines).
+  91.5 px, so the four-pentagon plus spans 199..477 px horizontally and
+  247..525 px vertically (3*91.5 px plus the 2 dp outlines).  The plus is
+  exactly four pentagons - one 1x1 arm plus a triangular quarter of the 1x1
+  centre each - and the four tips meet at the exact centre `(cx, cy)`; there is
+  no separate centre rectangle.  Measured on the up arm: 96 px wide (the full
+  cell) from the outer base y 249 to y 341 (half a cell out), then
+  91->81->71->61->51->41->31->21->11 px at y 344/349/354/359/364/369/374/379/384,
+  i.e. the tip reaches the centre at y 387; the left arm mirrors it (96 px tall
+  at its base, tip at the centre).  Pressed = accent fill/stroke, neutral =
+  subtle fill/stroke.  With Up+Left held the accent mask matches the two
+  pentagons (IoU 0.944 against the 2 dp accent stroke, 2 missing pixels), the
+  centre is accent, and the right/down arms contain zero accent pixels.  The
+  four shared tips are drawn as seams with opaque colours, because four
+  translucent strokes stacked into a dark dot at the centre; the centre now
+  matches the seam colour (81 light / 193 dark on the neutral D-pad).
   **Collision check against the saved layout:** the left stick clears the
-  D-pad by 26 px at the emulator's 715 px view height (0.0368h; 34 px at the
-  device's ~930 px).  L1's bottom edge is 1.0 px (0.00146h; 1.4 px at 930) above
-  the D-pad's top tip: the fills do not overlap, but the two 2 dp outlines
-  touch/overlap by ~3 px in their 0.15w horizontal overlap.  Reported, nothing
-  moved.  Screenshots refreshed (light: X/A with the Up pentagon; dark: Y/B,
-  Select top, Home/Back bottom).
+  D-pad by 19 px at the emulator's 715 px view height (0.0268h; 25 px at the
+  device's ~930 px).  L1's bottom edge is 8.2 px (0.0115h; 10.7 px at 930)
+  above the D-pad's top tip, so both the fills and the 2 dp outlines clear.
+  Nothing moved (the layout's `dpad.y` is the orchestrator's 037ff2f nudge to
+  0.314459).  Screenshots refreshed (light: X/A with the Up pentagon, tip at the
+  centre; dark: Y/B, Select top, Home/Back bottom).
 
 Not verified here: the RP5 hardware itself (owned by the native worker, and the
 device is serialised between workers).  The device checks to repeat are the real
