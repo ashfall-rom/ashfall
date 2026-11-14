@@ -1,0 +1,478 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AshFall controller tester layout</title>
+<style>
+  :root {
+    --bg: #0c0f16;
+    --panel: #151a24;
+    --panel2: #1b2130;
+    --line: #2a3245;
+    --text: #e7ebf5;
+    --muted: #97a2b8;
+    --accent: #8aa4ff;
+    --accent2: #62d6a8;
+    --warn: #ffb35c;
+    --danger: #ff6b7a;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font: 14px/1.45 system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+    overflow: hidden;
+  }
+  header {
+    height: 72px; padding: 0 20px; display: flex; align-items: center;
+    justify-content: space-between; border-bottom: 1px solid var(--line);
+    background: linear-gradient(180deg, #121722, #0d1119);
+  }
+  h1 { font-size: 17px; margin: 0 0 3px; letter-spacing: .01em; }
+  .sub { color: var(--muted); font-size: 12px; }
+  .sub code { color: #c8d3ef; }
+  .actions { display: flex; align-items: center; gap: 10px; }
+  .status { color: var(--muted); font-size: 12px; max-width: 380px; }
+  .status.ok { color: var(--accent2); }
+  .status.err { color: var(--danger); }
+  button {
+    appearance: none; border: 1px solid var(--line); background: var(--panel2);
+    color: var(--text); border-radius: 9px; padding: 9px 14px; font: inherit;
+    cursor: pointer;
+  }
+  button:hover { border-color: #43506b; background: #222a3b; }
+  button.primary { background: #3349a8; border-color: #4b63cf; }
+  button.primary:hover { background: #3b55c4; }
+  main { display: grid; grid-template-columns: minmax(0, 1fr) 380px; height: calc(100% - 72px); }
+  .stage {
+    min-width: 0; min-height: 0; padding: 18px 20px 14px;
+    display: flex; flex-direction: column; gap: 10px;
+    background: radial-gradient(1100px 650px at 45% 0%, #141a27 0%, #0a0d14 70%);
+  }
+  .canvas-wrap {
+    flex: 1; min-height: 0; border: 1px solid var(--line); border-radius: 14px;
+    overflow: hidden; background: #05070b; box-shadow: 0 10px 40px #0006;
+  }
+  svg { display: block; width: 100%; height: 100%; touch-action: none; user-select: none; }
+  .hint { color: var(--muted); font-size: 12px; display: flex; gap: 18px; flex-wrap: wrap; }
+  .hint b { color: #c8d3ef; font-weight: 600; }
+  aside {
+    border-left: 1px solid var(--line); background: var(--panel);
+    overflow-y: auto; padding: 16px; display: flex; flex-direction: column; gap: 14px;
+  }
+  .panel { border: 1px solid var(--line); border-radius: 12px; background: #10151e; overflow: hidden; }
+  .panel h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); margin: 0; padding: 11px 13px; border-bottom: 1px solid var(--line); }
+  #list { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; padding: 10px; }
+  .item {
+    text-align: left; padding: 7px 9px; border-radius: 8px; border: 1px solid transparent;
+    background: #182030; color: var(--text); font-size: 12px; cursor: pointer;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .item:hover { background: #1e283b; }
+  .item.active { border-color: var(--accent); background: #22305a; }
+  .item small { display: block; color: var(--muted); font-size: 10px; }
+  #props { padding: 12px 13px 14px; }
+  .row { display: grid; grid-template-columns: 34px 1fr 34px 1fr; gap: 8px; align-items: center; margin-bottom: 8px; }
+  .row label { color: var(--muted); font-size: 12px; }
+  input[type=number] {
+    width: 100%; background: #0b1018; color: var(--text); border: 1px solid var(--line);
+    border-radius: 7px; padding: 7px 8px; font: inherit;
+  }
+  input[type=number]:focus { outline: 1px solid var(--accent); border-color: var(--accent); }
+  .empty { color: var(--muted); font-size: 12px; padding: 2px 0; }
+  #overlaps { padding: 10px 13px 13px; font-size: 12px; color: var(--muted); }
+  #overlaps .pair { color: var(--warn); margin: 3px 0; }
+  #toast {
+    position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%);
+    background: #1d2740; border: 1px solid #40527d; color: var(--text);
+    padding: 10px 16px; border-radius: 10px; box-shadow: 0 8px 30px #000a;
+    opacity: 0; pointer-events: none; transition: opacity .18s ease;
+  }
+  #toast.show { opacity: 1; }
+  .control { cursor: grab; }
+  .control:active { cursor: grabbing; }
+  .control.selected .shape { stroke: var(--accent); stroke-width: 5; }
+  .control.overlap .shape { stroke: var(--warn); stroke-dasharray: 9 7; }
+  .control .label { pointer-events: none; fill: var(--text); font-family: system-ui, sans-serif; font-weight: 600; }
+  .control .sub { pointer-events: none; fill: var(--muted); font-family: ui-monospace, monospace; }
+  @media (max-width: 1000px) {
+    main { grid-template-columns: 1fr; grid-template-rows: minmax(320px, 55vh) 1fr; overflow-y: auto; }
+    aside { border-left: 0; border-top: 1px solid var(--line); }
+    body { overflow: auto; }
+    #list { grid-template-columns: 1fr 1fr 1fr; }
+  }
+</style>
+</head>
+<body>
+<header>
+  <div>
+    <h1>AshFall controller tester — layout editor</h1>
+    <div class="sub">Saving writes <code>__TARGET__</code> in the ROM worktree. Tell the orchestrator to build when you are done.</div>
+  </div>
+  <div class="actions">
+    <span id="status" class="status"></span>
+    <button id="reload">Reload</button>
+    <button id="save" class="primary">Save layout</button>
+  </div>
+</header>
+
+<main>
+  <section class="stage">
+    <div class="canvas-wrap">
+      <svg id="canvas" viewBox="0 0 1920 1080" aria-label="Controller tester layout canvas">
+        <defs>
+          <pattern id="grid" width="192" height="108" patternUnits="userSpaceOnUse">
+            <path d="M 192 0 L 0 0 0 108" fill="none" stroke="#151c28" stroke-width="1.5"/>
+          </pattern>
+        </defs>
+        <rect width="1920" height="1080" fill="#05070b"/>
+        <rect width="1920" height="1080" fill="url(#grid)"/>
+        <line x1="960" y1="0" x2="960" y2="1080" stroke="#1e293b" stroke-width="2" stroke-dasharray="8 8"/>
+        <line x1="0" y1="540" x2="1920" y2="540" stroke="#1e293b" stroke-width="2" stroke-dasharray="8 8"/>
+        <g id="layer"></g>
+      </svg>
+    </div>
+    <div class="hint">
+      <span><b>Drag</b> a control to move it.</span>
+      <span><b>Arrow keys</b> nudge the selected control (Shift = bigger step).</span>
+      <span><b>Amber dashed</b> = overlapping bounding boxes.</span>
+      <span>Values are normalized to the tester view.</span>
+    </div>
+  </section>
+
+  <aside>
+    <div class="panel">
+      <h2>Controls</h2>
+      <div id="list"></div>
+    </div>
+    <div class="panel">
+      <h2>Selected control</h2>
+      <div id="props"><div class="empty">Select a control.</div></div>
+    </div>
+    <div class="panel">
+      <h2>Overlaps</h2>
+      <div id="overlaps">None</div>
+    </div>
+  </aside>
+</main>
+
+<div id="toast"></div>
+
+<script>
+const TOKEN = "__TOKEN__";
+const W = 1920, H = 1080;
+const CIRCLE = new Set(["left_stick","right_stick","dpad","button_x","button_y","button_a","button_b"]);
+const RECT = new Set(["l1","r1","l2","r2","back","home","select","start"]);
+const META = {
+  left_stick:  { label:"Left stick",  shape:"stick",  sub:"L3" },
+  right_stick: { label:"Right stick", shape:"stick",  sub:"R3" },
+  dpad:        { label:"D-pad",       shape:"dpad" },
+  button_x:    { label:"X",           shape:"circle", text:"X" },
+  button_y:    { label:"Y",           shape:"circle", text:"Y" },
+  button_a:    { label:"A",           shape:"circle", text:"A" },
+  button_b:    { label:"B",           shape:"circle", text:"B" },
+  l1:          { label:"L1",          shape:"rect",   text:"L1" },
+  r1:          { label:"R1",          shape:"rect",   text:"R1" },
+  l2:          { label:"L2 trigger",  shape:"vbar",   text:"L2" },
+  r2:          { label:"R2 trigger",  shape:"vbar",   text:"R2" },
+  back:        { label:"Back",        shape:"rect",   text:"Back" },
+  home:        { label:"Home",        shape:"rect",   text:"Home" },
+  select:      { label:"Select",      shape:"rect",   text:"Select" },
+  start:       { label:"Start",       shape:"rect",   text:"Start" },
+  status:      { label:"RAW status text", shape:"text" }
+};
+const KEYS = Object.keys(META);
+const svg = document.getElementById("canvas");
+const layer = document.getElementById("layer");
+const listEl = document.getElementById("list");
+const propsEl = document.getElementById("props");
+const overlapsEl = document.getElementById("overlaps");
+const statusEl = document.getElementById("status");
+const toastEl = document.getElementById("toast");
+
+let state = null;
+let selected = null;
+let drag = null;
+let overlapKeys = new Set();
+
+function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
+function el(tag, attrs, parent) {
+  const node = document.createElementNS("http://www.w3.org/2000/svg", tag);
+  for (const [k,v] of Object.entries(attrs || {})) node.setAttribute(k, v);
+  if (parent) parent.appendChild(node);
+  return node;
+}
+function toast(msg, isError) {
+  toastEl.textContent = msg;
+  toastEl.style.borderColor = isError ? "#8a3a44" : "#40527d";
+  toastEl.classList.add("show");
+  clearTimeout(toastEl._t);
+  toastEl._t = setTimeout(() => toastEl.classList.remove("show"), 2600);
+}
+function setStatus(msg, cls) {
+  statusEl.textContent = msg || "";
+  statusEl.className = "status" + (cls ? " " + cls : "");
+}
+
+async function load() {
+  setStatus("Loading…");
+  try {
+    const res = await fetch("layout?token=" + encodeURIComponent(TOKEN), {cache:"no-store"});
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || res.statusText);
+    state = data;
+    if (!state.controls) throw new Error("layout has no controls");
+    for (const key of KEYS) if (!state.controls[key]) throw new Error("missing " + key);
+    selected = null;
+    render();
+    updateProps();
+    setStatus("Loaded", "ok");
+  } catch (e) {
+    setStatus("Could not load layout: " + e.message, "err");
+    toast("Could not load layout: " + e.message, true);
+  }
+}
+
+function bbox(key) {
+  const c = state.controls[key];
+  if (!c) return null;
+  if (key === "status") {
+    return { x1:c.x*W, y1:c.y*H, x2:c.x*W + 0.30*W, y2:c.y*H + 0.17*H };
+  }
+  if (CIRCLE.has(key)) {
+    const r = key === "dpad" ? c.r*H : c.r*H;
+    return { x1:c.x*W-r, y1:c.y*H-r, x2:c.x*W+r, y2:c.y*H+r };
+  }
+  const hw = c.w*W/2, hh = c.h*H/2;
+  return { x1:c.x*W-hw, y1:c.y*H-hh, x2:c.x*W+hw, y2:c.y*H+hh };
+}
+function intersects(a,b) {
+  return a.x1 < b.x2 && a.x2 > b.x1 && a.y1 < b.y2 && a.y2 > b.y1;
+}
+function computeOverlaps() {
+  overlapKeys = new Set();
+  const boxes = KEYS.map(k => [k, bbox(k)]);
+  const pairs = [];
+  for (let i=0; i<boxes.length; i++) {
+    for (let j=i+1; j<boxes.length; j++) {
+      const [ka, a] = boxes[i], [kb, b] = boxes[j];
+      if (!a || !b) continue;
+      if (intersects(a,b)) {
+        overlapKeys.add(ka); overlapKeys.add(kb);
+        pairs.push([ka,kb]);
+      }
+    }
+  }
+  return pairs;
+}
+
+function shapeFor(key) {
+  const c = state.controls[key];
+  const meta = META[key];
+  const cx = c.x*W, cy = c.y*H;
+  const g = el("g", {class:"control", "data-key":key, tabindex:"0"});
+  const common = {class:"shape", fill:"rgba(138,164,255,0.10)", stroke:"#5a6f9e", "stroke-width":"3"};
+  if (meta.shape === "stick") {
+    const r = c.r*H;
+    el("circle", {...common, cx, cy, r}, g);
+    el("circle", {cx, cy, r:r*0.55, fill:"none", stroke:"#40527a", "stroke-width":"2", "stroke-dasharray":"7 7"}, g);
+    el("line", {x1:cx-r, y1:cy, x2:cx+r, y2:cy, stroke:"#31405e", "stroke-width":"2"}, g);
+    el("line", {x1:cx, y1:cy-r, x2:cx, y2:cy+r, stroke:"#31405e", "stroke-width":"2"}, g);
+    el("circle", {cx, cy, r:Math.max(8, r*0.08), fill:"#8aa4ff"}, g);
+    el("text", {x:cx+r*0.72, y:cy+r*0.18, class:"label", "font-size":"30"}, g).textContent = meta.sub;
+    el("text", {x:cx, y:cy+r+34, class:"sub", "text-anchor":"middle", "font-size":"24"}, g).textContent = "0.00, 0.00";
+  } else if (meta.shape === "dpad") {
+    const a = c.r*H, b = a*0.36;
+    const d = `M ${cx-b} ${cy-a} h ${2*b} v ${a-b} h ${a-b} v ${2*b} h ${-(a-b)} v ${a-b} h ${-2*b} v ${-(a-b)} h ${-(a-b)} v ${-2*b} h ${a-b} z`;
+    el("path", {...common, d}, g);
+    el("text", {x:cx, y:cy+a+34, class:"sub", "text-anchor":"middle", "font-size":"24"}, g).textContent = "D-pad";
+  } else if (meta.shape === "circle") {
+    const r = c.r*H;
+    el("circle", {...common, cx, cy, r}, g);
+    el("text", {x:cx, y:cy+12, class:"label", "text-anchor":"middle", "font-size":"40"}, g).textContent = meta.text;
+  } else if (meta.shape === "vbar") {
+    const w = c.w*W, h = c.h*H, x = cx-w/2, y = cy-h/2;
+    el("rect", {...common, x, y, width:w, height:h, rx:Math.min(w/2,24)}, g);
+    const fillH = h*0.5;
+    el("rect", {x:x+3, y:y+h-fillH, width:Math.max(0,w-6), height:Math.max(0,fillH-3), rx:Math.min(w/2,18), fill:"rgba(98,214,168,0.35)", stroke:"none"}, g);
+    el("text", {x:cx, y:y-18, class:"label", "text-anchor":"middle", "font-size":"28"}, g).textContent = meta.text;
+    el("text", {x:cx, y:y+h+30, class:"sub", "text-anchor":"middle", "font-size":"22"}, g).textContent = "50%";
+  } else if (meta.shape === "rect") {
+    const w = c.w*W, h = c.h*H;
+    el("rect", {...common, x:cx-w/2, y:cy-h/2, width:w, height:h, rx:Math.min(h/2,26)}, g);
+    el("text", {x:cx, y:cy+9, class:"label", "text-anchor":"middle", "font-size":"27"}, g).textContent = meta.text;
+  } else if (meta.shape === "text") {
+    el("rect", {x:cx, y:cy-28, width:0.30*W, height:0.17*H, rx:8, fill:"rgba(138,164,255,0.04)", stroke:"#40527a", "stroke-width":"2", "stroke-dasharray":"8 6"}, g);
+    const t = el("text", {x:cx+12, y:cy+2, class:"sub", "font-size":"24"}, g);
+    ["RAW", "lx 0.00  ly 0.00", "rx 0.00  ry 0.00", "L2 0%   R2 0%", "buttons 0x0000"].forEach((line, i) => {
+      el("tspan", {x:cx+12, dy:i===0?0:30}, t).textContent = line;
+    });
+    el("text", {x:cx, y:cy-40, class:"label", "font-size":"24"}, g).textContent = "RAW";
+  }
+  if (selected === key) g.classList.add("selected");
+  if (overlapKeys.has(key)) g.classList.add("overlap");
+  return g;
+}
+
+function render() {
+  if (!state) return;
+  const pairs = computeOverlaps();
+  layer.replaceChildren();
+  for (const key of KEYS) {
+    if (!state.controls[key]) continue;
+    layer.appendChild(shapeFor(key));
+  }
+  renderList();
+  renderOverlaps(pairs);
+}
+
+function renderList() {
+  listEl.replaceChildren();
+  for (const key of KEYS) {
+    const b = document.createElement("button");
+    b.className = "item" + (selected === key ? " active" : "");
+    b.innerHTML = `${META[key].label}<small>${key}</small>`;
+    b.onclick = () => { selected = key; render(); updateProps(); };
+    listEl.appendChild(b);
+  }
+}
+
+function renderOverlaps(pairs) {
+  if (!pairs.length) { overlapsEl.textContent = "None"; return; }
+  overlapsEl.replaceChildren();
+  const seen = new Set();
+  for (const [a,b] of pairs) {
+    const k = [a,b].sort().join("|");
+    if (seen.has(k)) continue;
+    seen.add(k);
+    const d = document.createElement("div");
+    d.className = "pair";
+    d.textContent = `${META[a].label} ↔ ${META[b].label}`;
+    overlapsEl.appendChild(d);
+  }
+}
+
+function updateProps() {
+  if (!selected || !state.controls[selected]) {
+    propsEl.innerHTML = '<div class="empty">Select a control.</div>';
+    return;
+  }
+  const c = state.controls[selected];
+  const isCircle = CIRCLE.has(selected);
+  const isRect = RECT.has(selected);
+  propsEl.replaceChildren();
+  const mkRow = (items) => {
+    const row = document.createElement("div");
+    row.className = "row";
+    for (const [label, key, value, min, max] of items) {
+      const l = document.createElement("label"); l.textContent = label; row.appendChild(l);
+      const input = document.createElement("input");
+      input.type = "number"; input.step = "0.001"; input.min = min; input.max = max; input.value = Number(value).toFixed(4);
+      input.oninput = () => {
+        const v = parseFloat(input.value);
+        if (!Number.isFinite(v)) return;
+        state.controls[selected][key] = clamp(v, min, max);
+        render();
+      };
+      row.appendChild(input);
+    }
+    propsEl.appendChild(row);
+  };
+  mkRow([["X","x",c.x,0,1], ["Y","y",c.y,0,1]]);
+  if (isCircle) mkRow([["R","r",c.r,0.001,1]]);
+  if (isRect) mkRow([["W","w",c.w,0.001,1], ["H","h",c.h,0.001,1]]);
+  if (selected === "status") {
+    const note = document.createElement("div");
+    note.className = "empty";
+    note.textContent = "Text box is 0.30 × 0.17 of the view; x/y is its top-left.";
+    propsEl.appendChild(note);
+  }
+}
+
+function svgPoint(evt) {
+  const pt = svg.createSVGPoint();
+  pt.x = evt.clientX; pt.y = evt.clientY;
+  return pt.matrixTransform(svg.getScreenCTM().inverse());
+}
+
+layer.addEventListener("pointerdown", (evt) => {
+  const g = evt.target.closest(".control");
+  if (!g) return;
+  evt.preventDefault();
+  selected = g.dataset.key;
+  const pt = svgPoint(evt);
+  const c = state.controls[selected];
+  drag = { key:selected, dx: pt.x - c.x*W, dy: pt.y - c.y*H };
+  g.setPointerCapture(evt.pointerId);
+  render(); updateProps();
+});
+layer.addEventListener("pointermove", (evt) => {
+  if (!drag) return;
+  const pt = svgPoint(evt);
+  const c = state.controls[drag.key];
+  const nx = clamp((pt.x - drag.dx) / W, 0, 1);
+  const ny = clamp((pt.y - drag.dy) / H, 0, 1);
+  if (Math.abs(nx-c.x) < 1e-6 && Math.abs(ny-c.y) < 1e-6) return;
+  c.x = nx; c.y = ny;
+  render();
+  updateProps();
+});
+layer.addEventListener("pointerup", () => { drag = null; });
+layer.addEventListener("pointercancel", () => { drag = null; });
+
+window.addEventListener("keydown", (evt) => {
+  if (!selected || !state) return;
+  if (evt.target && ["INPUT","TEXTAREA","SELECT"].includes(evt.target.tagName)) return;
+  const step = evt.shiftKey ? 0.01 : 0.001;
+  const c = state.controls[selected];
+  let moved = true;
+  if (evt.key === "ArrowLeft") c.x = clamp(c.x - step, 0, 1);
+  else if (evt.key === "ArrowRight") c.x = clamp(c.x + step, 0, 1);
+  else if (evt.key === "ArrowUp") c.y = clamp(c.y - step, 0, 1);
+  else if (evt.key === "ArrowDown") c.y = clamp(c.y + step, 0, 1);
+  else moved = false;
+  if (moved) { evt.preventDefault(); render(); updateProps(); }
+});
+
+function validateForSave() {
+  if (!state || !state.controls) return "No layout loaded";
+  for (const key of KEYS) {
+    const c = state.controls[key];
+    if (!c) return "Missing " + key;
+    for (const axis of ["x","y"]) {
+      if (!Number.isFinite(c[axis]) || c[axis] < 0 || c[axis] > 1) return `${key}.${axis} out of range`;
+    }
+    if (CIRCLE.has(key) && (!Number.isFinite(c.r) || c.r <= 0 || c.r > 1)) return `${key}.r out of range`;
+    if (RECT.has(key)) for (const d of ["w","h"]) {
+      if (!Number.isFinite(c[d]) || c[d] <= 0 || c[d] > 1) return `${key}.${d} out of range`;
+    }
+  }
+  return null;
+}
+
+document.getElementById("save").onclick = async () => {
+  const err = validateForSave();
+  if (err) { setStatus(err, "err"); toast(err, true); return; }
+  setStatus("Saving…");
+  try {
+    const res = await fetch("save?token=" + encodeURIComponent(TOKEN), {
+      method: "POST",
+      headers: {"Content-Type":"application/json"},
+      body: JSON.stringify(state)
+    });
+    const data = await res.json();
+    if (!res.ok || !data.ok) throw new Error(data.error || res.statusText);
+    setStatus("Saved to " + data.path, "ok");
+    toast("Saved. Tell the orchestrator to build.");
+  } catch (e) {
+    setStatus("Save failed: " + e.message, "err");
+    toast("Save failed: " + e.message, true);
+  }
+};
+document.getElementById("reload").onclick = load;
+
+load();
+</script>
+</body>
+</html>
