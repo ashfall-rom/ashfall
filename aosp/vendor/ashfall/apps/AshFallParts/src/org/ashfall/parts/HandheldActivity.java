@@ -73,7 +73,7 @@ public class HandheldActivity extends PartsActivity {
             mFanRow = new Preference(requireContext());
             mFanRow.setKey("home_fan");
             mFanRow.setTitle(R.string.fan_title);
-            mFanRow.setIcon(R.drawable.ic_fan);
+            mFanRow.setIcon(R.drawable.ic_ashfall_fan);
             mFanRow.setOnPreferenceClickListener(preference -> {
                 startActivity(new Intent(requireContext(), FanActivity.class));
                 return true;
@@ -83,7 +83,7 @@ public class HandheldActivity extends PartsActivity {
             mLightingRow = new Preference(requireContext());
             mLightingRow.setKey("home_lighting");
             mLightingRow.setTitle(R.string.lighting_title);
-            mLightingRow.setIcon(R.drawable.ic_led);
+            mLightingRow.setIcon(R.drawable.ic_ashfall_lighting);
             mLightingRow.setOnPreferenceClickListener(preference -> {
                 startActivity(new Intent(requireContext(), LightingActivity.class));
                 return true;

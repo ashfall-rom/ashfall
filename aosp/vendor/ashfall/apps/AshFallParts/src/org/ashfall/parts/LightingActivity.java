@@ -95,7 +95,7 @@ public class LightingActivity extends PartsActivity {
             mColour = new ColorPreference(requireContext());
             mColour.setKey("lighting_colour");
             mColour.setTitle(R.string.lighting_colour_title);
-            mColour.setIcon(R.drawable.ic_led);
+            mColour.setIcon(R.drawable.ic_ashfall_lighting);
             mColour.setOnPreferenceClickListener(preference -> {
                 final int target = Prefs.ledTarget(requireContext());
                 new ColorPickerDialog(requireContext(), mColour.getColor(),

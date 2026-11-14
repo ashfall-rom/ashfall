@@ -63,6 +63,26 @@ androidx.preference rows (title/summary/switch/slider, light and dark) render
 exactly like platform rows.  The fallback theme (pre-36 SDKs and the emulator
 preview) is an AppCompat Settings-like theme.
 
+### 1.1 Icons
+
+The user-selected clean-room icons from `docs/icons/drafts/vectors/` (issue #85)
+are copied into `res/drawable` under their final names:
+
+* `ic_ashfall_fan.xml` — the framed four-blade rotor
+  (`fan-c-four-blade-framed`).  Used by the Fan row on the root page, the Fan
+  page's Edit/Curve rows, the preset editor's add row, the Fan QS dialog header
+  and the Fan Quick Settings tile.
+* `ic_ashfall_lighting.xml` — the stick ring with a sparkle
+  (`lighting-b-ring`).  Used by the Lighting row/page, the colour row, the
+  Lighting QS dialog header and the Lighting Quick Settings tile.
+
+Both are 24 dp, single-colour vectors with no baked tint (`@android:color/white`
+artwork): Settings tints the preference rows, and SystemUI tints the tile icon
+for its active/inactive states, which is why the QS icons must stay
+monochrome.  The root homepage icon (`ic_handheld`) and the app icon
+(`ic_ashfall`) are unchanged; the old `ic_fan`/`ic_led`/`ic_tile_*` drawables are
+removed.
+
 ## 2. Pages
 
 All pages are one `PreferenceFragmentCompat` per activity.  Changes are applied
@@ -280,6 +300,10 @@ The UI target selector maps onto the daemon's `led.sync`:
   declares `android:theme="@style/Theme.AshFall.QsDialog"`; the dialog theme
   uses a literal accent (a self-referential `?android:attr/colorAccent` makes
   framework TextAppearances unresolvable in that context).
+* Tile icons are the shared `ic_ashfall_fan`/`ic_ashfall_lighting` vectors
+  (24 dp, single colour, no baked tint).  SystemUI applies its own tint for
+  the active and inactive tile states, so no state-specific drawable is
+  needed.
 
 ## 4. Gamepad navigation
 
@@ -559,9 +583,15 @@ The user-test changes of `docs/phase5.md` §6.3 were implemented on
   94 classes, no errors.  (An `R` class generated from the real `res/` tree was
   used, so every resource name referenced from Java had to exist.)
 * **Resource compile (build host, read-only).**  `aapt2 compile --dir res`
-  succeeds for all 27 resource files; the only unresolved references are the
+  succeeds for all 25 resource files; the only unresolved references are the
   external SettingsLib/AppCompat themes (`Theme.SubSettingsBase.Expressive`,
   `Theme.AppCompat.DayNight.*`), as expected outside the platform build.
+* **Icons (issue #85 selection).**  `docs/icons/drafts/vectors/fan-c-four-blade-framed.xml`
+  and `lighting-b-ring.xml` are copied verbatim (minus the preview-only
+  `android:tint`) to `res/drawable/ic_ashfall_fan.xml` and
+  `res/drawable/ic_ashfall_lighting.xml`; both compile with `aapt2` and are
+  single-colour 24 dp vectors so Settings and SystemUI can tint them.  They
+  replace the Fan/Lighting rows, page/dialog glyphs and both QS tile icons.
 * **Theme parity.**  The page theme now sets
   `android:windowBackground=?android:attr/colorBackground` and both content
   layouts draw `?android:attr/colorBackground`; `Theme.SubSettingsBase.Expressive`

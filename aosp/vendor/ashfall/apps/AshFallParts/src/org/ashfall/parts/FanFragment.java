@@ -111,7 +111,7 @@ public class FanFragment extends PreferenceFragmentCompat {
         mEditRow.setKey("edit_presets");
         mEditRow.setTitle(R.string.fan_preset_edit_title);
         mEditRow.setSummary(R.string.fan_preset_edit_summary);
-        mEditRow.setIcon(R.drawable.ic_fan);
+        mEditRow.setIcon(R.drawable.ic_ashfall_fan);
         mEditRow.setOnPreferenceClickListener(preference -> {
             startActivity(new Intent(requireContext(), PresetActivity.class));
             return true;
@@ -120,7 +120,7 @@ public class FanFragment extends PreferenceFragmentCompat {
         mCurveRow = new Preference(requireContext());
         mCurveRow.setKey("edit_curve");
         mCurveRow.setTitle(R.string.fan_curve_title);
-        mCurveRow.setIcon(R.drawable.ic_fan);
+        mCurveRow.setIcon(R.drawable.ic_ashfall_fan);
         mCurveRow.setOnPreferenceClickListener(preference -> {
             final Preset target = curveTarget();
             final Intent intent = new Intent(requireContext(), CurveActivity.class);
