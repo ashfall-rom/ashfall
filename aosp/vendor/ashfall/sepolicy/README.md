@@ -57,6 +57,8 @@ merged into the contexts the image build and libselinux use.  The old
   all regex specifications, so they win over the vendor regexes regardless of
   load order; `genfs_contexts` carries the same three paths as a fallback.
   Directory traversal needs no new rule: the stock vendor policy grants
-  `search` on `vendor_sysfs_kgsl:dir` to all domains.  Verify on the device
-  after the system build with `ls -Z` on the three files (docs/rp5/gpu.md
-  §verification).
+  `search` on `vendor_sysfs_kgsl:dir` to all domains.  The daemon must open
+  these **resolved** paths directly: following the `/sys/class/kgsl` symlinks
+  needs `lnk_file read` on `vendor_sysfs_kgsl`, which system_ext cannot grant
+  (issue #115).  Verify on the device after the system build with `ls -Z` on
+  the three files (docs/rp5/gpu.md §4.2/§7).

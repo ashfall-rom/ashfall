@@ -27,6 +27,14 @@
 static char g_root[PATH_MAX];
 static int g_failures;
 
+/* Phase 6: the daemon opens the resolved device paths, never the
+ * /sys/class/kgsl symlinks (issue #115).  Mirror that layout in the fake tree. */
+#define FAKE_KGSL_DEV "/sys/devices/platform/soc/3d00000.qcom,kgsl-3d0"
+#define FAKE_KGSL_DEVFREQ FAKE_KGSL_DEV "/devfreq/3d00000.qcom,kgsl-3d0"
+#define FAKE_KGSL_LEGACY "/sys/devices/soc/3d00000.qcom,kgsl-3d0"
+#define FAKE_KGSL_DEVFREQ_LEGACY FAKE_KGSL_LEGACY "/devfreq/3d00000.qcom,kgsl-3d0"
+#define FAKE_KGSL_LEGACY_KGSL FAKE_KGSL_LEGACY "/kgsl/kgsl-3d0"
+
 #define CHECK(cond)                                                            \
     do {                                                                       \
         if (!(cond)) {                                                         \
@@ -130,10 +138,11 @@ static int make_sysfs(void)
     write_file("/sys/class/sn3112r/led/brightness", "0-0:0:0\n");
 
     /* GPU devfreq cap (phase 6): stock DT table, 670 MHz top. */
-    mkdir_p("/sys/class/kgsl/kgsl-3d0/devfreq");
-    write_file("/sys/class/kgsl/kgsl-3d0/devfreq/max_freq", "670000000\n");
-    write_file("/sys/class/kgsl/kgsl-3d0/devfreq/min_freq", "305000000\n");
-    write_file("/sys/class/kgsl/kgsl-3d0/gpu_available_frequencies",
+    mkdir_p(FAKE_KGSL_DEVFREQ);
+    mkdir_p(FAKE_KGSL_DEV "/kgsl/kgsl-3d0");
+    write_file(FAKE_KGSL_DEVFREQ "/max_freq", "670000000\n");
+    write_file(FAKE_KGSL_DEVFREQ "/min_freq", "305000000\n");
+    write_file(FAKE_KGSL_DEV "/kgsl/kgsl-3d0/gpu_available_frequencies",
                "670000000 587000000 525000000 490000000 441600000 400000000 "
                "305000000\n");
 
@@ -1039,7 +1048,7 @@ static void test_throttle(void)
 static void test_gpu(void)
 {
     const char *prop = "persist.ashfall.perf.gpu_max_mhz";
-    const char *max_freq = "/sys/class/kgsl/kgsl-3d0/devfreq/max_freq";
+    const char *max_freq = FAKE_KGSL_DEVFREQ "/max_freq";
     gpu_state gpu;
 
     gpu_state_init(&gpu);
@@ -1054,7 +1063,7 @@ static void test_gpu(void)
     CHECK_EQ(gpu_status_oc(&gpu), 0);
 
     /* After the OC vendor_boot, the OC steps are selectable. */
-    write_file("/sys/class/kgsl/kgsl-3d0/gpu_available_frequencies",
+    write_file(FAKE_KGSL_DEV "/kgsl/kgsl-3d0/gpu_available_frequencies",
                "1000000000 940000000 850000000 765000000 670000000 587000000 "
                "525000000 490000000 441600000 400000000 305000000\n");
     gpu_state_init(&gpu);
@@ -1105,11 +1114,25 @@ static void test_gpu(void)
     unsetenv(prop);
 
     /* A missing kgsl devfreq node is a logged no-op, not a crash. */
-    remove_rel("/sys/class/kgsl");
+    remove_rel(FAKE_KGSL_DEV);
     gpu_state_init(&gpu);
     CHECK_EQ(gpu_apply(&gpu, 1000, false), -1);
     CHECK_EQ(gpu_status_mhz(&gpu), -1);
     CHECK_EQ(gpu_status_oc(&gpu), -1);
+
+    /* Older kona DT layouts expose the nodes under /sys/devices/soc/...; the
+     * daemon falls back to that layout when the /platform level is absent. */
+    mkdir_p(FAKE_KGSL_DEVFREQ_LEGACY);
+    mkdir_p(FAKE_KGSL_LEGACY_KGSL);
+    write_file(FAKE_KGSL_DEVFREQ_LEGACY "/max_freq", "670000000\n");
+    write_file(FAKE_KGSL_DEVFREQ_LEGACY "/min_freq", "305000000\n");
+    write_file(FAKE_KGSL_LEGACY_KGSL "/gpu_available_frequencies",
+               "1000000000 940000000 850000000 765000000 670000000 305000000\n");
+    gpu_state_init(&gpu);
+    CHECK_EQ(gpu_apply(&gpu, 1000, false), 1000);
+    CHECK_EQ(read_int(FAKE_KGSL_DEVFREQ_LEGACY "/max_freq"), 1000000000);
+    CHECK_EQ(gpu_status_oc(&gpu), 1);
+    remove_rel(FAKE_KGSL_LEGACY);
 }
 
 int main(void)

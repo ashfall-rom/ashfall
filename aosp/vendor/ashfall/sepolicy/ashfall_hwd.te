@@ -14,9 +14,11 @@ type ashfall_led_sysfs, fs_type, sysfs_type;
 
 # GPU devfreq cap (phase 6, docs/phase6.md section 3).  The stock vendor policy
 # labels /sys/devices/.../kgsl-3d0/** vendor_sysfs_kgsl (a vendor type that the
-# system_ext policy build cannot reference).  Three attributes are relabelled
-# with this type via exact-path file_contexts entries - and genfs_contexts as a
-# fallback - so a coredomain may use them without any generic sysfs access:
+# system_ext policy build cannot reference).  Three *resolved* attributes are
+# relabelled with this type via exact-path file_contexts entries - and
+# genfs_contexts as a fallback - so a coredomain may use them without any
+# generic sysfs access (ashfall-hwd must not follow the /sys/class/kgsl
+# symlinks, which stay vendor-labelled; issue #115):
 #   .../kgsl/kgsl-3d0/gpu_available_frequencies   (read: DT step table)
 #   .../devfreq/3d00000.qcom,kgsl-3d0/max_freq    (read/write: the cap)
 #   .../devfreq/3d00000.qcom,kgsl-3d0/min_freq    (write: devfreq floor rescue)
