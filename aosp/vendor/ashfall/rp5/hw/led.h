@@ -63,6 +63,47 @@ typedef struct {
     int64_t anim_start_ms;
 } led_state;
 
+/*
+ * Screen-on wake handling (issue #109).
+ *
+ * `debug.tracing.screen_state` is not stable during the power/keyguard
+ * transition, and the HTR3212 controllers can accept the first colour/enable
+ * transfers after screen-on without latching them.  The daemon therefore
+ * debounces the screen decision and then rewrites both attributes a few times
+ * inside a bounded window, regardless of `led.applied`.
+ */
+#define LED_WAKE_DEBOUNCE_MS 250
+#define LED_WAKE_REAPPLY_COUNT 3
+/* Offsets from the debounced screen-on edge: transition, ~0.5 s, ~1.5 s. */
+#define LED_WAKE_REAPPLY_OFFSET_MS 500
+
+typedef struct {
+    bool stable_on;          /* debounced screen state used by the daemon */
+    bool raw_on;             /* last sampled debug.tracing.screen_state */
+    int64_t raw_since_ms;    /* when raw_on last changed */
+    int64_t wake_start_ms;   /* debounced off->on edge */
+    int64_t next_reapply_ms; /* next wake rewrite, 0 = window over */
+    int reapply_index;       /* number of wake rewrites already issued */
+} led_screen;
+
+/* Start with the current screen state, without scheduling a wake window. */
+void led_screen_init(led_screen *screen, bool on, int64_t now_ms);
+
+/* Feed a raw sample.  Returns true when the debounced state changed; *woke is
+ * set on a debounced off->on edge (which opens the re-apply window). */
+bool led_screen_update(led_screen *screen, bool raw_on, int64_t now_ms,
+                       bool *woke);
+
+/* True when a wake rewrite is due now; advances to the next one.  The caller
+ * invalidates the cached attributes and re-applies the current frame. */
+bool led_screen_reapply_due(led_screen *screen, int64_t now_ms);
+
+/* Next debounce/re-apply deadline for the main sleep, 0 when none. */
+int64_t led_screen_next_ms(const led_screen *screen);
+
+/* Debounced screen state (also available as screen->stable_on). */
+bool led_screen_on(const led_screen *screen);
+
 void led_settings_default(led_settings *out);
 bool led_parse_mode(const char *name, led_mode *out);
 const char *led_mode_name(led_mode mode);

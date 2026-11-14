@@ -262,6 +262,7 @@ int main(void)
     thermal_set thermal;
     fan_state fan;
     led_state led;
+    led_screen screen;
     throttle_state throttle;
     struct status_cache status;
     int throttle_status_cache = -2; /* force the first publish */
@@ -289,6 +290,7 @@ int main(void)
     fan_state_init(&fan);
     now = ah_now_ms();
     led_state_init(&led, now);
+    led_screen_init(&screen, screen_on, now);
     thermal_scan(&thermal);
     memset(&status, 0, sizeof(status));
 
@@ -327,8 +329,10 @@ int main(void)
         bool led_due;
         bool have_raw;
         bool want_on;
+        bool led_reapply;
         int wait_ms;
         int64_t deadline;
+        int64_t screen_ms;
 
         now = ah_now_ms();
         read_fan_settings(&fan.settings, &changed);
@@ -344,26 +348,26 @@ int main(void)
             force_led = true;
 
         /* Screen transitions are property changes, so prop_wait_any() wakes
-         * us; both the fan hold and the LED re-apply below follow from it. */
+         * us; both the fan hold and the LED re-apply below follow from it.
+         * The decision is debounced: debug.tracing.screen_state can flicker
+         * during the power/keyguard transition, and the HTR3212 controllers
+         * are not ready the instant the panel comes back (issue #109). */
         {
-            bool next_screen_on = screen_is_on();
+            bool woke = false;
 
-            if (next_screen_on != screen_on) {
-                screen_on = next_screen_on;
+            if (led_screen_update(&screen, screen_is_on(), now, &woke)) {
+                screen_on = led_screen_on(&screen);
                 changed = true;
                 force_led = true;
-                if (screen_on) {
-                    /* The rings are off (screen-off policy) and the driver
-                     * may have been re-initialised: rewrite both attributes
-                     * instead of trusting the cached values. */
-                    led_invalidate(&led);
-                    /* Re-detect the class devices: a screen cycle can race
-                     * the vendor chmod / driver probe. */
-                    led_probe(&led);
+                if (woke) {
+                    /* The lighting block below rewrites both attributes now,
+                     * at +0.5 s and at +1.5 s, regardless of led.applied. */
+                    ah_logf(AH_LOG_INFO,
+                            "screen on: re-applying LED/fan settings");
+                } else {
+                    ah_logf(AH_LOG_INFO,
+                            "screen off: holding fan and LEDs");
                 }
-                ah_logf(AH_LOG_INFO, "screen %s",
-                        screen_on ? "on: re-applying LED/fan settings"
-                                  : "off: holding fan and LEDs");
             }
         }
 
@@ -416,7 +420,15 @@ int main(void)
                    led.backend != LED_BACKEND_NONE;
         want_on = screen_on && have_raw;
         led_due = want_on && led_is_animated(&led) && now >= next_led_ms;
-        if (force_led || !led.applied || led_due || want_on != led_want_on) {
+        led_reapply = led_screen_reapply_due(&screen, now);
+        if (led_reapply) {
+            /* The controllers may have dropped the first transfers after
+             * wake-up: forget what was written and rewrite both attributes
+             * instead of trusting applied/shown. */
+            led_invalidate(&led);
+        }
+        if (force_led || !led.applied || led_due || want_on != led_want_on ||
+            led_reapply) {
             rgb_t frame[2];
 
             led_frame(&led, now, frame);
@@ -451,6 +463,9 @@ int main(void)
             deadline = next_status_ms;
         if (next_led_ms > 0 && next_led_ms < deadline)
             deadline = next_led_ms;
+        screen_ms = led_screen_next_ms(&screen);
+        if (screen_ms > 0 && screen_ms < deadline)
+            deadline = screen_ms;
         if (fan.kick_until_ms > 0 && fan.kick_until_ms < deadline)
             deadline = fan.kick_until_ms;
         wait_ms = (int)(deadline - now);

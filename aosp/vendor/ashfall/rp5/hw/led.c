@@ -154,6 +154,87 @@ void led_invalidate(led_state *state)
     }
 }
 
+/* --- screen-on wake handling (issue #109) --------------------------------- */
+
+static const int wake_offsets[LED_WAKE_REAPPLY_COUNT] = {
+    0, LED_WAKE_REAPPLY_OFFSET_MS, 3 * LED_WAKE_REAPPLY_OFFSET_MS,
+};
+
+void led_screen_init(led_screen *screen, bool on, int64_t now_ms)
+{
+    memset(screen, 0, sizeof(*screen));
+    screen->stable_on = on;
+    screen->raw_on = on;
+    screen->raw_since_ms = now_ms;
+    screen->reapply_index = LED_WAKE_REAPPLY_COUNT;
+}
+
+bool led_screen_update(led_screen *screen, bool raw_on, int64_t now_ms,
+                       bool *woke)
+{
+    if (woke)
+        *woke = false;
+
+    if (raw_on != screen->raw_on) {
+        screen->raw_on = raw_on;
+        screen->raw_since_ms = now_ms;
+    }
+
+    /* The raw value must stay different from the debounced state for the
+     * whole window; a short off/on flicker during keyguard/doze changes
+     * raw_since_ms and never commits. */
+    if (screen->raw_on == screen->stable_on ||
+        now_ms - screen->raw_since_ms < LED_WAKE_DEBOUNCE_MS)
+        return false;
+
+    screen->stable_on = screen->raw_on;
+    if (screen->stable_on) {
+        screen->wake_start_ms = now_ms;
+        screen->reapply_index = 0;
+        screen->next_reapply_ms = now_ms;
+        if (woke)
+            *woke = true;
+    } else {
+        /* Screen off cancels any wake rewrites still pending. */
+        screen->reapply_index = LED_WAKE_REAPPLY_COUNT;
+        screen->next_reapply_ms = 0;
+    }
+    return true;
+}
+
+bool led_screen_reapply_due(led_screen *screen, int64_t now_ms)
+{
+    if (!screen->next_reapply_ms || now_ms < screen->next_reapply_ms)
+        return false;
+
+    screen->reapply_index++;
+    if (screen->reapply_index < LED_WAKE_REAPPLY_COUNT)
+        screen->next_reapply_ms =
+            screen->wake_start_ms + wake_offsets[screen->reapply_index];
+    else
+        screen->next_reapply_ms = 0;
+    return true;
+}
+
+int64_t led_screen_next_ms(const led_screen *screen)
+{
+    int64_t next = screen->next_reapply_ms;
+
+    if (screen->raw_on != screen->stable_on) {
+        /* Wake the main loop when the debounce decision is due. */
+        int64_t debounce = screen->raw_since_ms + LED_WAKE_DEBOUNCE_MS;
+
+        if (!next || debounce < next)
+            next = debounce;
+    }
+    return next;
+}
+
+bool led_screen_on(const led_screen *screen)
+{
+    return screen->stable_on;
+}
+
 static rgb_t scale(rgb_t c, double factor)
 {
     rgb_t out;
