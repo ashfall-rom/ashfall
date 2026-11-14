@@ -126,6 +126,15 @@ public class ColorPickerView extends View {
     public boolean onTouchEvent(MotionEvent event) {
         switch (event.getActionMasked()) {
             case MotionEvent.ACTION_DOWN:
+                final android.view.ViewParent parent = getParent();
+                if (parent != null) {
+                    // The picker lives in a scrollable dialog; dragging the
+                    // square must change saturation/value, not scroll.
+                    parent.requestDisallowInterceptTouchEvent(true);
+                }
+                requestFocus();
+                setFromPoint(event.getX(), event.getY());
+                return true;
             case MotionEvent.ACTION_MOVE:
                 requestFocus();
                 setFromPoint(event.getX(), event.getY());

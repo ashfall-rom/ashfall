@@ -1,6 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- Fan Quick Settings dialog: header, single-choice preset list, footer. -->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/qs_fan_root"
     android:layout_width="@dimen/dialog_width"
     android:layout_height="wrap_content"
     android:orientation="vertical"
@@ -45,10 +46,10 @@
     </LinearLayout>
 
     <ScrollView
+        android:id="@+id/qs_fan_scroll"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:layout_marginTop="8dp"
-        android:maxHeight="320dp">
+        android:layout_marginTop="8dp">
 
         <LinearLayout
             android:id="@+id/qs_fan_list"
@@ -79,6 +80,7 @@
         style="?android:attr/borderlessButtonStyle"
         android:layout_width="match_parent"
         android:layout_height="48dp"
+        android:layout_marginTop="4dp"
         android:gravity="end|center_vertical"
         android:text="@string/done"
         android:textColor="?android:attr/colorAccent" />

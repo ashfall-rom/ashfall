@@ -74,6 +74,9 @@ public class MainSwitchPreference extends Preference {
 
     /** A live summary (e.g. the active preset) that overrides the XML summary. */
     public void setSummaryText(CharSequence summary) {
+        if (TextUtils.equals(mSummaryText, summary)) {
+            return;
+        }
         mSummaryText = summary;
         notifyChanged();
     }

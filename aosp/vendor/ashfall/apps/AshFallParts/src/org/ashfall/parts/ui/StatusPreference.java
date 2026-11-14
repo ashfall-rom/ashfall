@@ -54,6 +54,11 @@ public class StatusPreference extends Preference {
 
     public void update(int temperatureC, int outputPct, int rpm, boolean safety,
             boolean available) {
+        if (mTemperatureC == temperatureC && mOutputPct == outputPct && mRpm == rpm
+                && mSafety == safety && mAvailable == available) {
+            // The page polls every 500 ms; do not rebind unchanged values.
+            return;
+        }
         mTemperatureC = temperatureC;
         mOutputPct = outputPct;
         mRpm = rpm;

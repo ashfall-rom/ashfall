@@ -89,6 +89,9 @@ public class SliderPreference extends Preference {
     }
 
     public void setSummaryText(CharSequence summary) {
+        if (TextUtils.equals(mSummaryText, summary)) {
+            return;
+        }
         mSummaryText = summary;
         notifyChanged();
     }
