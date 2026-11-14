@@ -176,3 +176,51 @@ Not working / open: fan + RGB (#45, phase 5), launcher (#52).
 - Launcher3's landscape "side dock" = hotseat (home screen), not the taskbar.
 - Worker reports sometimes mix up /tmp/opencode files from other projects (shared dir) -
   ignore files that don't belong to AshFall.
+
+## 9. State after the night of 2026-11-13/14 (Phase 5 + launcher)
+
+**On the RP5 now:** build `20261114-021714-ashfall_gsi_arm64-userdebug-6409f5f987f3` =
+branch `integ/phase5` @ 6409f5f (main + all four PRs below), flashed WITHOUT wipe. Fan set to
+**Off** by the user (`persist.ashfall.fan.mode=off`, preset `builtin.off`; safety override still
+engages at 85 C). Lighting default static FF2020.
+
+**Open PRs, all built + device-verified by workers, waiting for the USER hardware test, then merge
+(merge order: #58, #75, #62, #65; delete integ/phase5 afterwards):**
+- #58 launcher (`feat/launcher-52` @ 4aaddb2): HAT D-pad, edge-to-edge insets, release guard,
+  gamepad-reachable settings. Thread `mcp:fe0e0d4b-6e43-4e28-bf94-735a2f336901`.
+- #75 (`fix/home-63-64` @ 68b8a95): pill default in LineageSettingsProvider (+SetupWizard overlay),
+  instant HOME transition for a third-party home (WM Shell patch 0004), Launcher3 external-display
+  taskbar. Fixes #63, #64. Thread `mcp:2586f955-ec8a-468e-bd8c-81e9d0325ffc`.
+- #62 native (`feat/phase5-native-60` @ 790dbb9): ashfall-hwd (fan+LED), ashfall-rp5-input
+  calibration/deadzones/socket, SELinux in vendor/ashfall/sepolicy via SYSTEM_EXT_PRIVATE_SEPOLICY_DIRS.
+  Fixes #60, #67, #69-#74. Thread `mcp:ec19fcbd-b22b-4972-a7c3-ec6095616720`.
+- #65 AshFall Parts (`feat/parts-61` @ 293c74b): Settings > Handheld (Fan, Lighting, Controller),
+  presets + curve editor, tester + calibration wizard, deadzones, Fan/Lighting QS tiles with dialogs.
+  Fixes #61, #76-#79. Thread `mcp:9dfa10ed-5223-410b-9987-998b932b551d`.
+- Contract: `docs/phase5.md`. Hardware facts measured: `docs/rp5/hw.md` (fan useful duty 4000..50000 ns,
+  `speed` = RPM, up to ~15k; LED class `sn3112l/r` is backed by htr3212 chips, nodes write-only).
+
+**Open issues:** #80 (factory calibration copy not used; functionally identical on this unit),
+#66 (patches.sh must reset projects whose patches were all removed - system/sepolicy was reset by
+hand to d61fd80), #48, #54.
+
+**Device/debug gotchas learned tonight:**
+- `ro.debuggable=0` (stock user boot image): no `adb root`, no `/dev/kmsg_debug` (init
+  `stdio_to_kmsg` output is lost); shell cannot `setprop persist.ashfall.*` - change settings via the
+  Parts UI or its QS tiles (`cmd statusbar click-tile org.ashfall.parts/.qs.FanTileService`).
+- A secondary display exists: use `am start --display 0`, `input -d 0 ...`, `screencap -d 0`.
+- `adb shell` may answer "error: closed" right after boot; `adb kill-server` fixes it.
+- Stock gpio5_pwm.ko WARNs ("Unbalanced enable for IRQ 407") if `speed` is read while the fan is
+  off; the stock tsens driver prints `temp_show` at KERN_FATAL on every temp read (hwd now reads
+  3 zones / 2 s).
+- Soong: `shrink_resources` goes inside `optimize {}`; properties must be declared with
+  `system_internal_prop()` (A17 neverallows).
+
+**User test checklist for the morning (then merge):**
+1. Launcher: D-pad/stick navigation, no top clipping, no bottom bar/pill, hold-A/long-press menu does
+   not auto-select, Settings reachable by gamepad, going home from an app is instant/clean.
+2. Settings > Handheld: Fan (presets, create a custom curve preset, live temp/RPM), Lighting (which
+   ring lights for Left/Right - unverified so far!, colours, effects, brightness), Controller (tester,
+   calibration wizard, deadzones).
+3. QS tiles: Fan preset dialog, Lighting dialog (target/colour/brightness/effect).
+4. Recents, Back, gestures still fine.

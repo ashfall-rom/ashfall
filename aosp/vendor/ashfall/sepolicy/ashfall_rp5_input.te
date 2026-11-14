@@ -1,0 +1,54 @@
+# AshFall RP5 built-in gamepad bridge + calibration/deadzone/socket extensions.
+#
+# The RP5 gamepad is sampled by an MCU on the 115200-baud UART at /dev/ttyHS1
+# and injected through /dev/uinput.  On stock Android this is done by the stock
+# system image (pservice/RsMapping), which a GSI replaces.
+
+type ashfall_rp5_input, domain;
+type ashfall_rp5_input_exec, system_file_type, exec_type, file_type;
+
+typeattribute ashfall_rp5_input coredomain;
+
+init_daemon_domain(ashfall_rp5_input)
+
+# MCU UART (labelled serial_device in file_contexts) and the uinput node.
+allow ashfall_rp5_input serial_device:chr_file rw_file_perms;
+allow ashfall_rp5_input uhid_device:chr_file rw_file_perms;
+
+# /data/misc/ashfall: joys (user calibration, written only by this daemon) and
+# joys.factory (copied from /mnt/vendor/persist by init at post-fs-data).  No
+# other domain may write this directory.
+type ashfall_data_file, file_type, data_file_type, core_data_file_type;
+
+allow ashfall_rp5_input ashfall_data_file:dir {
+    getattr
+    search
+    open
+    read
+    write
+    add_name
+    remove_name
+    create
+};
+allow ashfall_rp5_input ashfall_data_file:file {
+    getattr
+    open
+    read
+    write
+    create
+    rename
+    unlink
+    setattr
+};
+
+# Control socket /dev/socket/ashfall_input.  init creates it with this
+# domain's socket context (the .rc `socket` command inherits the service
+# seclabel), so `domain self:unix_stream_socket { create_stream_socket_perms }`
+# from domain.te covers listen/accept.  The only client is the AshFall Parts
+# app (system_app).
+type ashfall_input_socket, file_type;
+
+allow system_app ashfall_input_socket:sock_file write;
+allow system_app ashfall_rp5_input:unix_stream_socket connectto;
+allow system_app ashfall_rp5_input:unix_stream_socket { read write getattr };
+allow ashfall_rp5_input system_app:unix_stream_socket { read write getattr };

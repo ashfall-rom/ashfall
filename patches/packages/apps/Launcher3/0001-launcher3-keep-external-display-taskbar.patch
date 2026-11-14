@@ -1,0 +1,39 @@
+From faadfa4ba5b1296e1c4dae75ad9ea00239a2c697 Mon Sep 17 00:00:00 2001
+From: AshFall UI <ui@ashfall.local>
+Date: Fri, 13 Nov 2026 23:21:24 +0000
+Subject: [PATCH] Launcher3: keep the external-display taskbar enabled
+
+enable_taskbar=0 is the AshFall product default for the primary display on the
+RP5: it removes the large-screen taskbar, bubble bar and pinned-app strip that
+do not fit a 5.5" landscape handheld. The secondary display (port 130,
+1280x720) uses the same global LineageSettings key, but its taskbar is its
+navigation bar, so disabling it would remove the only navigation affordance
+there.
+
+Ignore the switch for non-primary displays: they keep the stock behaviour
+(enabled), while the primary display follows the user/product setting.
+---
+ .../android/launcher3/taskbar/TaskbarActivityContext.java  | 7 ++++++-
+ 1 file changed, 6 insertions(+), 1 deletion(-)
+
+diff --git a/quickstep/src/com/android/launcher3/taskbar/TaskbarActivityContext.java b/quickstep/src/com/android/launcher3/taskbar/TaskbarActivityContext.java
+index ba7d96c..11db8aa 100644
+--- a/quickstep/src/com/android/launcher3/taskbar/TaskbarActivityContext.java
++++ b/quickstep/src/com/android/launcher3/taskbar/TaskbarActivityContext.java
+@@ -361,7 +361,12 @@ public class TaskbarActivityContext extends BaseTaskbarContext {
+         SettingsCache settingsCache = SettingsCache.INSTANCE.get(this);
+         mIsUserSetupComplete = settingsCache.getValue(URI_USER_SETUP_COMPLETE);
+         mIsNavBarKidsMode = settingsCache.getValue(URI_NAV_BAR_KIDS_MODE);
+-        mIsTaskbarEnabled = settingsCache.getValue(URI_ENABLE_TASKBAR);
++        // AshFall: enable_taskbar is the product switch for the primary display's
++        // large-screen taskbar. A secondary/external display keeps its taskbar (the
++        // navigation bar) enabled: it is the only navigation affordance there and is
++        // intentionally left alone by the RP5 UI defaults (docs/ui.md).
++        mIsTaskbarEnabled = !isPrimaryDisplay()
++                || settingsCache.getValue(URI_ENABLE_TASKBAR);
+         mIsNavbarHintEnabled = settingsCache.getValue(URI_NAVIGATION_BAR_HINT);
+         mBubbleFeatureConfig =
+                 new BubbleFeatureConfigImpl(mWindowContext, getDesktopState(mWindowContext));
+-- 
+2.53.0
+

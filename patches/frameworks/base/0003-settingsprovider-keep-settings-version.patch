@@ -1,0 +1,47 @@
+From 471281b98c6cfdbb52f5f50097b6fb2fd24273a3 Mon Sep 17 00:00:00 2001
+From: AshFall UI <ui@ashfall.local>
+Date: Sat, 14 Nov 2026 00:24:01 +0100
+Subject: [PATCH] SettingsProvider: keep settings version 237, drop the
+ AOSP-table seed
+
+---
+ .../providers/settings/SettingsProvider.java     | 16 +++++++++++++++-
+ 1 file changed, 15 insertions(+), 1 deletion(-)
+
+diff --git a/packages/SettingsProvider/src/com/android/providers/settings/SettingsProvider.java b/packages/SettingsProvider/src/com/android/providers/settings/SettingsProvider.java
+index 8ddd167..83a81e7 100644
+--- a/packages/SettingsProvider/src/com/android/providers/settings/SettingsProvider.java
++++ b/packages/SettingsProvider/src/com/android/providers/settings/SettingsProvider.java
+@@ -4403,7 +4403,13 @@ public class SettingsProvider extends ContentProvider {
+ 
+         @VisibleForTesting
+         final class UpgradeController {
+-            private static final int SETTINGS_VERSION = 236;
++            // AshFall: 237 was introduced by the #51 SettingsProvider migration, which seeded
++            // LineageSettings keys into the wrong (AOSP) table. The seeding is removed - those
++            // defaults now live in LineageSettingsProvider (patches/lineage-sdk, docs/ui.md) -
++            // but the version stays at 237: devices flashed with the previous build already have
++            // their settings database at 237 and lowering the version would make
++            // UpgradeController drop and recreate the whole settings database.
++            private static final int SETTINGS_VERSION = 237;
+ 
+             private final int mUserId;
+             private final int mDeviceId;
+@@ -7085,6 +7091,14 @@ public class SettingsProvider extends ContentProvider {
+                     currentVersion = 236;
+                 }
+ 
++                if (currentVersion == 236) {
++                    // AshFall: version 237 belonged to the removed #51 migration that seeded
++                    // LineageSettings keys into this (AOSP) database. Consume the version as a
++                    // no-op so an existing 236 database is upgraded in place instead of being
++                    // dropped and recreated.
++                    currentVersion = 237;
++                }
++
+                 // vXXX: Add new settings above this point.
+ 
+                 if (currentVersion != newVersion) {
+-- 
+2.56.0
+

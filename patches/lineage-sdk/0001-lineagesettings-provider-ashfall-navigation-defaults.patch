@@ -1,0 +1,144 @@
+From 9657bfe90ea7bd8d2b31a2d654b111d2a19b44d6 Mon Sep 17 00:00:00 2001
+From: AshFall UI <ui@ashfall.local>
+Date: Fri, 13 Nov 2026 23:11:29 +0000
+Subject: [PATCH] LineageSettingsProvider: AshFall navigation defaults for the
+ RP5
+
+Move the #51 defaults to the provider that actually owns the keys:
+
+  navigation_bar_hint=0  hide the gestural navigation hint (the stashed
+                         Launcher3 taskbar handle drawn over app content)
+  enable_taskbar=0       keep the large-screen taskbar/bubble bar disabled
+
+These are LineageSettings.System keys stored by LineageSettingsProvider, not
+AOSP Settings.System keys. The previous firmware seeded them through an AOSP
+SettingsProvider migration, so the Lineage provider kept returning its
+built-in default (1) and the pill came back on a fresh /data.
+
+Fresh databases get the values from loadSystemSettings(). Existing databases
+are migrated with DATABASE_VERSION 24 -> 25: navigation_bar_hint is reset once
+to the product default (the SetupWizard used to write 1 from an unchecked
+switch without asking), enable_taskbar is only inserted when absent, so an
+explicit user choice is preserved. The user can still turn the hint back on in
+Settings > System > Buttons.
+
+Fixes #63
+---
+ .../res/values/defaults.xml                   | 17 +++++++
+ .../LineageDatabaseHelper.java                | 51 ++++++++++++++++++-
+ 2 files changed, 67 insertions(+), 1 deletion(-)
+
+diff --git a/packages/LineageSettingsProvider/res/values/defaults.xml b/packages/LineageSettingsProvider/res/values/defaults.xml
+index 1d59bac..b1fc8f7 100644
+--- a/packages/LineageSettingsProvider/res/values/defaults.xml
++++ b/packages/LineageSettingsProvider/res/values/defaults.xml
+@@ -71,6 +71,23 @@
+     -->
+     <integer name="def_clock_position">2</integer>
+ 
++    <!--
++        AshFall (RP5 landscape handheld): LineageSettings.System.NAVIGATION_BAR_HINT.
++        0 hides the gestural navigation hint. On this device the hint is the
++        stashed Launcher3 taskbar handle, which is drawn over app content at the
++        bottom of a 1920x1080 landscape screen. Gesture navigation (edge back,
++        bottom home) is unaffected: the handle window only contributes the
++        mandatorySystemGestures area and a zero navigationBars inset.
++    -->
++    <integer name="def_navigation_bar_hint">0</integer>
++
++    <!--
++        AshFall: LineageSettings.System.ENABLE_TASKBAR. 0 keeps the large-screen
++        (>=600dp wide) LineageOS taskbar, its bubble bar and pinned-app strip
++        disabled; the device is a small landscape handheld, not a tablet.
++    -->
++    <integer name="def_enable_taskbar">0</integer>
++
+     <!-- Defaults for AOSP Global -->
+ 
+     <!-- Default for Settings.Global.DISABLE_WINDOW_BLURS -->
+diff --git a/packages/LineageSettingsProvider/src/org/lineageos/lineagesettings/LineageDatabaseHelper.java b/packages/LineageSettingsProvider/src/org/lineageos/lineagesettings/LineageDatabaseHelper.java
+index 2057bee..65b9f48 100644
+--- a/packages/LineageSettingsProvider/src/org/lineageos/lineagesettings/LineageDatabaseHelper.java
++++ b/packages/LineageSettingsProvider/src/org/lineageos/lineagesettings/LineageDatabaseHelper.java
+@@ -37,7 +37,7 @@ public class LineageDatabaseHelper extends SQLiteOpenHelper{
+     private static final boolean LOCAL_LOGV = false;
+ 
+     private static final String DATABASE_NAME = "lineagesettings.db";
+-    private static final int DATABASE_VERSION = 24;
++    private static final int DATABASE_VERSION = 25;
+ 
+     public static class LineageTableNames {
+         public static final String TABLE_SYSTEM = "system";
+@@ -353,6 +353,24 @@ public class LineageDatabaseHelper extends SQLiteOpenHelper{
+             upgradeVersion = 24;
+         }
+ 
++        if (upgradeVersion < 25) {
++            // AshFall: product defaults for the RP5 navigation bar (docs/ui.md).
++            //
++            // navigation_bar_hint was always written as 1 by the SetupWizard's
++            // "hide gestural navigation hint" switch, which is unchecked by
++            // default, so existing databases carry 1 even when the user never
++            // changed the value. This device uses gesture navigation without a
++            // visible hint (the hint is Launcher3's stashed taskbar handle), so
++            // migrate that old default to the product default. This is a
++            // one-time default change; the user can still turn the hint back on
++            // in Settings > System > Buttons.
++            //
++            // enable_taskbar is only inserted when absent: its only writer is
++            // the user-facing toggle, so an explicit choice is kept.
++            loadNavigationBarSettings(db, true /* resetNavigationBarHint */);
++            upgradeVersion = 25;
++        }
++
+         // *** Remember to update DATABASE_VERSION above!
+         if (upgradeVersion != newVersion) {
+             Log.wtf(TAG, "warning: upgrading settings database to version "
+@@ -488,6 +506,8 @@ public class LineageDatabaseHelper extends SQLiteOpenHelper{
+             loadIntegerSetting(stmt, LineageSettings.System.STATUS_BAR_CLOCK,
+                     R.integer.def_clock_position);
+ 
++            loadNavigationBarSettings(db, false /* resetNavigationBarHint */);
++
+             if (mContext.getResources().getBoolean(R.bool.def_notification_pulse_custom_enable)) {
+                 loadStringSetting(stmt, LineageSettings.System.NOTIFICATION_LIGHT_PULSE_CUSTOM_VALUES,
+                         R.string.def_notification_pulse_custom_value);
+@@ -497,6 +517,35 @@ public class LineageDatabaseHelper extends SQLiteOpenHelper{
+         }
+     }
+ 
++    /**
++     * Writes the AshFall navigation bar defaults to the system table.
++     *
++     * @param resetNavigationBarHint replace an existing navigation_bar_hint value with the
++     *                               product default (one-time database upgrade); when false
++     *                               existing values are kept.
++     */
++    private void loadNavigationBarSettings(SQLiteDatabase db, boolean resetNavigationBarHint) {
++        SQLiteStatement stmt = null;
++        try {
++            stmt = db.compileStatement((resetNavigationBarHint
++                    ? "INSERT OR REPLACE" : "INSERT OR IGNORE")
++                    + " INTO system(name,value) VALUES(?,?);");
++            stmt.bindString(1, LineageSettings.System.NAVIGATION_BAR_HINT);
++            stmt.bindString(2, Integer.toString(mContext.getResources()
++                    .getInteger(R.integer.def_navigation_bar_hint)));
++            stmt.execute();
++            stmt.close();
++
++            stmt = db.compileStatement("INSERT OR IGNORE INTO system(name,value) VALUES(?,?);");
++            stmt.bindString(1, LineageSettings.System.ENABLE_TASKBAR);
++            stmt.bindString(2, Integer.toString(mContext.getResources()
++                    .getInteger(R.integer.def_enable_taskbar)));
++            stmt.execute();
++        } finally {
++            if (stmt != null) stmt.close();
++        }
++    }
++
+     private void loadGlobalSettings(SQLiteDatabase db) {
+         SQLiteStatement stmt = null;
+         try {
+-- 
+2.53.0
+

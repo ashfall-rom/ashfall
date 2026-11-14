@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Copyright (C) 2026 The AshFall Project. Apache-2.0. -->
+<resources>
+    <!-- All sizes are tuned for 1920x1080 @ 360dpi (853dp x 480dp). -->
+    <dimen name="bottom_bar_height">52dp</dimen>
+    <dimen name="page_indicator_height">20dp</dimen>
+
+    <dimen name="pager_margin_horizontal">56dp</dimen>
+    <dimen name="grid_gap">8dp</dimen>
+
+    <dimen name="tile_icon_size">56dp</dimen>
+    <dimen name="tile_label_text_size">13sp</dimen>
+
+    <dimen name="status_icon_size">22dp</dimen>
+
+    <dimen name="bottom_text_size">14sp</dimen>
+    <dimen name="bottom_name_text_size">18sp</dimen>
+    <dimen name="chevron_width">44dp</dimen>
+    <dimen name="chevron_height">96dp</dimen>
+
+    <dimen name="dialog_width">560dp</dimen>
+    <dimen name="dialog_radius">20dp</dimen>
+    <dimen name="dialog_padding">24dp</dimen>
+    <dimen name="dialog_action_size">104dp</dimen>
+    <dimen name="dialog_icon_size">40dp</dimen>
+</resources>

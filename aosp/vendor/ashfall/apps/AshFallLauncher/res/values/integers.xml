@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Copyright (C) 2026 The AshFall Project. Apache-2.0. -->
+<resources>
+    <!-- 5x3 = 15 apps per page: the stock launcher's 3x5 layout mode. -->
+    <integer name="grid_columns">5</integer>
+    <integer name="grid_rows">3</integer>
+
+    <!-- Analog stick dead zone and repeat interval. -->
+    <integer name="stick_deadzone_percent">45</integer>
+    <integer name="stick_repeat_ms">320</integer>
+    <integer name="key_repeat_ms">120</integer>
+</resources>
