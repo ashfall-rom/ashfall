@@ -41,8 +41,12 @@ Status: contract, 2026-11-14. Decisions taken with the user:
 
 ## 2. OC table
 
-Add these steps to every speed-bin table whose stock top is 670 MHz
-(`qcom,gpu-pwrlevels-0`, `-1`, `-3`). Leave the 525-top `-2` bin stock.
+The final table is a **replacement** table, not an extension, because the RPMh
+`gfx.lvl` table only covers `num_pwrlevels + 1` GPU DCVS votes (issue #116:
+stock 8 entries -> 9 votes works, 12 entries -> 13 votes returns `-ERANGE`).
+Apply it to every speed-bin table whose stock top is 670 MHz
+(`qcom,gpu-pwrlevels-0`, `-1`, `-3`, and the extra `-4` table on the RP5).
+Leave the 525-top `-2` bin stock.
 
 | MHz | qcom,level (dec) | corner | acd-level | bus-freq/min/max |
 |---|---|---|---|---|
@@ -51,16 +55,22 @@ Add these steps to every speed-bin table whose stock top is 670 MHz
 | 850  | 384 (`0x180`) | TURBO    | `0x802b5ffd` | 11/11/11 |
 | 765  | 352 (`0x160`) | NOM_L3   | `0x802b5ffd` | 11/11/11 |
 | 670  | 320 (`0x140`) | NOM_L1   | stock        | stock          |
+| 587  | 256 (`0x100`) | NOM      | stock        | stock          |
+| 305  | 64 (`0x40`)   | MIN      | stock        | stock          |
+| 0    | —             | off      | —            | 0/0/0          |
+
+The stock **525, 490, 441.6 and 400 MHz steps are dropped**; the resulting table
+is 8 entries including the 0 MHz last entry, the same count as stock.
 
 Rules:
 
-- Keep the table strictly descending. Insert the four steps **above** the stock
-  670 entry, renumber every `reg` from 0, and keep the 0 MHz "off" entry last.
-- `qcom,initial-pwrlevel` must be increased by 4 in each edited bin so the boot
-  level remains the stock 305 MHz entry (bin 0/1/3: 6 -> 10).
-- `qcom,throttle-pwrlevel` must also be increased by 4 (bin 0: 0 -> 4, bins 1/3:
-  1 -> 5) so the LMh throttle mask still covers the stock top steps plus the
-  new OC steps.
+- Keep the table strictly descending. Build it from the four OC steps plus the
+  stock steps that are not dropped, renumber every `reg` from 0, and keep the
+  0 MHz "off" entry last.
+- `qcom,initial-pwrlevel` points at the 305 MHz boot entry (index 6 in every
+  edited bin).
+- `qcom,throttle-pwrlevel` keeps the stock value (bin 0: 0; other bins: 1)
+  because the dropped steps are above the LMh throttle mask's bottom entries.
 - Do not edit the legacy `qcom,gpu-pwrlevels` node (unused when
   `qcom,gpu-pwrlevel-bins` is present) and do not change `qcom,initial-pwrlevel`
   on the parent `qcom,kgsl-3d0`.
@@ -119,16 +129,22 @@ App (AshFall Parts, existing Performance section on the Fan page):
 
 - `scripts/gpu/build-vendor-boot.sh` (host-side, not an Android build):
   stock `firmware/img/lun4_vendor_boot_a.bin` -> unpack (`unpack_bootimg.py`
-  from the AOSP tree) -> decompile the DTB (prebuilt `dtc`) -> apply the OC
-  table -> recompile -> repack (`mkbootimg.py`) -> validate. Output
-  `out/gpu/<id>/vendor_boot.img`, a manifest with the stock/output/DTB SHA-256,
-  and the decompiled DTS for review. The vendor ramdisk, bootconfig, header
-  fields and the 100 MB partition limit are preserved.
-- `scripts/device/flash-vendor-boot.sh`: active slot only, `adb reboot
-  bootloader` -> `fastboot flash vendor_boot` -> reboot, AVB verification
-  disabled as for the system flash, no wipe. `--stock` restores
-  `firmware/img/lun4_vendor_boot_a.bin`. The Android build/flash of
-  `system.img` stays with `scripts/build.sh` / `flash-gsi.sh`.
+  from the AOSP tree) -> decompile the DTB (prebuilt `dtc`) -> apply the final
+  8-entry OC table -> recompile -> repack (`mkbootimg.py`) -> validate.  Output
+  `out/gpu/<id>/vendor_boot.img` (content-only, 12,931,072 B, the image to
+  flash) plus `vendor_boot-padded.img` (96 MiB fit proof/backup), a manifest
+  with the stock/output/padded/DTB SHA-256, and the decompiled DTS for review.
+  The vendor ramdisk, bootconfig, header fields and the 100 MB partition limit
+  are preserved.  The padded image wedges the RP5 ABL (issue #54).
+- `scripts/device/flash-vendor-boot.sh`: active-slot guard, `adb reboot
+  bootloader` -> **one detached fastboot batch** (`dev_fastboot_batch`, issue
+  #54): `--disable-verity --disable-verification flash vbmeta` (non-slotted,
+  no `--slot`) -> `flash vendor_boot <content-only>` (non-slotted, no `--slot`)
+  -> reboot.  It trims padded images to the v4 header `content_end`, including
+  `--stock`, and does not use `partition-size` getvars.  `--stock` restores
+  `firmware/img/lun4_vendor_boot_a.bin` (last-resort recovery only).  The
+  Android build/flash of `system.img` stays with `scripts/build.sh` /
+  `flash-gsi.sh`.
 - Workers do not run `scripts/build.sh` or `m`, and do not flash system,
   super, userdata, vendor or the other slot. The GPU worker may run the
   host-side `build-vendor-boot.sh` and static checks; the orchestrator flashes
@@ -141,11 +157,12 @@ App (AshFall Parts, existing Performance section on the Fan page):
 
 Static:
 
-- [ ] Decompiled output DTB has the four new steps in every 670-top bin, the
-      525-top bin untouched, contiguous `reg`, correct
-      `initial-pwrlevel`/`throttle-pwrlevel`.
+- [ ] Decompiled output DTB has the final 8-entry table in every 670-top bin,
+      the 525-top bin untouched, contiguous `reg`, `initial-pwrlevel=6` and the
+      stock `throttle-pwrlevel`; the dropped 525/490/441.6/400 steps are gone.
 - [ ] Vendor ramdisk, bootconfig, header fields and all non-GPU DT nodes are
-      byte-identical/preserved; output image fits the partition.
+      byte-identical/preserved; the content-only image is 12,931,072 B and the
+      padded image fits the partition.
 - [ ] Host tests for the DTB transformation and the daemon cap logic pass.
 
 Runtime (after the orchestrator flashes):
