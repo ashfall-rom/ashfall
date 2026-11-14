@@ -278,3 +278,116 @@ dev_fb_value() {
 dev_adb() {
   dev_sh "$(_cmd timeout 120 adb -s "$DEV_SERIAL" "$@")"
 }
+
+# --- one-session bootloader batches (issue #54) ------------------------------
+# The RP5 ABL wedges when a new fastboot process opens between transfers or
+# after a burst of getvars: on 2026-11-13 the restore hung on `Sending 'boot_a'`
+# right after eight per-partition getvars, then on `Sending 'init_boot_a'` after
+# a retry, and the ABL had to be power-cycled both times. Every bootloader-side
+# write therefore goes through ONE `fastboot` process, built as a single command
+# line and started detached on the build host with a log + exit file (same
+# shape as scripts/remote/job.sh). Bootloader-side getvars are only allowed
+# once, before the batch; restore-stock.sh uses the documented stock partition
+# sizes instead (flash-gsi.sh's size getvars run in fastbootd, not here).
+#
+# Overridable via config/ashfall.local.conf or the environment:
+#   DEV_JOBS_DIR=$REMOTE_ROOT/device/jobs   # batch state on the build host
+#   DEV_FB_BATCH_TIMEOUT=3600               # hard limit for one batch, seconds
+#   DEV_FB_STALL_SECONDS=420                # no log growth -> wedged ABL;
+#                                           # > the 351 s `erase userdata`
+DEV_JOBS_DIR=${DEV_JOBS_DIR:-${REMOTE_ROOT:-/var/home/epickitrolaz/ashfall}/device/jobs}
+DEV_FB_BATCH_TIMEOUT=${DEV_FB_BATCH_TIMEOUT:-3600}
+DEV_FB_STALL_SECONDS=${DEV_FB_STALL_SECONDS:-420}
+
+# dev_kill_fastboot: kill a hung fastboot, never our own ssh command line.
+# `pkill -f fastboot` matches the remote `ssh ... fastboot ...` string and kills
+# the session (exit 255/143); `pkill -x` matches the binary only (issue #54).
+dev_kill_fastboot() {
+  dev_sh 'pkill -x fastboot 2>/dev/null || true'
+}
+
+# dev_fastboot_batch <name> <fastboot args...>
+# Runs `timeout $DEV_FB_BATCH_TIMEOUT fastboot -s $DEV_SERIAL <args...>` inside
+# $DEV_BOX as ONE process, detached on $BUILD_HOST. Prints the batch log when it
+# finishes and returns the fastboot exit code. Dies (after `pkill -x fastboot`)
+# when the log stops growing or the hard timeout is reached.
+dev_fastboot_batch() {
+  local name=${1:?batch name}; shift
+  [[ $name =~ ^[A-Za-z0-9_-]+$ ]] || die "invalid batch name: $name"
+  local dir="$DEV_JOBS_DIR/$name"
+  local log="$dir/fastboot.log" exitf="$dir/exit"
+  local script="$dir/run.sh" status="$dir/status" cmd script_content b64
+  local rc size last_size last_growth deadline
+
+  cmd=$(_cmd timeout "$DEV_FB_BATCH_TIMEOUT" fastboot -s "$DEV_SERIAL" "$@")
+  script_content=$(cat <<'RUNNER'
+#!/usr/bin/env bash
+# AshFall fastboot batch runner (written by scripts/device/lib/device.sh).
+# One fastboot process for the whole batch: issue #54.
+set -uo pipefail
+log=${1:?log path}
+exitf=${2:?exit path}
+shift 2
+CMD=( __ASH_CMD__ )
+{
+  printf '=== %s fastboot batch starting ===\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  printf '=== cmd:'
+  printf ' %q' "${CMD[@]}"
+  printf '\n'
+} >>"$log"
+# fastboot's own output (chunk progress, FAILED lines) goes to the same log.
+"${CMD[@]}" >>"$log" 2>&1
+rc=$?
+printf '=== %s fastboot batch finished rc=%s ===\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$rc" >>"$log"
+printf '%s\n' "$rc" >"$exitf"
+if [ "$rc" -eq 0 ]; then printf 'done\n' >"$(dirname "$exitf")/status"; else printf 'failed\n' >"$(dirname "$exitf")/status"; fi
+exit "$rc"
+RUNNER
+)
+  script_content=${script_content/__ASH_CMD__/$cmd}
+  b64=$(printf '%s\n' "$script_content" | base64 -w0)
+
+  # Upload the runner and clear stale state (the build host's $HOME is shared
+  # with the container, so the paths inside/outside distrobox are the same).
+  host_sh "mkdir -p $(printf %q "$dir") && rm -f $(printf %q "$exitf") $(printf %q "$status") $(printf %q "$log") && printf %s $(printf %q "$b64") | base64 -d > $(printf %q "$script") && chmod 0755 $(printf %q "$script")" ||
+    die "cannot write the fastboot batch runner on $BUILD_HOST:$dir"
+
+  # Detached: setsid + nohup + all fds redirected, so an SSH drop neither kills
+  # the flash nor makes ssh wait for the container to exit.
+  host_sh "d=$(printf %q "$dir"); printf 'running\n' >\"\$d/status\"; setsid nohup distrobox enter --name $(_dq "$DEV_BOX") --no-tty -- bash $(printf %q "$script") $(printf %q "$log") $(printf %q "$exitf") >/dev/null 2>&1 </dev/null &" ||
+    die "cannot start the fastboot batch on $BUILD_HOST"
+
+  log "fastboot batch '$name' started on $BUILD_HOST (one process, no getvars between writes)"
+  last_size=-1
+  last_growth=$SECONDS
+  deadline=$((SECONDS + DEV_FB_BATCH_TIMEOUT + 300))
+  while :; do
+    rc=$(host_sh "cat $(printf %q "$exitf") 2>/dev/null || true" | tail -1 || true)
+    if [[ $rc =~ ^[0-9]+$ ]]; then
+      break
+    fi
+    size=$(host_sh "stat -c %s $(printf %q "$log") 2>/dev/null || echo 0" | tail -1 || true)
+    [[ $size =~ ^[0-9]+$ ]] || size=0
+    if [[ $size != "$last_size" ]]; then
+      last_size=$size
+      last_growth=$SECONDS
+    fi
+    if ((SECONDS - last_growth >= DEV_FB_STALL_SECONDS)); then
+      warn "fastboot batch '$name': no output for ${DEV_FB_STALL_SECONDS}s (wedged ABL?)"
+      dev_kill_fastboot
+      printf '\n--- last log lines (%s:%s) ---\n' "$BUILD_HOST" "$log" >&2
+      host_sh "tail -n 20 $(printf %q "$log") 2>/dev/null || true" >&2 || true
+      die "fastboot batch '$name' stalled; the ABL may need a 15 s hard power-off (issue #54)"
+    fi
+    if ((SECONDS >= deadline)); then
+      warn "fastboot batch '$name': hard timeout after ${DEV_FB_BATCH_TIMEOUT}s"
+      dev_kill_fastboot
+      die "fastboot batch '$name' timed out; the ABL may need a 15 s hard power-off (issue #54)"
+    fi
+    sleep 5
+  done
+
+  host_sh "cat $(printf %q "$log") 2>/dev/null || true"
+  printf '\nbatch log: %s:%s\n' "$BUILD_HOST" "$log" >&2
+  return "$rc"
+}

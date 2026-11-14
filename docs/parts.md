@@ -103,7 +103,7 @@ immediately to the properties from §2 of the contract; there is no Apply button
 | Page | Activity | Content |
 |---|---|---|
 | AshFall settings | `HandheldActivity` | Fan / Lighting / Controller rows with live summaries, daemon note |
-| Fan | `FanActivity` | main switch, live status, presets, curve, manual %, kick, screen-off, throttling override |
+| Fan | `FanActivity` | main switch, live status, presets, curve, manual %, kick, screen-off, throttling override, GPU max frequency |
 | Fan presets | `PresetActivity` | create / rename / duplicate / delete / change mode |
 | Curve | `CurveActivity` | drag-and-D-pad curve editor, live marker, live preview, stress test |
 | Lighting | `LightingActivity` | switch, target, live colour picker, brightness, effect, speed |
@@ -151,6 +151,21 @@ immediately to the properties from §2 of the contract; there is no Apply button
   (`persist.ashfall.perf.throttle_override_permanent`).  Enabling the hidden
   switch also applies the override immediately; turning the visible switch off
   releases the runtime override without touching the permanent flag.
+* **GPU max frequency** (docs/phase6.md §3) sits directly below the throttling
+  override.  A single-choice dialog offers the five contract steps — 670 MHz
+  (stock, default), 765, 850, 940 and 1000 MHz (experimental) — and a choice
+  writes only `persist.ashfall.perf.gpu_max_mhz`; the app never writes the
+  status properties.  **1000 MHz** always goes through a confirmation with the
+  thermal/stability warning (marginal on some SD865 units, 940 MHz is the common
+  stable OC); the other steps apply immediately.  Above 670 the row summary adds
+  the warning that sustained clocks depend on the fan and thermal throttling and
+  that the fan is not forced.  The row reads `ashfall.status.perf.gpu_max_mhz`
+  (actual cap) and `ashfall.status.perf.gpu_oc` (0 stock, 1 OC, -1 unavailable)
+  every tick and shows: the applied cap, `Requested N MHz — actual M MHz` when
+  the daemon picked a lower table step, or `Requested N MHz — the throttle
+  override clamps the GPU to stock 670 MHz` when an above-stock request is
+  published as stock while the override is active.  The status row also
+  distinguishes a missing OC step (override off) from the override clamp.
 * **Safety threshold**: removed.  The daemon keeps a fixed, undocumented
   last-resort rule (100 % at 90 °C, released at 80 °C) and the status block
   still shows when it is active; there is no slider and no property.
@@ -217,13 +232,23 @@ graph draws a focus ring when it owns the focus.
 
 **Stress test** (bottom of the curve page): CPU and GPU load sliders, 0–100 %.
 CPU load is one worker per (up to eight) core running a busy loop with the
-requested duty cycle.  GPU load is an offscreen 512×512 EGL/GLES2 pbuffer that
-renders a deliberately expensive fragment shader with `glFinish()` and the same
-duty cycle.  A zero slider means no load; the engine starts on the first
-non-zero value, auto-stops after **ten minutes**, and the page calls
-`Stress.stop()` in `onPause`, so leaving the editor always ends the load.  A
-fresh visit starts at 0/0 and never silently resumes.  The load is ordinary app
-work: it touches neither the daemons nor any property.
+requested duty cycle.  GPU load is an offscreen **1920×1080** EGL/GLES2
+pbuffer (clamped to the config's `EGL_MAX_PBUFFER_WIDTH`/`HEIGHT`, halved once
+if the surface cannot be created) that queues **four full-screen passes** of a
+128-iteration dependent sin/cos fragment shader and then waits once with
+`glFinish()`, with the same duty cycle.  Batching the passes before the wait
+keeps the GPU queue full across submissions, which is what lets
+`msm-adreno-tz` see a sustained load and ramp to the selected cap (#118); a
+single 512×512 draw left the GPU ~18 % idle between submissions.  The GL thread
+runs at `THREAD_PRIORITY_DISPLAY` so a 100 % CPU slider cannot starve the
+submission path; the CPU workers keep the default app priority.  A zero slider
+means no load; the engine starts on the first non-zero value, auto-stops after
+**ten minutes**, and the page calls `Stress.stop()` in `onPause`, so leaving the
+editor always ends the load.  A fresh visit starts at 0/0 and never silently
+resumes.  The load is ordinary app work: it touches neither the daemons nor any
+property.  The GPU worker logs its render size, pass count, shader iterations
+and renderer at start, and its `ms/frame` split into `submit`/`gpu` every five
+seconds (`logcat -s AshFallParts`), so the device test can confirm the load.
 
 ### 2.3 Lighting
 
@@ -390,7 +415,7 @@ that deliberately consume them.  The only deliberate consumers are:
 Everywhere else A/B are not consumed, so the platform fallback performs the
 contract's “A = select, B = back”.  This was confirmed against the A17 sources
 above; the real RP5 button path is exercised in the device checklist with
-`sendevent` on the gamepad evdev node (§8.15), not with `input keyevent`.
+`sendevent` on the gamepad evdev node (§8.18), not with `input keyevent`.
 
 The QS dialogs are ordinary focusable views in a `TYPE_QS_DIALOG` window, so the
 same D-pad/A/B rules apply.  In the QS panel, D-pad focus is managed by
@@ -405,6 +430,9 @@ Read/written exactly as specified in `docs/phase5.md`:
 * `ashfall.status.fan.{temp,pct,rpm,safety}`
 * `persist.ashfall.led.{mode,color_left,color_right,sync,brightness,speed}`
 * `ashfall.perf.throttle_override`, `persist.ashfall.perf.throttle_override_permanent`
+* `persist.ashfall.perf.gpu_max_mhz` (written by this app only)
+* `ashfall.status.perf.{gpu_max_mhz,gpu_oc}` (read only; `ashfall-hwd` is the
+  single writer; `docs/phase6.md` §3)
 * `persist.ashfall.pad.{deadzone_inner,deadzone_outer,trigger_deadzone}`
 * `/dev/socket/ashfall_input`: `GET CAL`, `SET CAL`, `RESET CAL`, `RAW ON/OFF`
 
@@ -489,7 +517,7 @@ Screenshots (all 1920×1080; light and dark):
   “Preset 1”.  (The emulator has no RP5 pad; it was driven with
   `KEYCODE_DPAD_CENTER`/`BACK`.  The hardware A/B path is the platform
   `Generic.kcm` fallback described in §4.1 and is verified on the RP5 in
-  §8.15.)
+  §8.18.)
 * Fresh state: with `persist.ashfall.fan.preset` empty and mode `smart`, the
   Fan page, the Handheld summary and the QS tile all resolve to
   **Smart (default)**; editing the Smart curve with the empty id wrote
@@ -672,6 +700,97 @@ The user-test changes of `docs/phase5.md` §6.3 were implemented on
   serialized device slot; the items are in the §8 checklist.  No device state
   was modified by this change.
 
+### 6.7 Phase-6 GPU max frequency (#111)
+
+Emulator preview only (native worker owns the RP5).  `Retroid_Pocket_5` AVD,
+Android 13, 1920×1080, `wm density 360`, preview APK `org.ashfall.parts -r`
+debug build from `preview/prepare.sh && gradle :app:assembleDebug`.  The stock
+emulator has neither `ashfall-hwd` nor the `ashfall.*` property contexts, so
+both the in-process fake daemon (`tools/mock/gpu-perf.sh on` →
+`debug.ashfall.parts.gpu_mock=1`) and the real property path (emulator
+temporarily permissive with `setenforce 0`, because a debug `/data` APK cannot
+write `persist.*`; restored to enforcing afterwards) were exercised.  The
+native daemon and DTB are out of scope for this change.
+
+* **Selector content.**  Fan → Performance shows **GPU max frequency** directly
+  below **Override throttling**.  Activating it opens the single-choice dialog
+  with `670 MHz (stock, default)`, `765 MHz`, `850 MHz`, `940 MHz` and
+  `1000 MHz (experimental)`; the stock entry is checked on a fresh install.
+* **Immediate steps.**  Selecting 940 wrote only
+  `persist.ashfall.perf.gpu_max_mhz=940` (mock off, permissive) and the daemon
+  status values stayed at the values set for the test (`670`/`0`, i.e. the app
+  did not write them).  The row then showed
+  `Requested 940 MHz — the daemon reports 670 MHz; the OC step is not
+  available.` plus the fan/thermal warning because the emulator has no OC table.
+  With the mock on it showed `940 MHz · overclock` and the same warning.
+* **1000 MHz confirmation.**  Selecting 1000 opened `Run the GPU at 1000 MHz?`
+  with the thermal/stability body.  Cancel kept 940; **Use 1000 MHz** wrote
+  `persist.ashfall.perf.gpu_max_mhz=1000` and left the status properties
+  untouched.  The dialog is a platform `AlertDialog`, so D-pad/A/B work there
+  like every other AshFall dialog.
+* **Clamp summary.**  After enabling **Override throttling** (mock), the row
+  changed to `Requested 1000 MHz — the throttle override clamps the GPU to stock
+  670 MHz.` and dropped the generic warning.  The same text appeared on the real
+  property path after setting `ashfall.perf.throttle_override=1` and
+  `ashfall.status.perf.gpu_oc=0` while the request was 940/1000.
+* **Status variants.**  With `ashfall.status.perf.gpu_oc=-1` the row reads
+  `Requested 940 MHz — the GPU clock interface is unavailable on this kernel.`
+  With `gpu_oc=1` and an actual cap below the request (`850`/`940`) it reads
+  `Actual 850 MHz · requested 940 MHz`.  An invalid request
+  (`persist…=12345`) reads as the stock 670, per the contract.  Before the first
+  publish the row instead says that `ashfall-hwd` is not reporting.
+* **Gamepad / theme.**  D-pad focus reaches the GPU row and skips the
+  non-selectable footer; `DPAD_CENTER` opened the list and selected a step.
+  The row and dialog render in day and night mode with the Settings summary
+  style; no layout or string regressions were seen in the dump.
+* **Mock lifecycle.**  `tools/mock/gpu-perf.sh on|off|status` toggles the flag
+  and force-stops the app; the fake daemon state starts at stock / override off
+  and lives only in the app process.  It clamps a request to the highest
+  available table step (305/400/441/490/525/587/670/765/850/940/1000) and to
+  670 while the override is active, matching `docs/phase6.md` §3.
+
+### 6.8 GPU stress saturation (#118)
+
+The 940 MHz cap was applied correctly; the workload was not.  `GpuWorker`
+rendered one 512×512 triangle with a 64-iteration shader and a `glFinish()` per
+loop, so the GPU finished each draw faster than the CPU/EGL driver could submit
+the next (~82 % busy).  The governor's ramp threshold was never reached:
+`cur_freq` stayed at 587 MHz and `devfreq/trans_stat` showed only 305→587 since
+boot.  `GpuWorker` now renders **1920×1080** (clamped to the EGL config limit;
+one retry at half size, never below 640×360) with **four queued full-screen
+passes** and a **128-iteration dependent sin/cos shader** per submission.
+`glFinish()`, the `busy * (100 - pct) / pct` duty cycle, the ten-minute
+auto-stop, the `onPause` stop and the CPU workers are unchanged; only the GL
+thread is raised to `THREAD_PRIORITY_DISPLAY` so a 100 % CPU slider cannot
+delay submission.
+
+Emulator preview (`Poco_X6_Pro` AVD, API 36, SwiftShader; built with
+`preview/prepare.sh && gradle :app:assembleDebug`): at GPU 100 % `logcat -s
+AshFallParts` reported `GPU stress: 1920x1080 pbuffer, 4 passes, 128 shader
+iterations, renderer …SwiftShader` and frames of 2.6–3.7 s with `submit
+0.02–0.03 ms`, i.e. submission is ~0.001 % of the frame and the GPU is the
+bottleneck (SwiftShader is software, so the absolute time says nothing about
+the RP5).  50 % kept the same per-frame time with an equal duty sleep; 0 % and
+leaving the page stopped every `ashfall-stress-*` thread; CPU 100 % + GPU 100 %
+ran together, and the GPU kept rendering with CPU back at 0.  No shader/EGL
+warnings, no crash, and the preview APK was uninstalled afterwards.  The real
+saturation check is the RP5 run below (checklist item 8).
+
+**RP5 procedure** (after the orchestrator flashes the image with the 940 cap):
+
+1. `logcat -s AshFallParts` in one shell, GPU slider 100 %, CPU 0.  Expect one
+   `GPU stress: 1920x1080 …` line per start and a `ms/frame` line every 5 s
+   whose `submit` is tens of microseconds and whose `gpu` is the frame time.
+2. `cat /sys/class/kgsl/kgsl-3d0/gpu_busy_percentage` → 95–100 % (was 71–85 %).
+3. `cat /sys/class/kgsl/kgsl-3d0/devfreq/cur_freq` → `940000000`;
+   `devfreq/trans_stat` shows 670/765/850/940 and `gpu_clock_stats` gains time
+   at those steps (previously only 305/587).
+4. GPU 50 % → busy roughly halves.  CPU 100 % on top → the GPU figures do not
+   drop (the GL thread is above the CPU workers).
+5. Both to 0, then Back out of the page → `gpu_busy_percentage` returns to
+   idle and `cur_freq` to 305 MHz; the same happens through the ten-minute
+   auto-stop.
+
 ## 7. Build integration
 
 `aosp/vendor/ashfall/apps.mk` gets a separate block (kept apart from the
@@ -718,36 +837,49 @@ trampoline and the two `TileService`s.
    writes `ashfall.perf.throttle_override=1`, and a reboot clears it.  Press the
    version row seven times, enable **Keep after reboot** and confirm the
    permanent property; turn the visible switch off afterwards.
-7. Stress test: on the curve page set CPU 50 % / GPU 50 % and watch the
-   temperature rise; set both to 0, leave the page and confirm the load stops
-   (`top`/GPU idle) and the countdown/stop after 10 minutes works.
-8. Lighting: switch on/off, change target (Both/Left/Right), pick a preset and
+7. GPU max frequency (RP5, after the phase-6 vendor_boot/daemon is flashed):
+   the row shows 670 stock; select 765/850/940 and confirm
+   `persist.ashfall.perf.gpu_max_mhz` plus `ashfall.status.perf.gpu_max_mhz`
+   follow and `gpuclk` reaches the step; select 1000, cancel once, then accept
+   and confirm the confirmation text; enable **Override throttling** and verify
+   the row switches to the stock-clamp summary and `gpu_oc=0`, then turn the
+   override off.  Also check `gpu_oc=-1` (unavailable) reads as a clear message.
+8. Stress test: on the curve page set GPU 100 % / CPU 0 and confirm
+   `gpu_busy_percentage` (kgsl-3d0) is 95–100 %, `devfreq/cur_freq` reaches the
+   selected cap (940 MHz on the RP5) and `devfreq/trans_stat` /
+   `gpu_clock_stats` gain 940 time; the `AshFallParts` log line shows
+   `1920x1080 … 4 passes` with `submit` ≪ `gpu` ms.  Set GPU 50 % and confirm
+   roughly half the load, add CPU 100 % and confirm the GPU stays saturated,
+   then set both to 0 and confirm the clocks drop back; leave the page and
+   confirm the load stops (`top`/GPU idle) and the countdown/stop after 10
+   minutes works.
+9. Lighting: switch on/off, change target (Both/Left/Right), pick a preset and
    a custom colour (it applies as you drag the hue/square, no Set), brightness,
    each effect and speed; check the rings live and that Both uses the same
    colour on both sticks.  Confirm there is no screen-off option.
-9. Controller: open the tester with the pad; move sticks (dots inside the
+10. Controller: open the tester with the pad; move sticks (dots inside the
    deadzone rings), press every button/shoulder/trigger; verify the raw overlay
    via `RAW ON` shows data.
-10. Calibration: run the wizard, save, verify `GET CAL` reports `user`; reset to
+11. Calibration: run the wizard, save, verify `GET CAL` reports `user`; reset to
     factory and verify `factory`; confirm the factory file is unchanged.
-11. Deadzones: set inner 15 %, outer 10 %, trigger 10 %; verify in the tester
+12. Deadzones: set inner 15 %, outer 10 %, trigger 10 %; verify in the tester
     and in another app/emulator that the deadzone is applied by the daemon.
-12. Quick Settings: add both tiles; check the Fan label is the active preset
+13. Quick Settings: add both tiles; check the Fan label is the active preset
     name and the subtitle the temperature; tap each tile, change something,
     check it applies live, that the Done button is fully visible and that there
     is no stray double shadow; long-press each tile opens the matching page.
-13. Modal dialogs: with a QS dialog open, push D-pad and A/B and confirm focus
+14. Modal dialogs: with a QS dialog open, push D-pad and A/B and confirm focus
     never moves into the Quick Settings panel behind it; do the same for the
     in-app colour picker.
-14. Lock the device and tap a tile: it must ask for unlock before opening the
+15. Lock the device and tap a tile: it must ask for unlock before opening the
     dialog.
-15. Light/dark/pure black: switch the system theme (including LineageOS pure
+16. Light/dark/pure black: switch the system theme (including LineageOS pure
     black) and check the pages match the rest of Settings, and that the dialogs
     and the QS dialogs follow it.
-16. Gamepad only: complete every flow with D-pad/A/B (no touch), including
+17. Gamepad only: complete every flow with D-pad/A/B (no touch), including
     leaving the curve editor graph with D-pad down and operating the stress
     sliders.
-17. Real A/B path: on the RP5 send the face buttons with
+18. Real A/B path: on the RP5 send the face buttons with
     `sendevent` on the “AshFall RP5 Gamepad” evdev node (not
     `input keyevent`) and confirm A selects on every page, both QS dialogs and
     the Settings homepage row, and B dismisses dialogs / leaves pages.  This
@@ -782,6 +914,21 @@ trampoline and the two `TileService`s.
   in-app Lighting page uses the standalone `ColorPickerDialog`.
 * The loop `tools/mock/` and `preview/` are development tooling; they are not
   installed into the image and are not referenced by `Android.bp`.
+* **GPU/Performance preview mock.**  The stock emulator image has no
+  `ashfall-hwd` and rejects the `ashfall.*`/`persist.ashfall.*` property names
+  (no property contexts), so `hw/Perf` has an opt-in in-process fake daemon for
+  the Performance section.  It is enabled with
+  `tools/mock/gpu-perf.sh on` (`adb shell setprop
+  debug.ashfall.parts.gpu_mock 1`, a non-persistent `debug.` property), which
+  also force-stops the app so the state starts at stock / override off.  The
+  mock implements the phase-6 rules for testing: available table steps
+  305/400/441/490/525/587/670/765/850/940/1000, clamp to the highest step
+  `<=` request, and clamp to 670 with `gpu_oc=0` while the throttle override is
+  active.  It never touches the real properties, is off by default, and is
+  irrelevant in production: `Perf.mockEnabled()` also requires
+  `Build.TYPE` `userdebug`/`eng`, so a user build ignores the flag entirely.
+  The row adds a `Preview mock: …` line while it is active so a screenshot
+  cannot be mistaken for a daemon reading.
 * **Theme parity uses SettingsLib's colours explicitly.**  The app does not
   invent a grey and does not rely on `?android:attr/colorBackground` (in this
   app that resolved to black, not the Settings surface — issue #97).
@@ -806,11 +953,14 @@ trampoline and the two `TileService`s.
   consuming the gamepad keys in the app.
 * **Stress test scope.**  It is intentional load, not a benchmark: the CPU
   side uses a duty cycle per core and the GPU side renders an offscreen shader
-  with `glFinish()`, so the reported percentage is approximate.  It runs at
-  normal app priority (no `Process.setThreadPriority`), so it can be preempted
-  like any other app; that keeps it safe and is enough to heat the SoC for
-  curve tuning.  A device without a working EGL pbuffer simply produces no GPU
-  load and logs a warning.
+  with `glFinish()`, so the reported percentage is approximate.  The CPU
+  workers run at normal app priority (no `Process.setThreadPriority`), so they
+  can be preempted like any other app work; only the GL submission thread is
+  raised to `THREAD_PRIORITY_DISPLAY`, and only so that a 100 % CPU load cannot
+  starve it (#118) — it blocks in `glFinish()` between frames and is still
+  preemptible.  That keeps it safe and is enough to heat the SoC for curve
+  tuning.  A device without a working EGL pbuffer simply produces no GPU load
+  and logs a warning.
 * **Throttling override is two switches.**  The visible switch writes the
   non-persistent `ashfall.perf.throttle_override`; the hidden one writes
   `persist.ashfall.perf.throttle_override_permanent` and also enables the
@@ -834,3 +984,11 @@ trampoline and the two `TileService`s.
   still reads the removed `persist.ashfall.fan.safety_c` and must switch to its
   fixed 90 °C/80 °C last-resort rule; the app no longer writes that property.
   These are merge/sequencing items, not app defects.
+* **Phase-6 GPU dependency (outside this app).**  `persist.ashfall.perf.gpu_max_mhz`
+  already falls under the `persist.ashfall.perf.` → `ashfall_perf_prop` prefix,
+  so no new property context is needed.  The app writes only that request; the
+  status shown in the row arrives from the native worker's `ashfall-hwd`
+  (`ashfall.status.perf.gpu_max_mhz` / `gpu_oc`) and its DTB OC table.  Until
+  that lands the row reads "the GPU cap is not available" or the
+  "OC step is not available" summary on a stock device; this app is testable
+  without it via the preview mock (§6.7).

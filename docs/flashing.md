@@ -21,6 +21,15 @@ wraps all of that.
 > - Ask the user before changing anything on the build host outside the
 >   `ashfall-dev` container (`/etc/udev/rules.d` etc.). Nothing here needs it:
 >   the USB node already carries a `rw` ACL for the logged-in user.
+> - **One `fastboot` session per bootloader-side operation** (issue #54). This
+>   ABL wedges when a new fastboot process opens between transfers or after a
+>   burst of `getvar`s. Build a single command line (`fastboot flash a x flash
+>   b y ... erase userdata set_active a`), run it detached on the build host
+>   with a log + exit file, and do getvars only once, before it. Kill a hung
+>   fastboot with `pkill -x fastboot`, never `pkill -f` (that matches and kills
+>   your own ssh/distrobox command line).
+> - Use `distrobox enter --name ashfall-dev` (as the user), never `podman
+>   exec`/root: root cannot see the USB device after it re-enumerates.
 
 ## 1. Layout
 
@@ -69,7 +78,11 @@ Notes:
   `scripts/device/run.sh recreate` (destroys and recreates the container).
 - Overrides (in `config/ashfall.local.conf` or the environment): `DEV_BOX`,
   `DEV_BOX_IMAGE`, `DEV_BOX_PACKAGES`, `FB_RETRY`, `FB_TRANSITION_TIMEOUT`
-  (per-step mode-transition wait, default 180 s).
+  (per-step mode-transition wait, default 180 s), `DEV_JOBS_DIR` (batch
+  state/logs on the build host, default `$REMOTE_ROOT/device/jobs`),
+  `DEV_FB_BATCH_TIMEOUT` (hard limit per bootloader batch, default 3600 s) and
+  `DEV_FB_STALL_SECONDS` (no-log-growth timeout before `pkill -x fastboot`,
+  default 420 s).
 
 ```bash
 scripts/device/run.sh adb devices -l
@@ -129,6 +142,13 @@ for variables that work a second later, and hammering it eventually dropped the
 device off USB. The scripts retry each variable (3x), space out the queries and
 stop early when the device disappears (`< waiting for any device >`). If most
 values fail: unplug/re-plug, hard power-off (15 s), re-enter fastboot.
+
+**Never interleave getvars with writes.** On 2026-11-13 two `restore-stock.sh`
+runs wedged the ABL: the first hung on `Sending 'boot_a'` right after eight
+per-partition `partition-size:*` getvars, the second on `Sending
+'init_boot_a'`; both needed a 15 s power-off (issue #54). A restore is now one
+fastboot process, and image sizes are checked against the documented stock
+table (`docs/stock/device-live/README.md`) instead of querying the bootloader.
 
 The first live snapshot of the stock device is committed under
 [`docs/stock/device-live/`](stock/device-live/) -- see its README for what was
@@ -201,13 +221,18 @@ Sequence:
    **256-byte empty vbmeta with flags=3** (hashtree + verification disabled) is
    generated with python3 and flashed instead. Either way AVB is off for the
    unsigned GSI -- without this the bootloader refuses to boot it.
-7. **Wipe (optional)** -- `fastboot erase userdata` (0.09 s observed on
-   2026-11-13; the guide's older ~351 s figure does not apply here -- do not
-   wait minutes for it) and `fastboot erase metadata` (vold regenerates
-   metadata-encryption keys on the next boot). Runs in the bootloader, not
-   fastbootd.
-8. **Slot** -- `set-active <slot>` when the target is not the current slot
+7. **Wipe (optional)** -- `fastboot erase userdata` and `fastboot erase
+   metadata` (vold regenerates metadata-encryption keys on the next boot).
+   Runs in the bootloader, not fastbootd. This script only rewrites `system`
+   inside super, so the erase stays in the seconds range (0.09 s observed
+   2026-11-13); the ~351 s case is a physical super rewrite in
+   `restore-stock.sh`.
+8. **Slot** -- `set_active <slot>` when the target is not the current slot
    (takes effect on the next boot).
+
+The bootloader steps (7 + 8) are merged into **one detached `fastboot`
+process** with a log + exit file (issue #54). Do not insert a separate
+fastboot/getvar call between them; that is what wedges the ABL.
 
 Hard blocks: every partition name is checked against the NEVER-flash list before
 any write. The script only writes `system` and `vbmeta`; it deletes the logical
@@ -222,16 +247,18 @@ Logs: `out/device/<ts>/flash-gsi.log`.
 | Step | Time |
 |---|---|
 | small partitions | seconds |
-| `super` (12 GiB stock) | ~90 s |
-| `fastboot erase userdata` | **0.09 s** (observed 2026-11-13; the guide's older ~351 s figure does not apply here) |
+| `super` (12 GiB stock) | ~90 s (7 sparse chunks, ~19 s each via `max-download-size`) |
+| `fastboot erase userdata` | **~351 s after a physical super flash**, **0.09 s otherwise** (observed 2026-11-13, issue #54) |
 | `flash system` (2--3 GiB GSI) | 1--3 min |
+| whole `restore-stock.sh` batch (super + wipe + set_active) | **~492 s** (issue #54) |
 
 ### Common failures
 
 | Symptom | Meaning / fix |
 |---|---|
 | `getvar ... FAILED (remote: 'GetVar Variable Not found')` on everything | flaky/wedged fastboot session -- retries, then hard power-off 15 s and re-enter fastboot |
-| `fastboot devices` works but commands hang | wedged bootloader -- same |
+| `fastboot devices` works but commands hang (especially right after `Sending ...` or a getvar burst) | wedged bootloader -- this is issue #54: use one fastboot process per bootloader operation, then hard power-off 15 s and re-enter fastboot |
+| batch says `no output for 420s` | script killed the hung fastboot with `pkill -x fastboot`; the ABL may still need a 15 s hard power-off |
 | `Rebooting into fastboot  FAILED (remote: 'unknown command')` | this ABL has no `reboot fastboot`: from the bootloader run `fastboot reboot recovery`, wait until `adb devices` shows `recovery`, then `adb reboot fastboot` |
 | `Not enough space to resize partition` | the budget was mis-read (flaky getvar) or `--keep-product` is set; re-run or free `product_<slot>`/`system_ext_<slot>` |
 | image is EROFS | supported (stock 5.15 kernel); ext4 is only a fallback |
@@ -324,8 +351,23 @@ relevant to `flash-gsi.sh`. `fastboot reboot fastboot` is not used here (this
 ABL rejects it anyway). Accepted image names: `lun4_<part>_<slot>.bin`,
 `lun0_<part>_<slot>.bin`, `<part>_<slot>.img`, `<part>.img`, `<part>.bin`.
 
-`--wipe` erases userdata in **seconds** on this device (0.09 s observed
-2026-11-13), not the guide's older ~351 s figure.
+**One fastboot session for the whole restore** (issue #54). Everything --
+every flash, `erase userdata`/`erase metadata` (with `--wipe`), `set_active`
+and `reboot` -- becomes a single `fastboot` command line, started detached on
+the build host (`setsid nohup distrobox enter --name ashfall-dev ...`) with a
+log and an `exit` file. The command returns immediately and the script follows
+the log; an SSH drop does not kill the restore. Image sizes are checked against
+the documented stock partition table, not `partition-size:*` getvars, so the
+only getvars are the three preflight reads (`mode`, `product`, `unlocked`)
+before the batch. If the log stops growing for `DEV_FB_STALL_SECONDS` (default
+420 s, above the 351 s userdata erase) or the hard `DEV_FB_BATCH_TIMEOUT`
+(default 3600 s) is hit, the script runs `pkill -x fastboot` inside the
+container and tells you to hard power-off the ABL; it never uses `pkill -f`.
+
+`--wipe` erases userdata in **~351 s after a physical super flash** (the common
+case here), and in ~0.09 s when super was not rewritten (observed 2026-11-13).
+Do not interrupt a long `Erasing 'userdata'`; the log + exit file makes waiting
+safe.
 
 It never touches `devinfo`, `persist`, radio/NV data or any other device-unique
 partition. If the device is in the "U-Boot / Loader Mode" state described in the
