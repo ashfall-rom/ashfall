@@ -6,10 +6,11 @@
 # The stock 5.15.148 GKI kernel is untouched: the GPU frequency/voltage table
 # lives in the vendor_boot DTB (`qcom,kgsl-3d0@3d00000` ->
 # `qcom,gpu-pwrlevel-bins`).  This script unpacks the stock vendor_boot, splits
-# its multi-FDT dtb payload, applies the OC table to every 670 MHz speed-bin
-# table, and repacks the image with the original vendor ramdisk, bootconfig and
-# header fields.  Nothing here is an Android build: it runs host-side with the
-# AOSP `unpack_bootimg.py`/`mkbootimg.py` and the prebuilt `dtc`.
+# its multi-FDT dtb payload, applies the final 8-entry OC table to every 670 MHz
+# speed-bin table, and repacks the image with the original vendor ramdisk,
+# bootconfig and header fields.  Nothing here is an Android build: it runs
+# host-side with the AOSP `unpack_bootimg.py`/`mkbootimg.py` and the prebuilt
+# `dtc`.
 #
 # Usage:
 #   scripts/gpu/build-vendor-boot.sh [options]
@@ -23,10 +24,10 @@
 #   --active-dtb N      FDT index used for the review DTS (default: auto-match
 #                       the RP5 board: msm-id 0x164/0x20001, pmic-id 1e 20 1f 21)
 #   --extra-step MHZ:LEVEL
-#                       DEBUG ONLY: add exactly these steps instead of the full
-#                       OC table (repeatable), e.g. --extra-step 940:384
-#   --drop-step MHZ     DEBUG ONLY: drop these stock steps to stay within the
-#                       RPMh/KGSL level limit (repeatable), e.g. --drop-step 400
+#                       debug: replace the default OC steps with exactly these
+#                       steps (repeatable), e.g. --extra-step 940:384
+#   --drop-step MHZ     debug: drop these stock steps instead of the default
+#                       525/490/441.6/400 set (repeatable), e.g. --drop-step 400
 #   --dtc PATH          dtc binary (default: AOSP prebuilt)
 #   --mkbootimg DIR     AOSP system/tools/mkbootimg directory
 #   --keep-work         keep the remote work directory (decompiled DTS, logs)
@@ -42,10 +43,13 @@
 # ASH_GPU_REMOTE=1 and pulls the artifacts back to out/gpu/<id>/.
 #
 # Output:
-#   out/gpu/<id>/vendor_boot.img   the image to flash (padded to the partition)
-#   out/gpu/<id>/manifest.json     stock/output/DTB SHA-256, header comparison,
-#                                  per-FDT board/bin summary, tool versions
-#   out/gpu/<id>/SHA256SUMS
+#   out/gpu/<id>/vendor_boot.img   content-only image to flash (issue #54)
+#   out/gpu/<id>/vendor_boot-padded.img  zero-padded partition image
+#                                  (fit proof / backup; the RP5 ABL wedges on
+#                                  a 96 MiB `Sending 'vendor_boot'`)
+#   out/gpu/<id>/manifest.json     stock/output/padded/DTB SHA-256, header
+#                                  comparison, per-FDT board/bin summary, tools
+#   out/gpu/<id>/SHA256SUMS        hashes of both images
 #   out/gpu/<id>/header-*.txt|json, dtb-verify.json, active-{stock,oc}.dts,
 #   out/gpu/<id>/dts/*.dts         every board DTB, before and after
 #
@@ -220,13 +224,17 @@ PY
   }
 
   build_image "$work/pass1/dtb-oc.bin" "$work/vendor_boot.raw.img"
+  # The content-only image is what gets flashed: the 96 MiB zero-padded
+  # partition image wedges the RP5 ABL on `Sending 'vendor_boot'` (issue #54).
+  # Keep the padded image for the partition-fit proof and as a backup.
   cp "$work/vendor_boot.raw.img" "$work/vendor_boot.img"
-  truncate -s "$partition" "$work/vendor_boot.img"
+  cp "$work/vendor_boot.raw.img" "$work/vendor_boot-padded.img"
+  truncate -s "$partition" "$work/vendor_boot-padded.img"
 
-  python3 "$HERE/vb_image.py" compare --stock "$stock" --out "$work/vendor_boot.img" \
-    --partition-size "$partition" --json "$work/image-compare.json" \
-    >"$work/image-compare.txt"
-  ok "vendor_boot header/ramdisk/bootconfig preserved; image fits $partition bytes"
+  python3 "$HERE/vb_image.py" compare --stock "$stock" \
+    --out "$work/vendor_boot-padded.img" --partition-size "$partition" \
+    --json "$work/image-compare.json" >"$work/image-compare.txt"
+  ok "content-only + padded images built; header/ramdisk/bootconfig preserved"
 
   # --- reproducible second pass --------------------------------------------
   local repro=skipped
@@ -271,10 +279,12 @@ PY
   cp "$work/pass1/dts/$active_name.oc.dts" "$art/active-oc.dts"
 
   # --- manifest -------------------------------------------------------------
-  local out_sha out_size dtb_sha dtb_stock_sha dtb_stock_size dtb_size
+  local out_sha out_size padded_sha padded_size dtb_sha dtb_stock_sha dtb_stock_size dtb_size
   local debug_extra debug_drop
   out_sha=$(sha256sum "$work/vendor_boot.img" | awk '{print $1}')
   out_size=$(stat -c %s "$work/vendor_boot.img")
+  padded_sha=$(sha256sum "$work/vendor_boot-padded.img" | awk '{print $1}')
+  padded_size=$(stat -c %s "$work/vendor_boot-padded.img")
   dtb_stock_sha=$(sha256sum "$work/unpack/dtb" | awk '{print $1}')
   dtb_stock_size=$(stat -c %s "$work/unpack/dtb")
   dtb_sha=$(sha256sum "$work/pass1/dtb-oc.bin" | awk '{print $1}')
@@ -283,14 +293,15 @@ PY
   debug_drop=$(IFS=,; printf '%s' "${DROP_STEPS[*]}")
 
   python3 - "$work" "$art" "$stock" "$stock_sha" "$stock_size" \
-      "$id" "$partition" "$out_sha" "$out_size" \
+      "$id" "$partition" "$out_sha" "$out_size" "$padded_sha" "$padded_size" \
       "$dtb_stock_sha" "$dtb_stock_size" "$dtb_sha" "$dtb_size" \
       "$repro" "$active" "$dtc" "$mkbootimg_dir" "$fdt_count" \
       "$debug_extra" "$debug_drop" <<'PY'
 import json, sys
 (work, art, stock, stock_sha, stock_size, artifact_id, partition, out_sha,
- out_size, dtb_stock_sha, dtb_stock_size, dtb_sha, dtb_size, repro, active,
- dtc, mkbootimg_dir, fdt_count, debug_extra, debug_drop) = sys.argv[1:21]
+ out_size, padded_sha, padded_size, dtb_stock_sha, dtb_stock_size, dtb_sha,
+ dtb_size, repro, active, dtc, mkbootimg_dir, fdt_count, debug_extra,
+ debug_drop) = sys.argv[1:23]
 
 
 def load(name, default=None):
@@ -313,7 +324,10 @@ manifest = {
     "debug": debug,
     "stock": {"path": stock, "size": int(stock_size), "sha256": stock_sha},
     "output": {"file": "vendor_boot.img", "size": int(out_size),
-               "sha256": out_sha, "partition_size": int(partition)},
+               "sha256": out_sha, "content_only": True,
+               "flash": "content-only image (issue #54)"},
+    "padded": {"file": "vendor_boot-padded.img", "size": int(padded_size),
+               "sha256": padded_sha, "partition_size": int(partition)},
     "dtb": {"stock_sha256": dtb_stock_sha, "stock_size": int(dtb_stock_size),
             "out_sha256": dtb_sha, "out_size": int(dtb_size),
             "fdts": int(fdt_count),
@@ -334,14 +348,17 @@ PY
   python3 "$HERE/dtb_oc.py" info --blob "$work/unpack/dtb" >"$art/dtb-stock-info.json"
   python3 "$HERE/dtb_oc.py" info --blob "$work/pass1/dtb-oc.bin" >"$art/dtb-oc-info.json"
 
-  cp "$work/vendor_boot.img" "$art/vendor_boot.img"
-  (cd "$art" && sha256sum vendor_boot.img > SHA256SUMS)
+  cp "$work/vendor_boot.img" "$work/vendor_boot-padded.img" "$art/"
+  (cd "$art" && sha256sum vendor_boot.img vendor_boot-padded.img > SHA256SUMS)
   ((keep_work)) || rm -rf "$work"
 
   {
-    printf 'image:         %s/vendor_boot.img\n' "$art"
+    printf 'flash image:   %s/vendor_boot.img (content-only, issue #54)\n' "$art"
     printf 'sha256:        %s\n' "$out_sha"
-    printf 'size:          %s bytes (partition %s)\n' "$out_size" "$partition"
+    printf 'size:          %s bytes\n' "$out_size"
+    printf 'padded image:  %s/vendor_boot-padded.img\n' "$art"
+    printf 'padded sha256: %s\n' "$padded_sha"
+    printf 'padded size:   %s bytes (partition %s)\n' "$padded_size" "$partition"
     printf 'stock sha256:  %s\n' "$stock_sha"
     printf 'dtb sha256:    %s (%s -> %s bytes)\n' "$dtb_sha" "$dtb_stock_size" "$dtb_size"
     if [[ -n $debug_extra || -n $debug_drop ]]; then

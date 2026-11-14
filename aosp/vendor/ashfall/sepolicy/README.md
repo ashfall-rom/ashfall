@@ -62,3 +62,10 @@ merged into the contexts the image build and libselinux use.  The old
   needs `lnk_file read` on `vendor_sysfs_kgsl`, which system_ext cannot grant
   (issue #115).  Verify on the device after the system build with `ls -Z` on
   the three files (docs/rp5/gpu.md §4.2/§7).
+* **Vendor perf HAL exception (#116).**  The stock `min_freq`/`max_freq` label
+  is `vendor_sysfs_kgsl`, and `vendor_hal_perf_default` (PERFD-SERVER) has
+  `rw_file_perms` there.  The relabel therefore denies the vendor perf HAL in
+  an enforcing build (`PERFD-SERVER` open `ashfall_gpu_sysfs`; permissive today).
+  Do not merge an enforcing build with this unresolved.  See
+  docs/rp5/gpu.md §4.1 for the vendor-safe options (vendor policy allow, or a
+  `system_app`/`system_server` bridge to `vendor.qti.hardware.perf@2.3`).

@@ -7,11 +7,14 @@ is **not** a single FDT: it is a concatenation of one FDT per board variant
 ``qcom,pmic-id``).  Six of them carry ``qcom,gpu-pwrlevel-bins``; one variant
 only has the legacy ``qcom,gpu-pwrlevels`` node and is left byte-identical.
 
-The OC table is added to every speed-bin table whose stock top is 670 MHz
-(``-0``, ``-1``, ``-3`` and ``-4`` on this image); the 525 MHz bin (``-2``)
-stays stock.  The transformation is a deterministic DTS text rewrite; this
-module also parses FDT blobs so the result can be verified structurally
-(all non-GPU nodes/properties unchanged) without trusting the text round-trip.
+The final OC table is a **replacement** table: every speed-bin table whose
+stock top is 670 MHz (``-0``, ``-1``, ``-3`` and ``-4`` on this image) becomes
+8 entries (``1000/940/850/765/670/587/305/0``).  The 525/490/441.6/400 MHz
+stock steps are dropped because the RPMh ``gfx.lvl`` table only covers
+``num_pwrlevels + 1`` DCVS votes (issue #116).  The 525 MHz bin (``-2``) stays
+stock.  The transformation is a deterministic DTS text rewrite; this module
+also parses FDT blobs so the result can be verified structurally (all non-GPU
+nodes/properties unchanged) without trusting the text round-trip.
 
 Subcommands::
 
@@ -48,12 +51,14 @@ OC_ACD_LEVEL = 0x802B5FFD
 OC_BUS_FREQ = 0x0B
 STOCK_TOP_HZ = 670_000_000
 STOCK_SLOW_TOP_HZ = 525_000_000
-# The exact stock 670-top table (docs/phase6.md section 2), used by the debug
-# --extra-step/--drop-step path to build and verify a replacement table.
+# The stock 670-top table (docs/phase6.md section 2).  The final OC table keeps
+# 8 entries: the four OC steps replace 525/490/441.6/400 MHz so the RPMh
+# gfx.lvl vote count stays at the stock 9 (issue #116).
 STOCK_TOP_FREQS_HZ = (
     670_000_000, 587_000_000, 525_000_000, 490_000_000,
     441_600_000, 400_000_000, 305_000_000, 0,
 )
+DEFAULT_DROP_HZ = (525_000_000, 490_000_000, 441_600_000, 400_000_000)
 
 
 BINS_NODE = "qcom,gpu-pwrlevel-bins"
@@ -333,114 +338,6 @@ def _check_entry_table(entries: list[Entry], where: str) -> None:
         raise DtbError(f"{where}: reg is not contiguous from 0: {regs}")
 
 
-def _check_oc_table(entries: list[Entry], where: str) -> None:
-    """Validate an already-overclocked table (idempotent re-apply)."""
-    _check_entry_table(entries, where)
-    expected = [freq * 1_000_000 for freq, _ in OC_STEPS]
-    got = [entry.freq for entry in entries[:len(expected)]]
-    if got != expected:
-        raise DtbError(f"{where}: OC steps are {got}, expected {expected}")
-    for entry, (freq, level) in zip(entries, OC_STEPS):
-        if entry.value("qcom,level") != level:
-            raise DtbError(f"{where}: {freq // 1_000_000} MHz level "
-                           f"{entry.value('qcom,level')} != {level}")
-        if entry.value("qcom,acd-level") != OC_ACD_LEVEL:
-            raise DtbError(f"{where}: {freq // 1_000_000} MHz acd-level mismatch")
-        for bus in ("qcom,bus-freq", "qcom,bus-min", "qcom,bus-max"):
-            if entry.value(bus) != OC_BUS_FREQ:
-                raise DtbError(f"{where}: {freq // 1_000_000} MHz {bus} mismatch")
-
-
-def _transform_bin(lines: list[str], name: str, open_idx: int, close_idx: int,
-                   indent: str) -> tuple[list[str], BinReport]:
-    children = direct_children(lines, open_idx, close_idx, indent)
-    entries = [parse_entry(lines, child[1], child[2], child[3]) for child in children]
-    suffix = name.rsplit("-", 1)[-1]
-    speed_bin = get_cell(lines[open_idx + 1:close_idx], "qcom,speed-bin")
-    initial = get_cell(lines[open_idx + 1:close_idx], "qcom,initial-pwrlevel")
-    throttle = get_cell(lines[open_idx + 1:close_idx], "qcom,throttle-pwrlevel")
-    report = BinReport(
-        suffix=suffix,
-        speed_bin=-1 if speed_bin is None else speed_bin,
-        top_hz=entries[0].freq if entries else -1,
-        entries_before=len(entries),
-        entries_after=len(entries),
-        initial_before=initial,
-        initial_after=initial,
-        throttle_before=throttle,
-        throttle_after=throttle,
-    )
-
-    if not entries:
-        raise DtbError(f"speed bin {suffix}: empty table")
-    _check_entry_table(entries, f"speed bin {suffix}")
-
-    oc_freqs = [freq * 1_000_000 for freq, _ in OC_STEPS]
-    present = [entry.freq for entry in entries if entry.freq in set(oc_freqs)]
-    if present:
-        if present != oc_freqs:
-            raise DtbError(f"speed bin {suffix}: partial OC table ({present}); "
-                           f"refusing to guess")
-        # Re-applying to an already-overclocked table must be a no-op.
-        _check_oc_table(entries, f"speed bin {suffix}")
-        if initial != len(entries) - 2:
-            raise DtbError(
-                f"speed bin {suffix}: already OC but initial-pwrlevel {initial} "
-                f"!= {len(entries) - 2} (boot level must be 305 MHz)")
-        if throttle is None:
-            raise DtbError(f"speed bin {suffix}: already OC but no throttle-pwrlevel")
-        report.already_applied = True
-        report.oc_added = True
-        return lines[open_idx:close_idx + 1], report
-
-    if entries[0].freq == STOCK_SLOW_TOP_HZ:
-        report.untouched = True
-        return lines[open_idx:close_idx + 1], report
-
-    if entries[0].freq != STOCK_TOP_HZ:
-        raise DtbError(
-            f"speed bin {suffix}: unexpected stock top {entries[0].freq} Hz "
-            f"(want {STOCK_TOP_HZ} or {STOCK_SLOW_TOP_HZ}); refusing to guess")
-
-
-    if initial is None:
-        raise DtbError(f"speed bin {suffix}: no qcom,initial-pwrlevel")
-    if throttle is None:
-        raise DtbError(f"speed bin {suffix}: no qcom,throttle-pwrlevel")
-    # The 305 MHz boot entry is the second-to-last one (0 MHz off entry last).
-    if initial != len(entries) - 2:
-        raise DtbError(
-            f"speed bin {suffix}: initial-pwrlevel {initial} does not point at "
-            f"the 305 MHz entry ({len(entries) - 2})")
-
-    template = entries[0].props
-    new_blocks: list[list[str]] = []
-    for index, (freq_mhz, level) in enumerate(OC_STEPS):
-        new_blocks.append(_oc_entry(indent + "\t", index, freq_mhz * 1_000_000,
-                                    level, template))
-    shift = len(OC_STEPS)
-    for index, entry in enumerate(entries):
-        new_blocks.append(_renumber_entry(lines, entry, index + shift))
-
-    header = list(lines[open_idx + 1:children[0][1]])
-    while header and not header[-1].strip():
-        header.pop()
-    set_cell(header, "qcom,initial-pwrlevel", initial + shift)
-    set_cell(header, "qcom,throttle-pwrlevel", throttle + shift)
-
-    body: list[str] = list(header) + [""]
-    for block in new_blocks:
-        body.extend(block)
-        body.append("")
-
-    new_block = [lines[open_idx]] + body[:-1] + [lines[close_idx]]
-    report.entries_after = len(entries) + shift
-    report.initial_after = initial + shift
-    report.throttle_after = throttle + shift
-    report.oc_added = True
-    return new_block, report
-
-
 def _check_step_entry(entry: Entry, hz: int, level: int, where: str) -> None:
     mhz = hz // 1_000_000
     if entry.freq != hz:
@@ -586,15 +483,13 @@ def _transform_bin_custom(lines: list[str], name: str, open_idx: int, close_idx:
 
 
 def transform_dts(text: str, steps: tuple[tuple[int, int], ...] = OC_STEPS_HZ,
-                  drop_hz: tuple[int, ...] = ()) -> tuple[str, DtsReport]:
-    """Apply the OC table to every 670-MHz-top speed-bin table in one DTS."""
+                  drop_hz: tuple[int, ...] = DEFAULT_DROP_HZ) -> tuple[str, DtsReport]:
+    """Apply the final 8-entry table to every 670-MHz-top speed-bin table."""
     lines = text.split("\n")
     report = DtsReport()
-    custom = bool(drop_hz) or tuple(steps) != OC_STEPS_HZ
-    if custom:
-        report.custom = True
-        report.steps_hz = [hz for hz, _ in steps]
-        report.drop_hz = list(drop_hz)
+    report.custom = True
+    report.steps_hz = [hz for hz, _ in steps]
+    report.drop_hz = list(drop_hz)
     found = find_node(lines, BINS_NODE)
     if found is None:
         return text, report
@@ -609,12 +504,8 @@ def transform_dts(text: str, steps: tuple[tuple[int, int], ...] = OC_STEPS_HZ,
     for name, bin_open, bin_close, bin_indent in bins:
         if not re.fullmatch(r"qcom,gpu-pwrlevels-\d+", name):
             raise DtbError(f"unexpected child {name!r} of {BINS_NODE}")
-        if custom:
-            new_block, bin_report = _transform_bin_custom(
-                lines, name, bin_open, bin_close, bin_indent, steps, drop_hz)
-        else:
-            new_block, bin_report = _transform_bin(
-                lines, name, bin_open, bin_close, bin_indent)
+        new_block, bin_report = _transform_bin_custom(
+            lines, name, bin_open, bin_close, bin_indent, steps, drop_hz)
         replacements.append((bin_open, bin_close, new_block, bin_report))
         report.bins.append(bin_report)
 
@@ -914,106 +805,6 @@ def _board_ids(fdt: Fdt) -> tuple[list[int], list[int]]:
             cells(fdt.root.get("qcom,pmic-id")))
 
 
-def verify_fdt_pair(index: int, stock_blob: bytes, oc_blob: bytes) -> FdtVerify:
-    stock = parse_fdt(stock_blob)
-    oc = parse_fdt(oc_blob)
-    msm_id, pmic_id = _board_ids(stock)
-    result = FdtVerify(index=index, stock_size=stock.totalsize, oc_size=oc.totalsize,
-                       msm_id=msm_id, pmic_id=pmic_id,
-                       has_bins=gpu_bins(stock) is not None)
-
-    if stock.version != oc.version or stock.last_comp_version != oc.last_comp_version \
-            or stock.boot_cpuid != oc.boot_cpuid:
-        raise DtbError(f"FDT {index}: header fields changed")
-    if stock.memreserve != oc.memreserve:
-        raise DtbError(f"FDT {index}: memreserve map changed: "
-                       f"{stock.memreserve} -> {oc.memreserve}")
-    if masked_signature(stock.root) != masked_signature(oc.root):
-        raise DtbError(f"FDT {index}: a non-GPU node/property changed")
-
-    stock_bins = gpu_bins(stock)
-    oc_bins = gpu_bins(oc)
-    if stock_bins is None:
-        if oc_bins is not None:
-            raise DtbError(f"FDT {index}: GPU bins appeared where stock had none")
-        if stock.blob != oc.blob:
-            raise DtbError(f"FDT {index}: variant without GPU bins is not byte-identical")
-        result.byte_identical = True
-        result.checks.append("no qcom,gpu-pwrlevel-bins; payload kept byte-identical")
-        return result
-
-    if oc_bins is None:
-        raise DtbError(f"FDT {index}: GPU bins disappeared")
-    if [node.name for node in stock_bins.children] != \
-            [node.name for node in oc_bins.children]:
-        raise DtbError(f"FDT {index}: speed-bin tables were added/removed/reordered")
-
-    for stock_bin, oc_bin in zip(stock_bins.children, oc_bins.children):
-        top = bin_top_hz(stock_bin)
-        stock_entries = bin_entries(stock_bin)
-        oc_entries = bin_entries(oc_bin)
-        where = f"FDT {index} {oc_bin.name}"
-        if top == STOCK_SLOW_TOP_HZ:
-            if masked_signature(stock_bin, mask=False) != masked_signature(oc_bin, mask=False):
-                raise DtbError(f"{where}: 525 MHz table was modified")
-            result.bins_slow += 1
-            continue
-        if top != STOCK_TOP_HZ:
-            raise DtbError(f"{where}: unexpected stock top {top} Hz")
-
-        if len(oc_entries) != len(stock_entries) + len(OC_STEPS):
-            raise DtbError(f"{where}: {len(oc_entries)} entries, expected "
-                           f"{len(stock_entries) + len(OC_STEPS)}")
-
-        freqs = [cell_value(node.get("qcom,gpu-freq")) or 0 for node in oc_entries]
-        if freqs != sorted(freqs, reverse=True):
-            raise DtbError(f"{where}: frequencies not descending")
-        if freqs[-1] != 0:
-            raise DtbError(f"{where}: 0 MHz off entry is not last")
-        regs = [cell_value(node.get("reg")) for node in oc_entries]
-        if regs != list(range(len(oc_entries))):
-            raise DtbError(f"{where}: reg is not contiguous: {regs}")
-
-        for node, (freq_mhz, level) in zip(oc_entries, OC_STEPS):
-            if cell_value(node.get("qcom,gpu-freq")) != freq_mhz * 1_000_000:
-                raise DtbError(f"{where}: wrong OC frequency in {node.name}")
-            if cell_value(node.get("qcom,level")) != level:
-                raise DtbError(f"{where}: {node.name} level "
-                               f"{cell_value(node.get('qcom,level'))} != {level}")
-            if cell_value(node.get("qcom,acd-level")) != OC_ACD_LEVEL:
-                raise DtbError(f"{where}: {node.name} acd-level mismatch")
-            for bus in ("qcom,bus-freq", "qcom,bus-min", "qcom,bus-max"):
-                if cell_value(node.get(bus)) != OC_BUS_FREQ:
-                    raise DtbError(f"{where}: {node.name} {bus} mismatch")
-
-        for offset, (stock_entry, oc_entry) in enumerate(
-                zip(stock_entries, oc_entries[len(OC_STEPS):])):
-            stock_props = tuple((name, bytes(value)) for name, value in stock_entry.props)
-            oc_props = tuple((name, bytes(value)) for name, value in oc_entry.props
-                             if name != "reg")
-            stock_props_wo_reg = tuple((name, value) for name, value in stock_props
-                                       if name != "reg")
-            if stock_props_wo_reg != oc_props:
-                raise DtbError(f"{where}: stock entry {offset} was modified")
-            if cell_value(oc_entry.get("reg")) != offset + len(OC_STEPS):
-                raise DtbError(f"{where}: stock entry {offset} has the wrong reg")
-
-        initial = cell_value(oc_bin.get("qcom,initial-pwrlevel"))
-        if initial != (cell_value(stock_bin.get("qcom,initial-pwrlevel")) or 0) + len(OC_STEPS):
-            raise DtbError(f"{where}: initial-pwrlevel {initial} is not stock+4")
-        stock_throttle = cell_value(stock_bin.get("qcom,throttle-pwrlevel"))
-        throttle = cell_value(oc_bin.get("qcom,throttle-pwrlevel"))
-        if stock_throttle is not None and throttle != stock_throttle + len(OC_STEPS):
-            raise DtbError(f"{where}: throttle-pwrlevel {throttle} is not stock+4")
-        if initial != len(oc_entries) - 2:
-            raise DtbError(f"{where}: initial-pwrlevel does not point at the 305 MHz entry")
-        result.bins_oc += 1
-
-    result.checks.append(f"{result.bins_oc} 670 MHz bin(s) overclocked, "
-                         f"{result.bins_slow} 525 MHz bin(s) untouched")
-    return result
-
-
 def verify_fdt_pair_custom(index: int, stock_blob: bytes, oc_blob: bytes,
                            steps: tuple[tuple[int, int], ...],
                            drop_hz: tuple[int, ...]) -> FdtVerify:
@@ -1128,16 +919,12 @@ def verify_fdt_pair_custom(index: int, stock_blob: bytes, oc_blob: bytes,
 
 def verify_blob(stock_blob: bytes, oc_blob: bytes,
                 steps: tuple[tuple[int, int], ...] = OC_STEPS_HZ,
-                drop_hz: tuple[int, ...] = ()) -> list[FdtVerify]:
+                drop_hz: tuple[int, ...] = DEFAULT_DROP_HZ) -> list[FdtVerify]:
     stock_parts = split_blob(stock_blob)
     oc_parts = split_blob(oc_blob)
     if len(stock_parts) != len(oc_parts):
         raise DtbError(f"payload has {len(oc_parts)} FDTs, stock has {len(stock_parts)}")
-    custom = bool(drop_hz) or tuple(steps) != OC_STEPS_HZ
-    if custom:
-        return [verify_fdt_pair_custom(index, stock, oc, steps, drop_hz)
-                for index, (stock, oc) in enumerate(zip(stock_parts, oc_parts))]
-    return [verify_fdt_pair(index, stock, oc)
+    return [verify_fdt_pair_custom(index, stock, oc, steps, drop_hz)
             for index, (stock, oc) in enumerate(zip(stock_parts, oc_parts))]
 
 

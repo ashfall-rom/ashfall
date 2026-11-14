@@ -181,15 +181,15 @@ class DtsTransformTest(unittest.TestCase):
         self.assertEqual([b.suffix for b in report.bins], ["0", "1", "2", "3", "4"])
 
         lines = output.split("\n")
-        for suffix, throttle in (("0", 4), ("1", 5), ("3", 5), ("4", 5)):
+        for suffix, throttle in (("0", 0), ("1", 1), ("3", 1), ("4", 1)):
             entries = _entries(lines, f"qcom,gpu-pwrlevels-{suffix}")
-            self.assertEqual(len(entries), 12)
+            self.assertEqual(len(entries), 8)
             freqs = [entry.freq for entry in entries]
-            self.assertEqual(freqs[:5], [1000 * 1_000_000, 940 * 1_000_000, 850 * 1_000_000,
-                                    765 * 1_000_000, 670 * 1_000_000])
-            self.assertEqual(freqs[-1], 0)
-            self.assertEqual(freqs, sorted(freqs, reverse=True))
-            self.assertEqual([entry.reg for entry in entries], list(range(12)))
+            self.assertEqual(freqs, [1000 * 1_000_000, 940 * 1_000_000,
+                                    850 * 1_000_000, 765 * 1_000_000,
+                                    670 * 1_000_000, 587 * 1_000_000,
+                                    305 * 1_000_000, 0])
+            self.assertEqual([entry.reg for entry in entries], list(range(8)))
             for entry, (mhz, level) in zip(entries, dtb_oc.OC_STEPS):
                 self.assertEqual(entry.freq, mhz * 1_000_000)
                 self.assertEqual(entry.value("qcom,level"), level)
@@ -197,10 +197,13 @@ class DtsTransformTest(unittest.TestCase):
                 for bus in ("qcom,bus-freq", "qcom,bus-min", "qcom,bus-max"):
                     self.assertEqual(entry.value(bus), 0x0B)
             # boot level is still the 305 MHz entry
-            self.assertEqual(entries[10].freq, 305_000_000)
+            self.assertEqual(entries[6].freq, 305_000_000)
             header = _block(lines, f"qcom,gpu-pwrlevels-{suffix}")
-            self.assertEqual(dtb_oc.get_cell(header, "qcom,initial-pwrlevel"), 10)
+            self.assertEqual(dtb_oc.get_cell(header, "qcom,initial-pwrlevel"), 6)
             self.assertEqual(dtb_oc.get_cell(header, "qcom,throttle-pwrlevel"), throttle)
+            dropped = {525 * 1_000_000, 490 * 1_000_000,
+                       441_600_000, 400 * 1_000_000}
+            self.assertFalse(dropped & set(freqs))
 
         # The 525 MHz table and the legacy node are untouched.
         pre = fixture_dts().split("\n")
