@@ -155,3 +155,15 @@ int prop_get_int_range(const char *name, int fallback, int lo, int hi)
     }
     return fallback;
 }
+
+void prop_set_str(const char *name, const char *value)
+{
+    if (!name || !value)
+        return;
+#if defined(__ANDROID__)
+    if (__system_property_set(name, value) != 0)
+        ah_logf(AH_LOG_WARN, "cannot set %s=%s", name, value);
+#else
+    ah_logf(AH_LOG_INFO, "prop %s=%s", name, value);
+#endif
+}

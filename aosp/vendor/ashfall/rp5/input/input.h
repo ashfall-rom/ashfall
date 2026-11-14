@@ -17,9 +17,12 @@ struct raw_sample {
     unsigned int buttons; /* 16-bit MCU key word */
 };
 
+#define ASHFALL_PROP_CAL_SOURCE "ashfall.status.pad.cal_source"
+
 struct input_ctx {
     struct calibration cal;
     enum cal_source cal_source;
+    bool cal_source_published;
     struct deadzones dz;
 
     /* Fired after SET CAL / RESET CAL so the caller can log/report. */
@@ -28,5 +31,10 @@ struct input_ctx {
 
 /* Load user -> factory copy -> built-in defaults into ctx->cal. */
 void input_reload_calibration(struct input_ctx *ctx);
+
+/* Publish ashfall.status.pad.cal_source (`user`/`factory`/`default`) when it
+ * changed.  #80: the app and the tests can check the source without the
+ * control socket, and a late factory copy is visible without a restart. */
+void input_publish_cal_source(struct input_ctx *ctx);
 
 #endif /* ASHFALL_INPUT_H */

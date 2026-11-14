@@ -297,10 +297,55 @@ system`); one text command per packet, one reply per command:
 | `SET CAL k=v ...` | `OK` after validation, atomic write and immediate apply, else `ERR <reason>` (all 16 keys required, unknown/duplicate keys rejected) |
 | `RESET CAL` | `OK`; deletes the user file and re-applies factory/default |
 | `RAW ON` / `RAW OFF` | `OK`; streams raw samples to that client |
+| `GRAB ON` / `GRAB OFF` | `OK`; `ERR busy` when another client owns the grab |
 
 Raw sample format: `RAW lx ly rx ry l2 r2 buttons_hex` (raw MCU counts, no
 calibration or deadzone), at most 100 Hz per client.  Streaming stops by
 itself when the client disconnects or sends `RAW OFF`.
+
+### GRAB ON/OFF (phase 5 v2, docs/phase5.md §6.2)
+
+While a client owns `GRAB ON`:
+
+* every input already reported to Android is released (a key-up per held key,
+  `0` for every non-resting axis, one `SYN_REPORT`);
+* the daemon injects **nothing** into uinput for any button, stick or trigger;
+* the `RAW` stream keeps carrying **every** button, including Home, Back,
+  Select, Start and B, so the Controller tester can show the full pad without
+  driving the focused app/game;
+* the owner's disconnect is an automatic `GRAB OFF` (also when the socket is
+  reset or the daemon restarts), and a second client gets `ERR busy`.
+
+`GRAB OFF` arms a full re-report: the next MCU frame sends the current physical
+button/axis state from scratch, so a button held across the transition comes
+back correctly.
+
+### RAW bit layout
+
+`buttons_hex` is the MCU's 16-bit key word, exactly as received (`%04x`, high
+nibble first).  Bit 15 is the most significant bit:
+
+| bit | input | Linux code injected when not grabbed |
+|---:|---|---|
+| 15 | B | `BTN_B` (0x131) |
+| 14 | A | `BTN_A` (0x130) |
+| 13 | Y | `BTN_Y` (0x134) |
+| 12 | X | `BTN_X` (0x133) |
+| 11 | D-pad right | `ABS_HAT0X` = +1 |
+| 10 | D-pad left | `ABS_HAT0X` = -1 |
+| 9 | D-pad down | `ABS_HAT0Y` = +1 |
+| 8 | D-pad up | `ABS_HAT0Y` = -1 |
+| 7 | Back | `KEY_BACK` (0x9e) |
+| 6 | Home | `KEY_HOMEPAGE` (0xac; the stock table stores `KEY_HOME` 0x66, see below) |
+| 5 | Right stick click (R3) | `BTN_THUMBR` (0x13e) |
+| 4 | Left stick click (L3) | `BTN_THUMBL` (0x13d) |
+| 3 | Start | `BTN_START` (0x13b) |
+| 2 | Select | `BTN_SELECT` (0x13a) |
+| 1 | R1 | `BTN_TR` (0x137) |
+| 0 | L1 | `BTN_TL` (0x136) |
+
+The table above is exactly the array at `librsinput.so + 0x2e82c` read from
+bit 15 down to bit 0; it is also what the app maps in the tester.
 
 Example (userdebug, as root):
 
@@ -373,14 +418,78 @@ create it); `RAW` frames went to the image's own running
 without root).  Both are covered by the host tests and remain user steps on
 the integration build.
 
+### Calibration source (#80)
+
+`ashfall.status.pad.cal_source` (`user`, `factory`, `default`) is published by
+`ashfall-rp5-input` whenever the calibration load result changes.  This makes
+the source visible in the UI and in tests even when the boot log is lost
+(`stdio_to_kmsg` writes `/dev/kmsg_debug`, which only exists with
+`ro.debuggable=1`), and it is the state the app's Controller page displays.
+
+The factory-copy path was re-checked:
+
+* the parser accepts the archived `/mnt/vendor/persist/retrostation/joys`
+  byte-for-byte (its keys are in arbitrary order, minimums are negative and
+  `r2_min=0.0`); a host regression test keeps that exact content
+  (`test_factory_rp5` in `tests/test_input.c`);
+* because a `class core` daemon can read the calibration before init's
+  `post-fs-data` `copy` becomes visible (or the copy can fail silently), the
+  daemon now **retries the load order every 2 s for the first minute while the
+  source is `default`**.  A factory file that appears after startup is picked
+  up without a restart; `SET`/`RESET CAL` still switch immediately.
+
+### Controller labels and trigger range (#82)
+
+**X/Y at the source.**  The stock parser was disassembled to confirm the two
+things that could swap the face buttons:
+
+* the key word is built big-endian: `w20 = data[1] | (data[0] << 8)`
+  (`0x1d29c`: `ldrb w20,[sp,#0xe9]`; `0x1d2a8`: `bfi w20,w8,#8,#8`);
+* the table at `0x2e82c` is walked with a mask that starts at bit 15 and
+  shifts right, and is indexed by the same counter, so `table[0]` is bit 15.
+  The array is
+  `0x131, 0x130, 0x134, 0x133, 0x223, 0x222, 0x221, 0x220, 0x9e, 0x66,
+  0x13e, 0x13d, 0x13b, 0x13a, 0x137, 0x136`, i.e. bit 12 = `BTN_X` and
+  bit 13 = `BTN_Y` exactly as implemented in `mcu_keymap[]`.
+
+So the daemon's X/Y mapping is the stock one and was **not** changed.  The
+RP5's face buttons are the Nintendo layout (X top, Y left, A right, B bottom;
+Retroid sells Xbox-layout replacement buttons for users who prefer the other
+layout), while `ControllerTesterView.drawFaceButtons()` draws `BTN_Y` at the
+top and `BTN_X` on the left.  Pressing the physical top button (X) therefore
+highlights the on-screen label "Y": this is an **app drawing issue** (the
+tester should draw X top / Y left to match the device), not a daemon mapping
+bug.  Reported for the app worker.
+
+**L2/R2 analog range.**  The daemon maps the MCU's unipolar trigger counts
+linearly from the calibration (`trigger_map`: `(max - raw) / (max - min)`),
+clamped to 0..255; at rest the raw value is above `max` (1519/1541 vs
+1266/1362 on this unit) and therefore 0, and a full pull reaches 255 at the
+calibrated minimum.  The tester's trigger pill uses
+`ControllerTesterView.drawTrigger(..., pressed = mPressed[BTN_L2] ||
+mL2 > 0.5f, ...)`: at exactly 50 % the whole pill switches from outline to
+solid accent, which reads as "jumping to 100 %" even though the analog bar
+keeps following the axis.  That is the likely explanation of the report and is
+again an app rendering detail.
+
+Device verification (`getevent -l` on `/dev/input/event4` while pressing the
+physical buttons and triggers, plus the RAW `l2`/`r2` counts) is listed in the
+checklist below; if the raw counts saturate before the physical end stop, the
+calibration min/max are wrong for the unit and `SET CAL`/the wizard fixes them
+(the daemon mapping itself is linear).
+
 ## Phase 5 test checklist (in addition to the one below)
 
 1. `adb shell getprop init.svc.ashfall-rp5-input` -> `running`;
+   `adb shell getprop ashfall.status.pad.cal_source` -> `factory` on a stock
+   unit (or `user` after the wizard; `default` means the copy/parse failed);
    `adb shell ls -lZ /data/misc/ashfall` shows `joys.factory` and the
    `ashfall_data_file` label (or `u:object_r:ashfall_data_file:s0`).
 2. `GET CAL` returns `OK factory ...` with the values above.
-3. In the AshFall Parts tester, `RAW ON` shows live raw values; releasing the
-   sticks gives near-zero calibrated axes (deadzone) and trigger bars at 0.
+3. In the AshFall Parts tester, `RAW ON` shows live raw values; `GRAB ON`
+   releases the gamepad and every physical button (Home/Back/Select/Start/B
+   included) still appears in the RAW stream; closing the tester/its socket
+   restores normal input without stuck buttons.
 4. Calibration wizard: `SET CAL` with the collected values -> `OK`; sticks
    re-centre exactly.  `RESET CAL` -> `OK`, back to the factory values.
 5. `adb shell setprop persist.ashfall.pad.deadzone_inner 15` -> small stick

@@ -17,10 +17,12 @@ typeattribute ashfall_hwd coredomain;
 init_daemon_domain(ashfall_hwd)
 
 # Thermal zones: /sys/class/thermal and /sys/devices/virtual/thermal are
-# labelled sysfs_thermal by the stock vendor policy.  Only reading is needed.
+# labelled sysfs_thermal by the stock vendor policy.  Reading covers the fan
+# sensor; writing is only the trip_point_*_temp attributes used by the
+# performance override (#82).  Critical trips are never touched by the daemon.
 allow ashfall_hwd sysfs_thermal:dir r_dir_perms;
 allow ashfall_hwd sysfs_thermal:lnk_file read;
-allow ashfall_hwd sysfs_thermal:file r_file_perms;
+allow ashfall_hwd sysfs_thermal:file rw_file_perms;
 
 # Fan: /sys/class/gpio5_pwm2/{state,duty,speed} (genfs_contexts entry for the
 # gpio5-pwm platform device).
@@ -34,5 +36,8 @@ allow ashfall_hwd ashfall_led_sysfs:lnk_file read;
 allow ashfall_hwd ashfall_led_sysfs:file rw_file_perms;
 
 # persist.ashfall.fan.* / persist.ashfall.led.* come from ashfall_props.te;
-# the screen state for persist.ashfall.led.screen_off is the framework's
-# debug.tracing.screen_state, which domain.te already grants to every domain.
+# the screen state for the fan screen-off hold and the LED screen-off policy is
+# the framework's debug.tracing.screen_state, which domain.te already grants to
+# every domain.
+# ashfall.ui.* (fan live/preview, LED override) and ashfall.perf.* (throttle
+# override) are in ashfall_props.te too.

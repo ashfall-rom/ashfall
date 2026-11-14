@@ -240,6 +240,44 @@ static void test_save_roundtrip(void)
     remove_file(user_path());
 }
 
+/* --- #80: the exact stock factory file -------------------------------- */
+
+/* Copied byte-for-byte from the archived /mnt/vendor/persist/retrostation/joys
+ * of the test unit: the key order is not the canonical one, minimums are
+ * negative and r2_min is 0.0, all of which the parser must accept. */
+static const char FACTORY_RP5_TEXT[] =
+    "right_x_center=82.0\n"
+    "l2_min=92.0\n"
+    "right_y_max=1192.0\n"
+    "r2_min=0.0\n"
+    "left_y_center=31.0\n"
+    "right_x_max=1218.0\n"
+    "left_x_center=125.0\n"
+    "left_y_min=-1146.0\n"
+    "left_x_max=1196.0\n"
+    "r2_max=1362.0\n"
+    "l2_max=1266.0\n"
+    "right_y_min=-1167.0\n"
+    "right_x_min=-1121.0\n"
+    "left_x_min=-1134.0\n"
+    "left_y_max=1174.0\n"
+    "right_y_center=-6.0\n";
+
+static void test_factory_rp5(void)
+{
+    char path[PATH_MAX];
+    char err[160];
+    struct calibration cal;
+    struct calibration defaults;
+
+    snprintf(path, sizeof(path), "%s/joys.rp5", g_dir);
+    write_file(path, FACTORY_RP5_TEXT);
+    CHECK(calib_load_file(path, &cal, err, sizeof(err)));
+    calib_defaults(&defaults);
+    CHECK(!memcmp(&cal, &defaults, sizeof(defaults)));
+    remove_file(path);
+}
+
 /* --- mapping ------------------------------------------------------------- */
 
 static void test_mapping(void)
@@ -456,13 +494,52 @@ static void test_control_socket(void)
             CHECK(!"RAW sample after RAW OFF");
     }
 
+    /* GRAB ON/OFF (docs/phase5.md §6.2): one owner, auto-release on
+     * disconnect, second client gets ERR busy. */
     client_command(control, client, "NOPE\n", reply, sizeof(reply));
     CHECK(strncmp(reply, "ERR ", 4) == 0);
+    CHECK(!control_grabbed(control));
+    client_command(control, client, "GRAB ON\n", reply, sizeof(reply));
+    CHECK(strcmp(reply, "OK\n") == 0);
+    CHECK(control_grabbed(control));
+    {
+        int other = connect_client();
 
-    /* a disconnecting client stops RAW automatically and frees the slot */
+        CHECK(other >= 0);
+        if (other >= 0) {
+            client_command(control, other, "GRAB ON\n", reply, sizeof(reply));
+            CHECK(strncmp(reply, "ERR busy", 8) == 0);
+            close(other);
+            server_pump(control, 200);
+        }
+    }
+    CHECK(control_grabbed(control)); /* still owned by the first client */
+    client_command(control, client, "GRAB OFF\n", reply, sizeof(reply));
+    CHECK(strcmp(reply, "OK\n") == 0);
+    CHECK(!control_grabbed(control));
+
+    /* A dangling GRAB ON is released automatically when its client goes. */
+    client_command(control, client, "GRAB ON\n", reply, sizeof(reply));
+    CHECK(control_grabbed(control));
     close(client);
     server_pump(control, 200);
     server_pump(control, 100);
+    CHECK(!control_grabbed(control));
+
+    /* #80: a factory copy that appears after startup is picked up by a
+     * reload (the daemon retries while the source is `default`), and the
+     * source is published as a status property. */
+    remove_file(user_path());
+    remove_file(factory_path());
+    input_reload_calibration(&ctx);
+    CHECK_EQ(ctx.cal_source, CAL_SOURCE_DEFAULT);
+    write_file(factory_path(), FACTORY_TEXT);
+    input_reload_calibration(&ctx);
+    CHECK_EQ(ctx.cal_source, CAL_SOURCE_FACTORY);
+    CHECK(ctx.cal_source_published);
+    remove_file(factory_path());
+    input_reload_calibration(&ctx);
+    CHECK_EQ(ctx.cal_source, CAL_SOURCE_DEFAULT);
 
     control_destroy(control);
     remove_file(g_socket);
@@ -640,6 +717,7 @@ int main(void)
     setenv("ASHFALL_LOG", "0", 1);
 
     test_defaults();
+    test_factory_rp5();
     test_validation();
     test_pairs();
     test_load_order();

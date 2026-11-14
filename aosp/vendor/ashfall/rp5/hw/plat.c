@@ -251,8 +251,8 @@ void prop_wait_any(int timeout_ms)
     struct timespec ts;
     struct timespec *tsp = NULL;
 
-    if (timeout_ms < 50)
-        timeout_ms = 50;
+    if (timeout_ms < 5)
+        timeout_ms = 5;
     ts.tv_sec = timeout_ms / 1000;
     ts.tv_nsec = (long)(timeout_ms % 1000) * 1000000L;
     tsp = &ts;

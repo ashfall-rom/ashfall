@@ -20,7 +20,9 @@ void fan_settings_default(fan_settings *out)
     memset(out, 0, sizeof(*out));
     out->mode = FAN_MODE_SMART;
     out->manual_pct = 50;
-    out->safety_c = 85;
+    out->kick = true;
+    out->kick_pct = FAN_KICK_DEFAULT_PCT;
+    out->off_when_screen_off = true;
     if (!fan_parse_curve(DEFAULT_CURVE, &out->curve)) {
         /* Cannot happen: the literal above is valid. */
         out->curve.count = 2;
@@ -234,26 +236,51 @@ int fan_apply_pct(fan_state *state, int pct, int64_t now_ms)
         return 0;
     }
 
-    /* Spin the fan up hard for a moment: the motor does not start reliably at
-     * a low duty.  Only a 0 -> nonzero transition needs it. */
+    /* Spin the fan up for a moment: the motor does not start reliably at a
+     * low duty.  Only a 0 -> nonzero transition needs it.  The kick level is
+     * persist.ashfall.fan.kick_pct (default 30 %), never 100 %, and
+     * persist.ashfall.fan.kick=0 disables it entirely. */
     if (state->out_pct <= 0) {
+        int kick_pct = pct;
+
+        if (state->settings.kick) {
+            int configured = state->settings.kick_pct;
+
+            if (configured < FAN_KICK_MIN_PCT)
+                configured = FAN_KICK_MIN_PCT;
+            if (configured > FAN_KICK_MAX_PCT)
+                configured = FAN_KICK_MAX_PCT;
+            /* The safety override must reach 100 % at once; a reduced kick
+             * would delay cooling by up to FAN_KICK_MS. */
+            if (!state->safety && configured > kick_pct)
+                kick_pct = configured;
+        }
+        /* The target itself is never clamped: 61..100 % must run at their
+         * real duty (safety/max).  Only the *kick* level is capped at 60. */
         if (sysfs_write_int(FAN_STATE_NODE, 1) != 0 ||
-            sysfs_write_int(FAN_DUTY_NODE, fan_pct_to_duty(100)) != 0) {
+            sysfs_write_int(FAN_DUTY_NODE, fan_pct_to_duty(kick_pct)) != 0) {
             state->out_pct = -1;
             return 0;
         }
         state->pending_pct = pct;
-        state->kick_until_ms = now_ms + FAN_MIN_KICK_MS;
-        state->out_pct = 100;
-        ah_logf(AH_LOG_INFO, "fan: spin-up kick (target %d%%)", pct);
-        return 100;
+        if (kick_pct > pct) {
+            state->kick_until_ms = now_ms + FAN_KICK_MS;
+            state->out_pct = kick_pct;
+            ah_logf(AH_LOG_INFO, "fan: spin-up kick to %d%% (target %d%%)",
+                    kick_pct, pct);
+            return kick_pct;
+        }
+        state->kick_until_ms = 0;
+        state->out_pct = pct;
+        return pct;
     }
 
     if (state->kick_until_ms > 0) {
         state->pending_pct = pct;
         if (now_ms < state->kick_until_ms) {
-            state->out_pct = 100;
-            return 100;
+            /* The hardware is still at the kick level; report what is
+             * actually applied, not the requested target. */
+            return state->out_pct;
         }
         state->kick_until_ms = 0;
     }
@@ -276,7 +303,8 @@ bool fan_kick_pending(const fan_state *state, int64_t now_ms)
     return state->kick_until_ms > now_ms;
 }
 
-int fan_control_tick(fan_state *state, int temp_tenths, int64_t now_ms)
+int fan_control_tick(fan_state *state, int temp_tenths, int64_t now_ms,
+                     bool screen_on)
 {
     fan_settings *set = &state->settings;
     int pct = 0;
@@ -300,24 +328,26 @@ int fan_control_tick(fan_state *state, int temp_tenths, int64_t now_ms)
         state->sensor_fault = false;
     }
 
-    /* Safety override: latches at safety_c, releases 10 C below it, and runs
-     * in every mode including off. */
-    if (temp_tenths >= 0) {
-        int safety_tenths = set->safety_c * 10;
-        if (temp_tenths >= safety_tenths) {
-            if (!state->safety)
-                ah_logf(AH_LOG_WARN, "fan: safety override at %.1f C",
-                        temp_tenths / 10.0);
-            state->safety = true;
-        } else if (state->safety && temp_tenths <= (set->safety_c - 10) * 10) {
-            ah_logf(AH_LOG_INFO, "fan: safety override released at %.1f C",
+    /* Fixed last-resort rule (persist.ashfall.fan.safety_c was removed in
+     * phase 5 v2): 100 % at >= 90 C, released at <= 80 C, in every mode and
+     * also while the screen is off.  Not settable by the UI. */
+    if (temp_tenths >= FAN_SAFETY_ON_C * 10) {
+        if (!state->safety)
+            ah_logf(AH_LOG_WARN, "fan: safety override at %.1f C",
                     temp_tenths / 10.0);
-            state->safety = false;
-        }
+        state->safety = true;
+    } else if (state->safety && temp_tenths <= FAN_SAFETY_OFF_C * 10) {
+        ah_logf(AH_LOG_INFO, "fan: safety override released at %.1f C",
+                temp_tenths / 10.0);
+        state->safety = false;
     }
 
     if (state->safety) {
         pct = 100;
+    } else if (!screen_on && set->off_when_screen_off) {
+        /* persist.ashfall.fan.screen_off=off: the fan stops with the screen.
+         * The next nonzero apply after screen-on runs the spin-up kick. */
+        pct = 0;
     } else {
         switch (set->mode) {
         case FAN_MODE_OFF:
@@ -348,9 +378,11 @@ int fan_control_tick(fan_state *state, int temp_tenths, int64_t now_ms)
                 if (state->anchor_c < 0 ||
                     state->ema_c >= (double)state->anchor_c ||
                     state->ema_c <= (double)state->anchor_c - FAN_HYSTERESIS_C) {
+                    const fan_curve *curve =
+                        state->preview_valid ? &state->preview : &set->curve;
+
                     state->anchor_c = (int)lround(state->ema_c);
-                    state->target_pct =
-                        fan_curve_pct(&set->curve, state->ema_c);
+                    state->target_pct = fan_curve_pct(curve, state->ema_c);
                 }
                 pct = state->target_pct;
             }

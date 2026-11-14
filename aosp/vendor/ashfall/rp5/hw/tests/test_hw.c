@@ -9,6 +9,7 @@
 #include "led.h"
 #include "plat.h"
 #include "thermal.h"
+#include "throttle.h"
 
 #include <assert.h>
 #include <errno.h>
@@ -136,6 +137,15 @@ static int make_sysfs(void)
     write_file("/sys/class/thermal/thermal_zone1/temp", "55000\n");
     write_file("/sys/class/thermal/thermal_zone2/type", "gpuss-0-usr\n");
     write_file("/sys/class/thermal/thermal_zone2/temp", "62000\n");
+    /* GPU clock trip (95 C) and the higher protective trips. */
+    write_file("/sys/class/thermal/thermal_zone2/trip_point_0_type", "passive\n");
+    write_file("/sys/class/thermal/thermal_zone2/trip_point_0_temp", "95000\n");
+    write_file("/sys/class/thermal/thermal_zone2/trip_point_1_type", "passive\n");
+    write_file("/sys/class/thermal/thermal_zone2/trip_point_1_temp", "115000\n");
+    write_file("/sys/class/thermal/thermal_zone2/trip_point_2_type", "passive\n");
+    write_file("/sys/class/thermal/thermal_zone2/trip_point_2_temp", "125000\n");
+    write_file("/sys/class/thermal/thermal_zone2/trip_point_3_type", "critical\n");
+    write_file("/sys/class/thermal/thermal_zone2/trip_point_3_temp", "155000\n");
     return 0;
 }
 
@@ -200,23 +210,92 @@ static void test_apply_and_kick(void)
 
     fan_state_init(&fan);
     fan.settings.mode = FAN_MODE_MANUAL;
-    fan.settings.manual_pct = 50;
+    fan.settings.manual_pct = 10;
 
-    /* 0 -> nonzero: spin-up kick at 100 % first. */
-    CHECK_EQ(fan_control_tick(&fan, 400, now), 100);
+    /* 0 -> nonzero with a low target: spin-up kick at kick_pct (30 %), not
+     * 100 % (docs/phase5.md §6.1). */
+    CHECK_EQ(fan_control_tick(&fan, 400, now, true), FAN_KICK_DEFAULT_PCT);
     CHECK_EQ(read_int("/sys/class/gpio5_pwm2/state"), 1);
-    CHECK_EQ(read_int("/sys/class/gpio5_pwm2/duty"), fan_pct_to_duty(100));
+    CHECK_EQ(read_int("/sys/class/gpio5_pwm2/duty"),
+             fan_pct_to_duty(FAN_KICK_DEFAULT_PCT));
     CHECK(fan_kick_pending(&fan, now + 100));
 
+    /* A settings tick inside the kick window must report the level that is
+     * actually on the hardware, not the requested target or 100 %. */
+    fan.settings.manual_pct = 50;
+    CHECK_EQ(fan_control_tick(&fan, 400, now + 100, true),
+             FAN_KICK_DEFAULT_PCT);
+    CHECK_EQ(read_int("/sys/class/gpio5_pwm2/duty"),
+             fan_pct_to_duty(FAN_KICK_DEFAULT_PCT));
+    fan.settings.manual_pct = 10;
+
     /* After the kick the target speed is applied. */
-    CHECK_EQ(fan_control_tick(&fan, 400, now + FAN_MIN_KICK_MS + 1), 50);
-    CHECK_EQ(read_int("/sys/class/gpio5_pwm2/duty"), fan_pct_to_duty(50));
+    CHECK_EQ(fan_control_tick(&fan, 400, now + FAN_KICK_MS + 1, true), 10);
+    CHECK_EQ(read_int("/sys/class/gpio5_pwm2/duty"), fan_pct_to_duty(10));
+
+    /* A target at or above the kick level is applied directly. */
+    CHECK_EQ(fan_control_tick(&fan, 400, now + 10000, true), 10);
+    fan.settings.manual_pct = 50;
+    CHECK_EQ(fan_control_tick(&fan, 400, now + 20000, true), 50);
+    CHECK(!fan_kick_pending(&fan, now + 20000));
+
+    /* kick=0: no spin-up kick at all. */
+    fan.settings.mode = FAN_MODE_OFF;
+    CHECK_EQ(fan_control_tick(&fan, 400, now + 30000, true), 0); /* off */
+    fan.settings.mode = FAN_MODE_MANUAL;
+    fan.settings.manual_pct = 10;
+    fan.settings.kick = false;
+    CHECK_EQ(fan_control_tick(&fan, 400, now + 40000, true), 10);
+    CHECK(!fan_kick_pending(&fan, now + 40000));
+
+    /* Targets above the kick cap (61..100) must run at their real duty. */
+    fan.settings.mode = FAN_MODE_OFF;
+    CHECK_EQ(fan_control_tick(&fan, 400, now + 45000, true), 0);
+    fan.settings.mode = FAN_MODE_MANUAL;
+    fan.settings.manual_pct = 100;
+    CHECK_EQ(fan_control_tick(&fan, 400, now + 46000, true), 100);
+    CHECK_EQ(read_int("/sys/class/gpio5_pwm2/duty"),
+             fan_pct_to_duty(100));
 
     /* off disables the fan. */
     fan.settings.mode = FAN_MODE_OFF;
-    CHECK_EQ(fan_control_tick(&fan, 400, now + 10000), 0);
+    CHECK_EQ(fan_control_tick(&fan, 400, now + 50000, true), 0);
     CHECK_EQ(read_int("/sys/class/gpio5_pwm2/state"), 0);
     CHECK_EQ(read_int("/sys/class/gpio5_pwm2/duty"), 0);
+}
+
+static void test_screen_off(void)
+{
+    fan_state fan;
+
+    fan_state_init(&fan);
+    fan.settings.mode = FAN_MODE_QUIET;
+    fan.settings.kick = true;
+    fan.settings.kick_pct = 30;
+    fan.settings.off_when_screen_off = true;
+
+    /* Screen off: the fan stops. */
+    CHECK_EQ(fan_control_tick(&fan, 400, 1000, false), 0);
+    CHECK_EQ(read_int("/sys/class/gpio5_pwm2/state"), 0);
+
+    /* Screen on: quiet resumes through the kick. */
+    CHECK_EQ(fan_control_tick(&fan, 400, 2000, true), 30);
+    CHECK_EQ(fan_control_tick(&fan, 400, 2000 + FAN_KICK_MS + 1, true),
+             FAN_PRESET_QUIET_PCT);
+
+    /* screen_off=run keeps the fan running with the screen off. */
+    fan.settings.off_when_screen_off = false;
+    CHECK_EQ(fan_control_tick(&fan, 400, 9000, false),
+             FAN_PRESET_QUIET_PCT);
+
+    /* The fixed safety override wins over the screen-off hold. */
+    fan.settings.off_when_screen_off = true;
+    CHECK_EQ(fan_control_tick(&fan, 900, 12000, false), 100);
+    CHECK(fan.safety);
+    CHECK_EQ(read_int("/sys/class/gpio5_pwm2/duty"), fan_pct_to_duty(100));
+    CHECK_EQ(fan_control_tick(&fan, 810, 13000, false), 100);
+    CHECK_EQ(fan_control_tick(&fan, 800, 14000, false), 0);
+    CHECK(!fan.safety);
 }
 
 static void test_presets(void)
@@ -225,12 +304,13 @@ static void test_presets(void)
 
     fan_state_init(&fan);
     fan.settings.mode = FAN_MODE_QUIET;
-    CHECK_EQ(fan_control_tick(&fan, 400, 1000), 100); /* kick */
-    CHECK_EQ(fan_control_tick(&fan, 400, 1000 + FAN_MIN_KICK_MS + 1),
+    CHECK_EQ(fan_control_tick(&fan, 400, 1000, true),
+             FAN_KICK_DEFAULT_PCT); /* kick, never 100 % */
+    CHECK_EQ(fan_control_tick(&fan, 400, 1000 + FAN_KICK_MS + 1, true),
              FAN_PRESET_QUIET_PCT);
 
     fan.settings.mode = FAN_MODE_MAX;
-    CHECK_EQ(fan_control_tick(&fan, 400, 5000), FAN_PRESET_MAX_PCT);
+    CHECK_EQ(fan_control_tick(&fan, 400, 5000, true), FAN_PRESET_MAX_PCT);
     CHECK_EQ(read_int("/sys/class/gpio5_pwm2/duty"), fan_pct_to_duty(100));
 }
 
@@ -240,19 +320,19 @@ static void test_safety(void)
 
     fan_state_init(&fan);
     fan.settings.mode = FAN_MODE_OFF;
-    fan.settings.safety_c = 85;
 
-    /* 85.0 C in off mode -> full speed, safety latched. */
-    CHECK_EQ(fan_control_tick(&fan, 850, 1000), 100);
+    /* 90.0 C in off mode -> full speed, safety latched (fixed, no setting). */
+    CHECK_EQ(fan_control_tick(&fan, 900, 1000, true), 100);
     CHECK(fan.safety);
     CHECK_EQ(read_int("/sys/class/gpio5_pwm2/state"), 1);
+    CHECK_EQ(read_int("/sys/class/gpio5_pwm2/duty"), fan_pct_to_duty(100));
 
-    /* Just below the threshold: still latched (release is 10 C lower). */
-    CHECK_EQ(fan_control_tick(&fan, 760, 5000), 100);
+    /* Just below the threshold: still latched (release is at 80 C). */
+    CHECK_EQ(fan_control_tick(&fan, 810, 5000, true), 100);
     CHECK(fan.safety);
 
-    /* 75.0 C -> release, back to off. */
-    CHECK_EQ(fan_control_tick(&fan, 750, 9000), 0);
+    /* 80.0 C -> release, back to off. */
+    CHECK_EQ(fan_control_tick(&fan, 800, 9000, true), 0);
     CHECK(!fan.safety);
     CHECK_EQ(read_int("/sys/class/gpio5_pwm2/state"), 0);
 }
@@ -266,20 +346,20 @@ static void test_smart(void)
     fan.settings.mode = FAN_MODE_SMART;
     fan_parse_curve("45:0,55:30,65:55,75:80,82:100", &fan.settings.curve);
 
-    fan_control_tick(&fan, 650, 1000);
+    fan_control_tick(&fan, 650, 1000, true);
     target = fan.target_pct;
     CHECK_EQ(target, 55);
 
     /* A single 2 C dip must not lower the target (hysteresis is 3 C and the
      * EMA needs a few samples to move anyway). */
-    fan_control_tick(&fan, 630, 3000);
+    fan_control_tick(&fan, 630, 3000, true);
     CHECK_EQ(fan.target_pct, target);
 
     /* A sustained drop does re-evaluate once the smoothed temperature is a
      * full 3 C below the anchor: the curve gives ~47 % at the EMA (~61.8 C)
      * and the new anchor then holds for another 3 C. */
     for (int i = 0; i < 10; i++)
-        fan_control_tick(&fan, 600, 5000 + i * 2000);
+        fan_control_tick(&fan, 600, 5000 + i * 2000, true);
     CHECK(fan.target_pct < target);
     CHECK(fan.target_pct >= 45);
     CHECK(fan.target_pct <= 48);
@@ -287,11 +367,34 @@ static void test_smart(void)
     /* Rising temperature is followed without waiting for hysteresis (the EMA
      * needs a few samples, then the curve reaches 100 %). */
     for (int i = 0; i < 10; i++)
-        fan_control_tick(&fan, 820, 40000 + i * 2000);
+        fan_control_tick(&fan, 820, 40000 + i * 2000, true);
     CHECK(fan.target_pct >= 99);
 }
 
-/* --- led ----------------------------------------------------------------- */
+/* ashfall.ui.fan_preview_curve replaces persist.ashfall.fan.curve while the
+ * editor is open (only in smart mode). */
+static void test_smart_preview(void)
+{
+    fan_state fan;
+
+    fan_state_init(&fan);
+    fan.settings.mode = FAN_MODE_SMART;
+    fan_parse_curve("45:0,55:30,65:55,75:80,82:100", &fan.settings.curve);
+    fan_parse_curve("45:0,55:0,65:0,75:0,82:0", &fan.preview);
+    fan.preview_valid = true;
+
+    CHECK_EQ(fan_control_tick(&fan, 650, 1000, true), 0);
+    CHECK_EQ(fan.target_pct, 0);
+
+    /* Invalid/empty preview: back to the persisted curve. */
+    fan.preview_valid = false;
+    fan.have_ema = false;
+    fan.anchor_c = -1;
+    CHECK_EQ(fan_control_tick(&fan, 650, 3000, true), 55);
+    CHECK_EQ(fan.target_pct, 55);
+}
+
+
 
 static void test_led_colour(void)
 {
@@ -368,27 +471,49 @@ static void test_led_effects(void)
     led_frame(&led, 1000, frame);
     CHECK_EQ(frame[0].r, 255); /* a full period wraps back */
 
-    /* breathing stays between 5 % and 100 % of the base colour */
+    /* breathing stays between 2 % (gamma curve floor) and 100 % of the base
+     * colour, and is smooth (gamma-corrected) rather than a bare cosine. */
     led.settings.mode = LED_MODE_BREATHING;
     led.settings.left = (rgb_t){200, 200, 200};
     led.settings.right = (rgb_t){200, 200, 200};
-    for (int t = 0; t <= 800; t += 20) {
+    for (int t = 0; t <= 800; t += 5) {
         led_frame(&led, t, frame);
-        CHECK(frame[0].r >= 9);
+        CHECK(frame[0].r >= 3);
         CHECK(frame[0].r <= 200);
     }
 
-    /* rainbow at t=0 is pure red, a third of the period later pure green */
+    /* rainbow at t=0 is pure red, a third of the (3x slower) period later
+     * pure green: speed 5 -> 18 000/5 = 3 600 ms per turn. */
     led.settings.mode = LED_MODE_RAINBOW;
-    led.settings.speed = 5; /* period 1200 ms */
+    led.settings.speed = 5;
     led.settings.sync = true;
     led_frame(&led, 0, frame);
     CHECK_EQ(frame[0].r, 255);
     CHECK_EQ(frame[0].g, 0);
     led_frame(&led, 400, frame);
+    CHECK(frame[0].g < 255); /* no longer a third of the turn at 400 ms */
+    led_frame(&led, 1200, frame);
     CHECK_EQ(frame[0].r, 0);
     CHECK_EQ(frame[0].g, 255);
     CHECK(!memcmp(&frame[0], &frame[1], sizeof(frame[0])));
+
+    /* ashfall.ui.led_override: exact final colours, no mode/brightness
+     * processing, and no animation timer. */
+    led.settings.mode = LED_MODE_OFF;
+    led.settings.brightness = 0;
+    led.settings.override_valid = true;
+    led.settings.override[0] = (rgb_t){10, 20, 30};
+    led.settings.override[1] = (rgb_t){40, 50, 60};
+    CHECK(!led_is_animated(&led));
+    led_frame(&led, 0, frame);
+    CHECK_EQ(frame[0].r, 10);
+    CHECK_EQ(frame[0].g, 20);
+    CHECK_EQ(frame[0].b, 30);
+    CHECK_EQ(frame[1].r, 40);
+    CHECK_EQ(frame[1].g, 50);
+    CHECK_EQ(frame[1].b, 60);
+    led.settings.override_valid = false;
+    CHECK(!led_is_animated(&led));
 }
 
 static void test_led_apply(void)
@@ -477,10 +602,10 @@ static void test_sensor_fault(void)
     CHECK_EQ(thermal_hottest_tenths(&set), -1);
     CHECK_EQ(thermal_sweep(&set), -1);
 
-    /* A stopped fan first gets the spin-up kick (100 % for FAN_MIN_KICK_MS),
-     * then settles on the balanced preset: cooling, never off. */
-    CHECK_EQ(fan_control_tick(&fan, -1, 0), 100);
-    CHECK_EQ(fan_control_tick(&fan, -1, FAN_MIN_KICK_MS + 1),
+    /* No sensor fails safe at the balanced preset (cooling, never off); the
+     * kick level is below it, so the first apply goes straight to it. */
+    CHECK_EQ(fan_control_tick(&fan, -1, 0, true), FAN_PRESET_BALANCED_PCT);
+    CHECK_EQ(fan_control_tick(&fan, -1, 5000, true),
              FAN_PRESET_BALANCED_PCT);
     CHECK(fan.sensor_fault);
     CHECK(fan.safety);
@@ -496,7 +621,8 @@ static void test_sensor_fault(void)
     thermal_scan(&set);
     CHECK_EQ(set.count, 2);
     CHECK_EQ(thermal_hottest_tenths(&set), 420);
-    CHECK_EQ(fan_control_tick(&fan, thermal_hottest_tenths(&set), 1000), 0);
+    CHECK_EQ(fan_control_tick(&fan, thermal_hottest_tenths(&set), 1000, true),
+             0);
     CHECK(!fan.sensor_fault);
     CHECK(!fan.safety);
 }
@@ -626,6 +752,140 @@ static void test_thermal_watch(void)
     CHECK_EQ(thermal_hottest_tenths(&set), 620);
 }
 
+/* --- #82: soft clock-throttle override ---------------------------------- */
+
+/* Matches the live RP5: the CPU/GPU clock cdevs are bound with
+ * `cdevN_trip_point` to the ddr/gpuss trips (95 C) and secondary GPU zones
+ * (100 C); the cpu-1-* 75 C trip has no cooling device on this kernel. */
+static void test_throttle(void)
+{
+    throttle_state th;
+
+    /* cpu-1-0: a 75 C reporting trip with NO cdev and the 110 C pause trip. */
+    mkdir_p("/sys/class/thermal/thermal_zone5");
+    write_file("/sys/class/thermal/thermal_zone5/type", "cpu-1-0\n");
+    write_file("/sys/class/thermal/thermal_zone5/temp", "65000\n");
+    write_file("/sys/class/thermal/thermal_zone5/trip_point_0_type", "passive\n");
+    write_file("/sys/class/thermal/thermal_zone5/trip_point_0_temp", "75000\n");
+    write_file("/sys/class/thermal/thermal_zone5/trip_point_1_type", "passive\n");
+    write_file("/sys/class/thermal/thermal_zone5/trip_point_1_temp", "110000\n");
+    write_file("/sys/class/thermal/thermal_zone5/trip_point_2_type", "passive\n");
+    write_file("/sys/class/thermal/thermal_zone5/trip_point_2_temp", "115000\n");
+    write_file("/sys/class/thermal/thermal_zone5/trip_point_3_type", "passive\n");
+    write_file("/sys/class/thermal/thermal_zone5/trip_point_3_temp", "125000\n");
+
+    /* test_sensor_fault() recreated the GPU zone without its trip/cdev files. */
+    write_file("/sys/class/thermal/thermal_zone2/trip_point_0_type", "passive\n");
+    write_file("/sys/class/thermal/thermal_zone2/trip_point_0_temp", "95000\n");
+    write_file("/sys/class/thermal/thermal_zone2/trip_point_1_type", "passive\n");
+    write_file("/sys/class/thermal/thermal_zone2/trip_point_1_temp", "115000\n");
+    write_file("/sys/class/thermal/thermal_zone2/trip_point_2_type", "passive\n");
+    write_file("/sys/class/thermal/thermal_zone2/trip_point_2_temp", "125000\n");
+    write_file("/sys/class/thermal/thermal_zone2/trip_point_3_type", "critical\n");
+    write_file("/sys/class/thermal/thermal_zone2/trip_point_3_temp", "155000\n");
+    mkdir_p("/sys/class/thermal/thermal_zone2/cdev0");
+    write_file("/sys/class/thermal/thermal_zone2/cdev0/type",
+               "devfreq-3d00000.qcom,kgsl-3d0\n");
+    write_file("/sys/class/thermal/thermal_zone2/cdev0_trip_point", "0\n");
+
+    /* ddr: cpufreq-cpu4 + cpufreq-cpu7 + GPU devfreq + cdsp all on trip 1
+     * (95 C).  Only the clock cdevs are targeted; the trip target is the CPU
+     * one (105 C). */
+    mkdir_p("/sys/class/thermal/thermal_zone6");
+    write_file("/sys/class/thermal/thermal_zone6/type", "ddr\n");
+    write_file("/sys/class/thermal/thermal_zone6/trip_point_0_type", "passive\n");
+    write_file("/sys/class/thermal/thermal_zone6/trip_point_0_temp", "125000\n");
+    write_file("/sys/class/thermal/thermal_zone6/trip_point_1_type", "passive\n");
+    write_file("/sys/class/thermal/thermal_zone6/trip_point_1_temp", "95000\n");
+    write_file("/sys/class/thermal/thermal_zone6/trip_point_2_type", "passive\n");
+    write_file("/sys/class/thermal/thermal_zone6/trip_point_2_temp", "100000\n");
+    write_file("/sys/class/thermal/thermal_zone6/trip_point_3_type", "passive\n");
+    write_file("/sys/class/thermal/thermal_zone6/trip_point_3_temp", "115000\n");
+    for (int i = 0; i < 4; i++) {
+        char dir[128];
+        char file[128];
+
+        snprintf(dir, sizeof(dir), "/sys/class/thermal/thermal_zone6/cdev%d", i);
+        mkdir_p(dir);
+        snprintf(file, sizeof(file), "%s/type", dir);
+        write_file(file, i == 0   ? "cpufreq-cpu4\n"
+                         : i == 1 ? "cpufreq-cpu7\n"
+                         : i == 2 ? "devfreq-3d00000.qcom,kgsl-3d0\n"
+                                  : "cdsp\n");
+        snprintf(file, sizeof(file), "%s/cdev%d_trip_point",
+                 "/sys/class/thermal/thermal_zone6", i);
+        write_file(file, "1\n");
+    }
+
+    /* A secondary GPU zone at 100 C (restart must remember 100, not 95). */
+    mkdir_p("/sys/class/thermal/thermal_zone7");
+    write_file("/sys/class/thermal/thermal_zone7/type", "cwlan\n");
+    write_file("/sys/class/thermal/thermal_zone7/trip_point_0_type", "passive\n");
+    write_file("/sys/class/thermal/thermal_zone7/trip_point_0_temp", "125000\n");
+    write_file("/sys/class/thermal/thermal_zone7/trip_point_1_type", "passive\n");
+    write_file("/sys/class/thermal/thermal_zone7/trip_point_1_temp", "100000\n");
+    mkdir_p("/sys/class/thermal/thermal_zone7/cdev0");
+    write_file("/sys/class/thermal/thermal_zone7/cdev0/type",
+               "devfreq-3d00000.qcom,kgsl-3d0\n");
+    write_file("/sys/class/thermal/thermal_zone7/cdev0_trip_point", "1\n");
+
+    throttle_scan(&th);
+    CHECK(th.supported);
+    CHECK_EQ(th.trip_count, 3); /* ddr, gpuss-0, cwlan; 75 C has no cdev */
+    CHECK_EQ(throttle_status(&th), 0);
+
+    CHECK(throttle_set(&th, true));
+    CHECK_EQ(throttle_status(&th), 1);
+    CHECK_EQ(read_int("/sys/class/thermal/thermal_zone6/trip_point_1_temp"),
+             105000); /* CPU clock target */
+    CHECK_EQ(read_int("/sys/class/thermal/thermal_zone2/trip_point_0_temp"),
+             110000); /* GPU clock target */
+    CHECK_EQ(read_int("/sys/class/thermal/thermal_zone7/trip_point_1_temp"),
+             110000);
+    /* Protective/reporting trips are never touched. */
+    CHECK_EQ(read_int("/sys/class/thermal/thermal_zone5/trip_point_0_temp"),
+             75000);
+    CHECK_EQ(read_int("/sys/class/thermal/thermal_zone5/trip_point_1_temp"),
+             110000);
+    CHECK_EQ(read_int("/sys/class/thermal/thermal_zone6/trip_point_2_temp"),
+             100000);
+    CHECK_EQ(read_int("/sys/class/thermal/thermal_zone2/trip_point_3_temp"),
+             155000);
+
+    CHECK(throttle_set(&th, false));
+    CHECK_EQ(throttle_status(&th), 0);
+    CHECK_EQ(read_int("/sys/class/thermal/thermal_zone6/trip_point_1_temp"),
+             95000);
+    CHECK_EQ(read_int("/sys/class/thermal/thermal_zone2/trip_point_0_temp"),
+             95000);
+    CHECK_EQ(read_int("/sys/class/thermal/thermal_zone7/trip_point_1_temp"),
+             100000);
+
+    /* An init restart sees the raised trips.  The fresh scan must recognise
+     * them and restore each one to its own stock value (95 or 100 C). */
+    {
+        throttle_state restarted;
+
+        CHECK(throttle_set(&th, true));
+        throttle_scan(&restarted);
+        CHECK(restarted.supported);
+        CHECK_EQ(restarted.trip_count, 3);
+        CHECK(restarted.active);
+        CHECK(throttle_set(&restarted, false));
+        CHECK_EQ(read_int("/sys/class/thermal/thermal_zone6/trip_point_1_temp"),
+                 95000);
+        CHECK_EQ(read_int("/sys/class/thermal/thermal_zone2/trip_point_0_temp"),
+                 95000);
+        CHECK_EQ(read_int("/sys/class/thermal/thermal_zone7/trip_point_1_temp"),
+                 100000);
+    }
+
+    remove_rel("/sys/class/thermal/thermal_zone5");
+    remove_rel("/sys/class/thermal/thermal_zone6");
+    remove_rel("/sys/class/thermal/thermal_zone7");
+    remove_rel("/sys/class/thermal/thermal_zone2/cdev0");
+}
+
 int main(void)
 {
     if (make_sysfs() < 0) {
@@ -637,9 +897,11 @@ int main(void)
     test_duty();
     test_thermal();
     test_apply_and_kick();
+    test_screen_off();
     test_presets();
     test_safety();
     test_smart();
+    test_smart_preview();
     test_led_colour();
     test_led_effects();
     test_led_apply();
@@ -649,6 +911,7 @@ int main(void)
     test_led_retry();
     test_prop_range();
     test_thermal_watch();
+    test_throttle();
 
     /* best effort cleanup */
     {

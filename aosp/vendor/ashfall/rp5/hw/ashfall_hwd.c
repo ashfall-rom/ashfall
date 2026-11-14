@@ -15,6 +15,7 @@
 #include "led.h"
 #include "plat.h"
 #include "thermal.h"
+#include "throttle.h"
 
 #include <signal.h>
 #include <stdbool.h>
@@ -27,7 +28,9 @@
 #define PROP_FAN_MODE "persist.ashfall.fan.mode"
 #define PROP_FAN_MANUAL "persist.ashfall.fan.manual_pct"
 #define PROP_FAN_CURVE "persist.ashfall.fan.curve"
-#define PROP_FAN_SAFETY "persist.ashfall.fan.safety_c"
+#define PROP_FAN_KICK "persist.ashfall.fan.kick"
+#define PROP_FAN_KICK_PCT "persist.ashfall.fan.kick_pct"
+#define PROP_FAN_SCREEN_OFF "persist.ashfall.fan.screen_off"
 
 #define PROP_LED_MODE "persist.ashfall.led.mode"
 #define PROP_LED_LEFT "persist.ashfall.led.color_left"
@@ -35,14 +38,24 @@
 #define PROP_LED_SYNC "persist.ashfall.led.sync"
 #define PROP_LED_BRIGHTNESS "persist.ashfall.led.brightness"
 #define PROP_LED_SPEED "persist.ashfall.led.speed"
-#define PROP_LED_SCREEN_OFF "persist.ashfall.led.screen_off"
+
+#define PROP_UI_FAN_LIVE "ashfall.ui.fan_live"
+#define PROP_UI_FAN_PREVIEW "ashfall.ui.fan_preview_curve"
+#define PROP_UI_LED_OVERRIDE "ashfall.ui.led_override"
+
+#define PROP_PERF_OVERRIDE "ashfall.perf.throttle_override"
+#define PROP_PERF_PERMANENT "persist.ashfall.perf.throttle_override_permanent"
 
 #define STATUS_FAN_TEMP "ashfall.status.fan.temp"
 #define STATUS_FAN_PCT "ashfall.status.fan.pct"
 #define STATUS_FAN_RPM "ashfall.status.fan.rpm"
 #define STATUS_FAN_SAFETY "ashfall.status.fan.safety"
+#define STATUS_PERF_THROTTLE "ashfall.status.perf.throttle"
 
 #define STATUS_INTERVAL_MS 2000
+/* ashfall.ui.fan_live=1: a fan page/editor/QS dialog is visible, publish the
+ * status (and read the tach) four times as often (docs/phase5.md §6.1). */
+#define STATUS_LIVE_MS 500
 #define IDLE_WAIT_MS 500
 /* Retry period for LED writes that failed (vendor init chmod race, node not
  * there yet): lighting must not stay dark for the whole boot. */
@@ -86,8 +99,11 @@ static void read_fan_settings(fan_settings *out, bool *changed)
      * the documented default instead of being clamped to the boundary. */
     next.manual_pct =
         prop_get_int_range(PROP_FAN_MANUAL, defaults.manual_pct, 0, 100);
-    next.safety_c =
-        prop_get_int_range(PROP_FAN_SAFETY, defaults.safety_c, 70, 95);
+    next.kick = prop_get_bool(PROP_FAN_KICK, defaults.kick);
+    next.kick_pct = prop_get_int_range(PROP_FAN_KICK_PCT, defaults.kick_pct,
+                                       FAN_KICK_MIN_PCT, FAN_KICK_MAX_PCT);
+    if (prop_get_str(PROP_FAN_SCREEN_OFF, buf, sizeof(buf)) > 0)
+        next.off_when_screen_off = strcmp(buf, "run") != 0;
     if (prop_get_str(PROP_FAN_CURVE, buf, sizeof(buf)) > 0) {
         fan_curve curve;
 
@@ -97,6 +113,27 @@ static void read_fan_settings(fan_settings *out, bool *changed)
 
     if (memcmp(&next, out, sizeof(next)) != 0) {
         *out = next;
+        *changed = true;
+    }
+}
+
+/* ashfall.ui.fan_preview_curve: live curve editing.  While it is non-empty
+ * and valid, smart mode follows it instead of persist.ashfall.fan.curve.  The
+ * app clears the property when the editor closes. */
+static void read_fan_preview(fan_state *fan, bool *changed)
+{
+    fan_curve curve;
+    char buf[FAN_CURVE_MAX_LEN + 1];
+    bool valid = false;
+
+    memset(&curve, 0, sizeof(curve));
+    if (prop_get_str(PROP_UI_FAN_PREVIEW, buf, sizeof(buf)) > 0)
+        valid = fan_parse_curve(buf, &curve);
+
+    if (valid != fan->preview_valid ||
+        (valid && memcmp(&curve, &fan->preview, sizeof(curve)) != 0)) {
+        fan->preview = curve;
+        fan->preview_valid = valid;
         *changed = true;
     }
 }
@@ -127,12 +164,54 @@ static void read_led_settings(led_settings *out, bool *changed)
     next.brightness =
         prop_get_int_range(PROP_LED_BRIGHTNESS, defaults.brightness, 0, 100);
     next.speed = prop_get_int_range(PROP_LED_SPEED, defaults.speed, 1, 10);
-    if (prop_get_str(PROP_LED_SCREEN_OFF, buf, sizeof(buf)) > 0)
-        next.screen_off_keep = !strcmp(buf, "keep");
+
+    /* ashfall.ui.led_override="RRGGBB:RRGGBB" (left:right, final colours incl.
+     * intensity), used by the gamepad tester.  Empty = normal lighting. */
+    next.override_valid = false;
+    if (prop_get_str(PROP_UI_LED_OVERRIDE, buf, sizeof(buf)) > 0 &&
+        strlen(buf) == 13 && buf[6] == ':') {
+        char left[7];
+        char right[7];
+        rgb_t l;
+        rgb_t r;
+
+        memcpy(left, buf, 6);
+        left[6] = '\0';
+        memcpy(right, buf + 7, 6);
+        right[6] = '\0';
+        if (led_parse_colour(left, &l) && led_parse_colour(right, &r)) {
+            next.override[0] = l;
+            next.override[1] = r;
+            next.override_valid = true;
+        }
+    }
 
     if (memcmp(&next, out, sizeof(next)) != 0) {
         *out = next;
         *changed = true;
+    }
+}
+
+/* ashfall.perf.throttle_override is non-persistent.  Returns true when the
+ * property is present; *requested is its value. */
+static bool perf_override_requested(bool *requested)
+{
+    char buf[16];
+
+    if (prop_get_str(PROP_PERF_OVERRIDE, buf, sizeof(buf)) <= 0)
+        return false;
+    *requested = !strcmp(buf, "1");
+    return true;
+}
+
+static void publish_throttle_status(const throttle_state *throttle,
+                                    int *cache)
+{
+    int value = throttle_status(throttle);
+
+    if (value != *cache) {
+        prop_set_int(STATUS_PERF_THROTTLE, value);
+        *cache = value;
     }
 }
 
@@ -155,6 +234,8 @@ static void publish_status(const fan_state *fan, int temp_tenths,
                            int64_t now)
 {
     struct status_cache next;
+    int interval = prop_get_bool(PROP_UI_FAN_LIVE, false) ? STATUS_LIVE_MS
+                                                          : STATUS_INTERVAL_MS;
 
     next.temp = temp_tenths;
     next.pct = fan->out_pct; /* -1 = unknown (sysfs write failed) */
@@ -172,7 +253,7 @@ static void publish_status(const fan_state *fan, int temp_tenths,
         prop_set_int(STATUS_FAN_SAFETY, next.safety);
 
     *cache = next;
-    *next_ms = now + STATUS_INTERVAL_MS;
+    *next_ms = now + interval;
 }
 
 int main(void)
@@ -181,15 +262,19 @@ int main(void)
     thermal_set thermal;
     fan_state fan;
     led_state led;
+    throttle_state throttle;
     struct status_cache status;
+    int throttle_status_cache = -2; /* force the first publish */
     int64_t now;
     int64_t next_fan_ms;
     int64_t next_led_ms = 0;
     int64_t next_status_ms = 0;
     int64_t next_thermal_ms;
     int last_temp = -1;
-    bool led_on = false;
     bool force_led = true;
+    bool screen_on = screen_is_on();
+    bool led_want_on = false;
+    bool fan_live = prop_get_bool(PROP_UI_FAN_LIVE, false);
 
     memset(&sa, 0, sizeof(sa));
     sa.sa_handler = on_signal; /* no SA_RESTART: futex waits are interrupted */
@@ -213,24 +298,41 @@ int main(void)
         bool changed = false;
 
         read_fan_settings(&fan.settings, &changed);
+        read_fan_preview(&fan, &changed);
         read_led_settings(&led.settings, &changed);
     }
     last_temp = thermal_hottest_tenths(&thermal);
     next_thermal_ms = now + THERMAL_SWEEP_MS;
-    fan_control_tick(&fan, last_temp, now);
+    fan_control_tick(&fan, last_temp, now, screen_on);
     next_fan_ms = now + FAN_SAMPLE_MS;
     publish_status(&fan, last_temp, &status, &next_status_ms, now);
+
+    /* Performance override: the non-persistent property wins when present (a
+     * service restart in the same boot), otherwise the hidden permanent
+     * switch decides whether it is applied at this boot. */
+    throttle_scan(&throttle);
+    {
+        bool requested = false;
+
+        if (!perf_override_requested(&requested))
+            requested = prop_get_bool(PROP_PERF_PERMANENT, false);
+        if (requested || throttle.active)
+            throttle_set(&throttle, requested);
+        publish_throttle_status(&throttle, &throttle_status_cache);
+    }
 
     while (g_running) {
         bool changed = false;
         bool fan_due;
         bool led_due;
-        bool have_raw = false;
+        bool have_raw;
+        bool want_on;
         int wait_ms;
         int64_t deadline;
 
         now = ah_now_ms();
         read_fan_settings(&fan.settings, &changed);
+        read_fan_preview(&fan, &changed);
         {
             led_settings before = led.settings;
 
@@ -240,6 +342,47 @@ int main(void)
         }
         if (changed)
             force_led = true;
+
+        /* Screen transitions are property changes, so prop_wait_any() wakes
+         * us; both the fan hold and the LED re-apply below follow from it. */
+        {
+            bool next_screen_on = screen_is_on();
+
+            if (next_screen_on != screen_on) {
+                screen_on = next_screen_on;
+                changed = true;
+                force_led = true;
+                if (screen_on) {
+                    /* The rings are off (screen-off policy) and the driver
+                     * may have been re-initialised: rewrite both attributes
+                     * instead of trusting the cached values. */
+                    led_invalidate(&led);
+                    /* Re-detect the class devices: a screen cycle can race
+                     * the vendor chmod / driver probe. */
+                    led_probe(&led);
+                }
+                ah_logf(AH_LOG_INFO, "screen %s",
+                        screen_on ? "on: re-applying LED/fan settings"
+                                  : "off: holding fan and LEDs");
+            }
+        }
+
+        /* --- performance override ---------------------------------------- */
+        {
+            bool requested = false;
+
+            if (perf_override_requested(&requested) &&
+                requested != throttle.active)
+                throttle_set(&throttle, requested);
+            publish_throttle_status(&throttle, &throttle_status_cache);
+        }
+
+        /* A settings, curve-preview or screen change must re-evaluate the
+         * smart target immediately, even when the temperature sits inside the
+         * 3 C hysteresis band; reset the anchor (the EMA is temperature-only
+         * and stays). */
+        if (changed)
+            fan.anchor_c = -1;
 
         fan_due = now >= next_fan_ms;
         if (fan_due) {
@@ -252,51 +395,51 @@ int main(void)
             } else {
                 last_temp = thermal_hottest_tenths(&thermal);
             }
-            fan_control_tick(&fan, last_temp, now);
+            fan_control_tick(&fan, last_temp, now, screen_on);
             next_fan_ms = now + FAN_SAMPLE_MS;
         } else if (changed) {
-            /* A settings change is applied immediately, using the last
-             * temperature sample. */
-            fan_control_tick(&fan, last_temp, now);
+            /* A settings or screen change is applied immediately, using the
+             * last temperature sample. */
+            fan_control_tick(&fan, last_temp, now, screen_on);
         } else if (fan.kick_until_ms > 0 && now >= fan.kick_until_ms) {
             /* The spin-up kick is over: drop to the requested speed. */
             fan_apply_pct(&fan, fan.pending_pct, now);
         }
 
-        /* --- lighting ---------------------------------------------------- */
-        have_raw = led.settings.mode != LED_MODE_OFF &&
+        /* --- lighting ----------------------------------------------------
+         * LEDs are always off while the screen is off and re-applied (both
+         * attributes rewritten) on screen-on; persist.ashfall.led.screen_off
+         * was removed in phase 5 v2.  No animation runs while off; a failed
+         * off/on write is retried every LED_RETRY_MS. */
+        have_raw = (led.settings.mode != LED_MODE_OFF ||
+                    led.settings.override_valid) &&
                    led.backend != LED_BACKEND_NONE;
-        led_due = have_raw && led_is_animated(&led) && now >= next_led_ms;
-        {
-            bool want_on = have_raw && (screen_is_on() ||
-                                        led.settings.screen_off_keep);
+        want_on = screen_on && have_raw;
+        led_due = want_on && led_is_animated(&led) && now >= next_led_ms;
+        if (force_led || !led.applied || led_due || want_on != led_want_on) {
+            rgb_t frame[2];
 
-            /* !applied retries a failed/never-attempted write: vendor init
-             * chmods the nodes in its own "on boot" action, i.e. possibly
-             * after this daemon started. */
-            if (force_led || led_due || !led.applied) {
-                rgb_t frame[2];
-
-                led_frame(&led, now, frame);
-                led_apply(&led, frame, want_on);
-                led_on = want_on;
-                force_led = false;
-                if (!led.applied)
-                    next_led_ms = now + LED_RETRY_MS;
-                else if (have_raw && led_is_animated(&led) && want_on)
-                    next_led_ms = now + LED_FRAME_MS;
-                else
-                    next_led_ms = 0;
-            } else if (want_on != led_on) {
-                rgb_t frame[2];
-
-                led_frame(&led, now, frame);
-                led_apply(&led, frame, want_on);
-                led_on = want_on;
-            }
+            led_frame(&led, now, frame);
+            led_apply(&led, frame, want_on);
+            led_want_on = want_on;
+            force_led = false;
+            if (!led.applied)
+                next_led_ms = now + LED_RETRY_MS;
+            else if (want_on && led_is_animated(&led))
+                next_led_ms = now + LED_FRAME_MS;
+            else
+                next_led_ms = 0;
         }
 
         /* --- status ------------------------------------------------------ */
+        {
+            bool live = prop_get_bool(PROP_UI_FAN_LIVE, false);
+
+            if (live != fan_live) {
+                fan_live = live;
+                next_status_ms = 0; /* switch 2 s <-> 500 ms immediately */
+            }
+        }
         if (now >= next_status_ms) {
             fan.rpm = fan_read_rpm();
             publish_status(&fan, last_temp, &status, &next_status_ms, now);
@@ -310,8 +453,6 @@ int main(void)
             deadline = next_led_ms;
         if (fan.kick_until_ms > 0 && fan.kick_until_ms < deadline)
             deadline = fan.kick_until_ms;
-        if (!have_raw || !led_is_animated(&led))
-            ; /* still sleep: property changes and the fan tick wake us */
         wait_ms = (int)(deadline - now);
         if (wait_ms > IDLE_WAIT_MS)
             wait_ms = IDLE_WAIT_MS;
@@ -322,6 +463,10 @@ int main(void)
 
     ah_logf(AH_LOG_INFO, "stopping");
     led_disable(&led);
+    /* Release the performance override: the kernel trips must never stay
+     * raised without the daemon watching over them. */
+    if (throttle.active)
+        throttle_set(&throttle, false);
     /* Leave the fan at its current duty: the safety override only lives as
      * long as this daemon, so stopping it must not also stop cooling.  init
      * restarts the service and re-applies persist.ashfall.fan.*. */
