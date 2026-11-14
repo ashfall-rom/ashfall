@@ -34,7 +34,8 @@ SettingsLib's `TileUtils` like any vendor Settings entry:
 <meta-data android:name="com.android.settings.icon"    android:resource="@drawable/ic_handheld" />
 <meta-data android:name="com.android.settings.icon_tintable" android:value="true" />
 <meta-data android:name="com.android.settings.keyhint" android:value="ashfall_handheld" />
-<meta-data android:name="com.android.settings.order"   android:value="1050" />
+<meta-data android:name="com.android.settings.group_key" android:value="top_level_support_category" />
+<meta-data android:name="com.android.settings.order"   android:value="100" />
 ```
 
 Details that matter:
@@ -48,6 +49,17 @@ Details that matter:
   category to it).
 * `keyhint` is required for homepage tiles (Settings logs “Key hint missing”
   otherwise and skips the search index entry).
+* `group_key` is required for the **card**: `DashboardFragment` adds an
+  injected tile without a group key straight to the `PreferenceScreen`
+  (`DashboardFragment.java` 603-617), where it has no
+  `UntitledPreferenceCategory` container and therefore no card surface — that
+  is why the row used to be black-on-black on the homepage (#102).  Pointing
+  it at `top_level_support_category` puts it inside the native bottom card
+  (the one that hosts Accessibility and Support), and `order=100` places it
+  after them.  No Settings patch and no AshFall-specific category are needed.
+* The category is the native `top_level_support_category`, whose layout is
+  `settingslib_expressive_untitled_preference_category`, so the row inherits
+  the same grey card (and the pure-black variant) as the native entries.
 * The icon is tinted by Settings.  `ic_handheld` is a monochrome vector; the
   expressive homepage (Android 16+) wraps it in the same layer container it
   uses for its own entries.
@@ -623,6 +635,14 @@ The user-test changes of `docs/phase5.md` §6.3 were implemented on
   runtime rows are built, clamps the card to 85 % of the screen (60 % minimum
   for the Fan dialog) and gives the remainder to the scroll view, so the
   header and Done footer never scroll; the saturation/value square is 160 dp.
+* **Homepage card (#102).**  The homepage activity now declares
+  `com.android.settings.group_key=top_level_support_category` and
+  `com.android.settings.order=100`.  `TileUtils` stores the group key on the
+  tile and `DashboardFragment` adds it to that existing
+  `PreferenceCategory`; it is no longer appended bare to the screen, so the
+  row gets the native expressive card surface instead of black-on-black.
+  Placement is inside the bottom Support card, after Accessibility/Support.
+  Device pixel check in normal dark and pure black is still pending.
 * **Live fan status.**  `ashfall.ui.fan_live=1` is written on resume/onStart of
   the Fan page, the curve editor and the QS Fan dialog and cleared when they
   leave; their polling period is 500 ms.  A counter in `Fan.setLive()` keeps
@@ -670,6 +690,9 @@ trampoline and the two `TileService`s.
 
 1. Settings → bottom of the homepage: **AshFall settings** with the
    fan/lighting/controller subtitle and a tinted icon in the expressive style.
+   It is the last row of the bottom Support card (after Accessibility and
+   Support) and therefore sits on the same grey card as the native entries, in
+   normal dark and pure black (#102).
 2. Open AshFall settings; check the three rows show live values and open the
    pages; Back returns to Settings.
 3. Fan: switch off/on; activate each built-in (including **Manual**, then move

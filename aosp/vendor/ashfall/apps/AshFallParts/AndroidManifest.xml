@@ -64,9 +64,19 @@
             <meta-data
                 android:name="com.android.settings.keyhint"
                 android:value="ashfall_handheld" />
+            <!-- Join the native bottom homepage card instead of being appended
+                 directly to the PreferenceScreen.  DashboardFragment puts an
+                 injected tile without a group key straight onto the screen,
+                 where it has no UntitledPreferenceCategory container and so no
+                 card surface (black on black).  This key is the same
+                 top_level_support_category card that hosts Accessibility and
+                 Support, and order 100 places the row after them. -->
+            <meta-data
+                android:name="com.android.settings.group_key"
+                android:value="top_level_support_category" />
             <meta-data
                 android:name="com.android.settings.order"
-                android:value="1050" />
+                android:value="100" />
         </activity>
 
         <activity
