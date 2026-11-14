@@ -199,29 +199,9 @@ public class FanFragment extends PreferenceFragmentCompat {
         updateStatus();
     }
 
-    /** The active preset, derived from the mode when the id is stale. */
-    private Preset activePreset() {
-        Preset preset = mStore.byId(Fan.presetId());
-        if (preset != null) {
-            return preset;
-        }
-        switch (Fan.mode()) {
-            case Preset.MODE_OFF:
-                return mStore.byId(PresetStore.ID_OFF);
-            case Preset.MODE_QUIET:
-                return mStore.byId(PresetStore.ID_QUIET);
-            case Preset.MODE_BALANCED:
-                return mStore.byId(PresetStore.ID_BALANCED);
-            case Preset.MODE_MAX:
-                return mStore.byId(PresetStore.ID_MAX);
-            default:
-                return mStore.byId(PresetStore.ID_SMART);
-        }
-    }
-
     /** Curves belong to Smart presets; fall back to the built-in Smart preset. */
     private Preset curveTarget() {
-        final Preset active = activePreset();
+        final Preset active = Fan.activePreset(mStore);
         if (active != null && active.isCurveEditable()) {
             return active;
         }
@@ -234,7 +214,8 @@ public class FanFragment extends PreferenceFragmentCompat {
         }
         mRebuilding = true;
         try {
-            final String activeId = Fan.presetId();
+            final Preset active = Fan.activePreset(mStore);
+            final String activeId = active == null ? null : active.id;
             mPresetCategory.removeAll();
             final List<Preset> presets = mStore.all();
             for (Preset preset : presets) {
@@ -267,7 +248,7 @@ public class FanFragment extends PreferenceFragmentCompat {
         if (mSwitch == null) {
             return;
         }
-        final Preset active = activePreset();
+        final Preset active = Fan.activePreset(mStore);
         mSwitch.setChecked(Fan.isOn());
         if (Fan.isOn()) {
             final String name = Ui.presetName(requireContext(), active);

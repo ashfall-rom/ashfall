@@ -17,7 +17,6 @@
 package org.ashfall.parts.qs;
 
 import android.content.Intent;
-import android.content.Intent;
 import android.os.Handler;
 import android.os.Looper;
 import android.service.quicksettings.Tile;
@@ -104,10 +103,7 @@ public class FanTileService extends TileService {
             return;
         }
         final PresetStore store = PresetStore.get(this);
-        Preset preset = store.byId(Fan.presetId());
-        if (preset == null) {
-            preset = store.byId(PresetStore.ID_OFF);
-        }
+        Preset preset = Fan.activePreset(store);
         if (!Fan.isOn()) {
             preset = store.byId(PresetStore.ID_OFF);
         }

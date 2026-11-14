@@ -28,10 +28,10 @@ import android.view.WindowManager;
 import android.widget.LinearLayout;
 import android.widget.RadioGroup;
 import android.widget.SeekBar;
+import android.widget.Switch;
 import android.widget.TextView;
 
 import androidx.annotation.NonNull;
-import androidx.appcompat.widget.SwitchCompat;
 import androidx.core.content.ContextCompat;
 
 import org.ashfall.parts.Prefs;
@@ -57,7 +57,7 @@ public class LightingDialog extends Dialog {
     private final Listener mListener;
     private final Handler mHandler = new Handler(Looper.getMainLooper());
 
-    private SwitchCompat mSwitch;
+    private Switch mSwitch;
     private RadioGroup mTargetGroup;
     private RadioGroup mEffectGroup;
     private LinearLayout mSwatches;

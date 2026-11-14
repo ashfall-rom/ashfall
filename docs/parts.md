@@ -81,7 +81,10 @@ immediately to the properties from §2 of the contract; there is no Apply button
 * **Main switch** (`MainSwitchPreference`) turns the fan on to the last active
   preset (or Smart) and off by writing `persist.ashfall.fan.mode=off` and
   `persist.ashfall.fan.preset=builtin.off`.  The safety override is a daemon
-  feature and stays active even in Off.
+  feature and stays active even in Off.  The row uses the framework
+  `android.widget.Switch`, not `androidx…SwitchCompat`: the page is inflated
+  with `Theme.SubSettingsBase.Expressive`, which is not an AppCompat theme
+  (see §9).
 * **Status** is read every 2 s while the page is visible:
   `ashfall.status.fan.{temp,pct,rpm,safety}`.  Temperature is `tenths °C`; the
   page shows `°C`, output %, RPM (or `—`), and the safety warning.
@@ -107,21 +110,39 @@ before the first unlock:
   {"id":"builtin.off",     "name":"Off",            "mode":"off",      "manual_pct":50, "curve":"45:0,...","builtin":true},
   {"id":"builtin.quiet",   "name":"Quiet",          "mode":"quiet",    ...},
   {"id":"builtin.balanced","name":"Balanced",       "mode":"balanced", ...},
-  {"id":"builtin.max",     "name":"Maximum",        "mode":"max",      ...},
+  {"id":"builtin.max",     "name":"Max",            "mode":"max",      ...},
   {"id":"builtin.smart",   "name":"Smart (default)","mode":"smart",    "curve":"45:0,55:30,65:55,75:80,82:100","builtin":true},
   {"id":"user.129648e1",   "name":"Preset 1",       "mode":"smart",    "curve":"48:2,55:30,...","builtin":false}
 ]}
 ```
 
-* Built-ins are re-seeded on load and cannot be renamed or deleted; the
-  built-in **Smart** curve is editable (it is the “Smart default” curve).
+* Built-ins are re-seeded on load and cannot be renamed or deleted.  Their
+  **mode is fixed** by the contract (Off/Quiet/Balanced/Max/Smart), so the UI
+  does not offer “Change mode” for them and `PresetStore.save()` keeps the
+  re-seeded mode/name even if a future caller tries to change it.  The
+  built-in **Smart** curve is editable (it is the “Smart default” curve); every
+  other built-in has no curve to edit.
 * A user preset is mode + `manual_pct` *or* `curve`; ids are
   `user.` + 8 hex characters (≤ 32 characters, matching the property limit).
 * The editor offers Activate / Change mode / Curve (Smart only) / Rename /
-  Duplicate / Delete; built-ins only get Activate / Change mode / Curve /
-  Duplicate.
-* Every curve change is saved immediately (and written to
-  `persist.ashfall.fan.curve` when the edited preset is the active one), so
+  Duplicate / Delete; built-ins get Activate / Curve (Smart only) /
+  Duplicate.  Duplicating a built-in creates a normal user preset whose mode is
+  editable, which is the supported way to customise a fixed mode.
+* The **active preset** is resolved in one place, `Fan.activePreset(store)`:
+  use `persist.ashfall.fan.preset` when it still names a preset, otherwise map
+  the daemon-visible `mode` to the matching built-in (Off/Quiet/Balanced/Max/
+  Smart).  Manual without a recorded preset has no built-in and is shown as
+  “Custom values”.  The Fan page, the Handheld summary, the QS tile, the QS
+  dialog and the curve editor all use this helper, so an empty id on a fresh
+  install (mode `smart`) shows Smart and an ACTIVE tile instead of Off.
+* Deleting the active user preset, or “Reset presets”, clears/remaps
+  `persist.ashfall.fan.preset` to the built-in for the current mode (empty for
+  Manual), so the recorded id can never go stale.
+* Every curve change is saved immediately and, when the edited preset is the
+  resolved active preset **and the current mode is Smart**, written to
+  `persist.ashfall.fan.curve`.  That covers the fresh-install case where
+  `persist.ashfall.fan.preset` is empty and the edited preset is the built-in
+  Smart; the daemon follows the edit without re-activating the preset, so
   leaving the page can never lose an edit.
 
 Curve editor (`ui/CurveEditorView`): 2–8 points, ascending 25–95 °C, 0–100 %.
@@ -219,6 +240,46 @@ Everything is reachable with the RP5 pad and the D-pad/left stick:
 | Tester | all input is displayed; Select toggles raw, B exits |
 | Wizard | D-pad moves between Cancel/Save, A activates; B cancels |
 
+### 4.1 Why the app does not translate A/B itself
+
+The daemon (`aosp/vendor/ashfall/rp5/input/`) emits the standard Android
+gamepad keys, `KEYCODE_BUTTON_A`/`B`/`X`/`Y`, not `DPAD_CENTER`/`BACK`.  The
+uinput device is `vendor 0x2020 / product 0x3001` with no vendor key layout, so
+Android applies `Generic.kl`/`Generic.kcm`.  In the A17 tree
+(`frameworks/base/data/keyboards/Generic.kcm`) the gamepad section is:
+
+```
+key BUTTON_A {  base: fallback DPAD_CENTER }
+key BUTTON_B {  base: fallback BACK }
+```
+
+`InputDispatcher` looks the fallback action up with
+`KeyCharacterMap.getFallbackAction()` and dispatches a second key event when the
+focused window returns `false` for the original key
+(`frameworks/native/services/inputflinger/dispatcher/InputDispatcher.cpp`,
+“Find the fallback associated with the incoming key event”).  That happens in
+the input pipeline, below every app, so it covers:
+
+* the androidx.preference rows and the toolbar on all pages,
+* every `AlertDialog` (button, list item, single-choice item),
+* the colour picker swatches and buttons,
+* both QS dialogs in their `TYPE_QS_DIALOG` window,
+* the Settings homepage “Handheld” row (owned by `com.android.settings`).
+
+Adding an app-level `BUTTON_A -> DPAD_CENTER` / `BUTTON_B -> BACK` rewrite
+would therefore be redundant and would double-handle the keys in the views
+that deliberately consume them.  The only deliberate consumers are:
+
+* `ui/CurveEditorView`: A (and D-pad center) adds a point, X deletes one.
+* `TesterActivity`: B exits, Select toggles the raw overlay; every other
+  button is displayed by the tester.
+* `CalibrationActivity`: B cancels the wizard.
+
+Everywhere else A/B are not consumed, so the platform fallback performs the
+contract's “A = select, B = back”.  This was confirmed against the A17 sources
+above; the real RP5 button path is exercised in the device checklist with
+`sendevent` on the gamepad evdev node (§8.15), not with `input keyevent`.
+
 The QS dialogs are ordinary focusable views in a `TYPE_QS_DIALOG` window, so the
 same D-pad/A/B rules apply.  In the QS panel, D-pad focus is managed by
 SystemUI.
@@ -288,16 +349,16 @@ Screenshots (all 1920×1080; light and dark):
 
 | | |
 |---|---|
-| ![Settings homepage](../aosp/vendor/ashfall/apps/AshFallParts/docs/screenshots/settings-homepage.png) | ![Handheld](../aosp/vendor/ashfall/apps/AshFallParts/docs/screenshots/handheld.png) |
-| ![Fan](../aosp/vendor/ashfall/apps/AshFallParts/docs/screenshots/fan.png) | ![Fan presets](../aosp/vendor/ashfall/apps/AshFallParts/docs/screenshots/fan-presets.png) |
-| ![Curve editor](../aosp/vendor/ashfall/apps/AshFallParts/docs/screenshots/curve.png) | ![Preset editor](../aosp/vendor/ashfall/apps/AshFallParts/docs/screenshots/presets.png) |
-| ![Lighting](../aosp/vendor/ashfall/apps/AshFallParts/docs/screenshots/lighting.png) | ![Colour picker](../aosp/vendor/ashfall/apps/AshFallParts/docs/screenshots/colour-picker.png) |
-| ![Controller](../aosp/vendor/ashfall/apps/AshFallParts/docs/screenshots/controller.png) | ![Tester](../aosp/vendor/ashfall/apps/AshFallParts/docs/screenshots/tester.png) |
-| ![Calibration review](../aosp/vendor/ashfall/apps/AshFallParts/docs/screenshots/calibration-review.png) | ![Calibration saved](../aosp/vendor/ashfall/apps/AshFallParts/docs/screenshots/calibration-saved.png) |
-| ![QS fan dialog](../aosp/vendor/ashfall/apps/AshFallParts/docs/screenshots/qs-fan.png) | ![QS lighting dialog](../aosp/vendor/ashfall/apps/AshFallParts/docs/screenshots/qs-lighting.png) |
-| ![Fan, dark](../aosp/vendor/ashfall/apps/AshFallParts/docs/screenshots/fan-dark.png) | ![Lighting, dark](../aosp/vendor/ashfall/apps/AshFallParts/docs/screenshots/lighting-dark.png) |
+| ![Settings homepage](screenshots/settings-homepage.png) | ![Handheld](screenshots/handheld.png) |
+| ![Fan](screenshots/fan.png) | ![Fan presets](screenshots/fan-presets.png) |
+| ![Curve editor](screenshots/curve.png) | ![Preset editor](screenshots/presets.png) |
+| ![Lighting](screenshots/lighting.png) | ![Colour picker](screenshots/colour-picker.png) |
+| ![Controller](screenshots/controller.png) | ![Tester](screenshots/tester.png) |
+| ![Calibration review](screenshots/calibration-review.png) | ![Calibration saved](screenshots/calibration-saved.png) |
+| ![QS fan dialog](screenshots/qs-fan.png) | ![QS lighting dialog](screenshots/qs-lighting.png) |
+| ![Fan, dark](screenshots/fan-dark.png) | ![Lighting, dark](screenshots/lighting-dark.png) |
 
-![QS fan dialog, dark](../aosp/vendor/ashfall/apps/AshFallParts/docs/screenshots/qs-fan-dark.png)
+![QS fan dialog, dark](screenshots/qs-fan-dark.png)
 
 ### 6.3 Checks performed
 
@@ -306,12 +367,23 @@ Screenshots (all 1920×1080; light and dark):
   Back returns to Settings).
 * Handheld page summaries update from the properties
   (`Smart (default) · 56 °C`, `Static · #FF2020`, `Stick deadzone 5% · 3%`).
-* Fan page: D-pad focuses rows (row LinearLayout 1920×164), A activates;
-  activating Quiet wrote `mode=quiet, preset=builtin.quiet`; the saved preset
-  list renders Off/Quiet/Balanced/Maximum/Smart and the user “Preset 1”.
-* Preset editor: D-pad scrolled to “New preset”, A created
+* Fan page: D-pad focuses rows (row LinearLayout 1920×164), D-pad center
+  activates; activating Quiet wrote `mode=quiet, preset=builtin.quiet`; the
+  saved preset list renders Off/Quiet/Balanced/Max/Smart and the user
+  “Preset 1”.  (The emulator has no RP5 pad; it was driven with
+  `KEYCODE_DPAD_CENTER`/`BACK`.  The hardware A/B path is the platform
+  `Generic.kcm` fallback described in §4.1 and is verified on the RP5 in
+  §8.15.)
+* Fresh state: with `persist.ashfall.fan.preset` empty and mode `smart`, the
+  Fan page, the Handheld summary and the QS tile all resolve to
+  **Smart (default)**; editing the Smart curve with the empty id wrote
+  `persist.ashfall.fan.curve` immediately (issue #76), and deleting the active
+  user preset remapped `persist.ashfall.fan.preset` to the built-in for the
+  current mode (issue #79).
+* Preset editor: D-pad scrolled to “New preset”, D-pad center created
   `user.129648e1` and opened the action dialog (Activate/Change mode/Curve/
-  Rename/Duplicate/Delete); Activate wrote `preset=user.129648e1`.
+  Rename/Duplicate/Delete); Activate wrote `preset=user.129648e1`.  Built-ins
+  show Activate/Curve/Duplicate only (no Change mode, issue #78).
 * Curve editor: D-pad right/up changed the selected point from 45 °C/0 % to
   48 °C/2 %; the change was persisted to the Smart preset JSON and written to
   `persist.ashfall.fan.curve`.
@@ -329,6 +401,45 @@ Screenshots (all 1920×1080; light and dark):
   is D-pad navigable and applies on A; the lighting dialog exposes target,
   colour swatches, custom picker, brightness, effect and speed live.
 * Dark mode: pages and the QS dialog render with the dark theme.
+* A/B premise check (#77, build host, read-only): A17
+  `frameworks/base/data/keyboards/Generic.kcm` maps `BUTTON_A` to
+  `fallback DPAD_CENTER` and `BUTTON_B` to `fallback BACK`, and
+  `InputDispatcher.cpp` dispatches that fallback when the focused window does
+  not handle the key.  No app-level A/B translation is therefore needed or
+  added; only `CurveEditorView`, `TesterActivity` and `CalibrationActivity`
+  consume A/B deliberately (§4.1).  The homepage row and all dialogs are
+  covered by the same input-pipeline fallback.
+
+### 6.4 Review fixes (post-build review)
+
+* **#76** – `CurveActivity` now resolves the active preset with
+  `Fan.activePreset()` and writes `persist.ashfall.fan.curve` whenever the
+  edited preset is that preset and the mode is Smart.  Verified with an empty
+  `persist.ashfall.fan.preset` (fresh-install state) and mode `smart`: a
+  D-pad edit changed the property from the default curve to
+  `49:3,55:30,65:55,75:80,82:100` with the preset id still empty.
+* **#77** – premise checked before changing code (§4.1).  No app-level A/B
+  translation was added; the platform `Generic.kcm` fallback does the work.
+  Verified on the emulator by injecting the actual gamepad key codes:
+  `KEYCODE_BUTTON_A` (96) activated the focused **Quiet** row
+  (`mode=quiet, preset=builtin.quiet`) and `KEYCODE_BUTTON_B` (97) left the
+  page, i.e. the fallback path, not `DPAD_CENTER`/`BACK`.
+* **#78** – built-ins no longer offer **Change mode** (verified: the built-in
+  Smart action list is Activate/Curve/Duplicate), `PresetStore.save()` keeps
+  the fixed built-in mode/name, and the built-in label is **Max**.  The list
+  renders Off/Quiet/Balanced/Max/Smart (default).
+* **#79** – the tile, QS dialog, Fan page, Handheld summary and curve editor
+  all use `Fan.activePreset()`.  With an empty preset id and mode `smart` the
+  QS tile label is **Smart (default)** (not Off) and the tile is ACTIVE.
+  Deleting the active user preset remapped
+  `persist.ashfall.fan.preset` from `user.129648e1` to `builtin.smart`;
+  “Reset presets” did the same from `user.cf4e9b04`.
+* **A17 page crash** – `preference_main_switch.xml` used
+  `androidx.appcompat.widget.SwitchCompat`, which cannot inflate under
+  `Theme.SubSettingsBase.Expressive` (not an AppCompat theme).  It and the QS
+  lighting dialog switch are now the framework `android.widget.Switch`; every
+  page and dialog was re-checked for AppCompat/Material widgets and only
+  framework widgets remain in Settings-themed layouts.
 
 ## 7. Build integration
 
@@ -345,7 +456,10 @@ PRODUCT_PACKAGES += \
 
 `Android.bp` mirrors LineageParts: `defaults: ["SettingsLibDefaults"]`,
 `platform_apis`, `certificate: "platform"`, `privileged`, `system_ext_specific`,
-plus `androidx.preference`/`appcompat`/`recyclerview`.  The manifest declares
+plus `androidx.preference`/`appcompat`/`recyclerview`.  R8 is enabled
+(`optimize: true`) and `shrink_resources: true` trims the SettingsLib/Material
+resource table that linking pulls in; `preview/`, `tools/` and this
+documentation are not resource dirs and are never packaged.  The manifest declares
 `android:sharedUserId="android.uid.system"`, the homepage activity meta-data,
 the three page activities, the tester/wizard activities, the QS preferences
 trampoline and the two `TileService`s.
@@ -384,9 +498,26 @@ trampoline and the two `TileService`s.
 13. Light/dark: switch the system theme and check the pages, dialogs, the
     tester and the QS dialogs.
 14. Gamepad only: complete every flow with D-pad/A/B (no touch).
+15. Real A/B path: on the RP5 send the face buttons with
+    `sendevent` on the “AshFall RP5 Gamepad” evdev node (not
+    `input keyevent`) and confirm A selects on every page, both QS dialogs and
+    the Settings homepage row, and B dismisses dialogs / leaves pages.  This
+    exercises the `Generic.kcm` `BUTTON_A -> DPAD_CENTER`,
+    `BUTTON_B -> BACK` fallback from §4.1.
 
 ## 9. Deviations and notes
 
+* **Framework widgets only in Settings-themed layouts.**
+  `Theme.SubSettingsBase.Expressive` is a platform/SettingsLib theme, not an
+  AppCompat or MaterialComponents theme, so `SwitchCompat` throws
+  `InflateException` in its constructor on the real A17 build.  Layouts
+  inflated with that theme (`preference_*.xml`) use `android.widget.*` only.
+  The QS lighting dialog uses the framework switch too.  The QS dialog theme
+  remains an AppCompat dialog theme (it works on A17), but no AppCompat widget
+  is inflated there either.  This is why the built-in main switch is a
+  framework `Switch` rather than SettingsLib's expressive `MaterialSwitch`
+  (which that library inflates with an explicit
+  `@style/Theme.Material3.DynamicColors.DayNight`).
 * The emulator is Android 13.  Production links the real SettingsLib
   collapsing-toolbar activity and the Android 16+ expressive Settings theme;
   the preview uses an equivalent Material stand-in and the fallback theme, which

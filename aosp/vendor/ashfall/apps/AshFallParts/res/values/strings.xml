@@ -98,12 +98,12 @@
     <string name="fan_off_preset">Off</string>
     <string name="fan_quiet_preset">Quiet</string>
     <string name="fan_balanced_preset">Balanced</string>
-    <string name="fan_max_preset">Maximum</string>
+    <string name="fan_max_preset">Max</string>
     <string name="fan_smart_preset">Smart (default)</string>
     <string name="fan_mode_off">Off</string>
     <string name="fan_mode_quiet">Quiet</string>
     <string name="fan_mode_balanced">Balanced</string>
-    <string name="fan_mode_max">Maximum</string>
+    <string name="fan_mode_max">Max</string>
     <string name="fan_mode_manual">Manual</string>
     <string name="fan_mode_smart">Smart</string>
 

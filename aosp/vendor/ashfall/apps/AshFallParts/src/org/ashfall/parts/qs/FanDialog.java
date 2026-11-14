@@ -110,7 +110,9 @@ public class FanDialog extends Dialog {
         }
         mList.removeAllViews();
         final PresetStore store = PresetStore.get(getContext());
-        final String activeId = Fan.isOn() ? Fan.presetId() : PresetStore.ID_OFF;
+        final Preset active = Fan.isOn()
+                ? Fan.activePreset(store) : store.byId(PresetStore.ID_OFF);
+        final String activeId = active == null ? null : active.id;
         final LayoutInflater inflater = LayoutInflater.from(getContext());
         View first = null;
         for (Preset preset : store.all()) {
@@ -145,10 +147,8 @@ public class FanDialog extends Dialog {
             return;
         }
         final PresetStore store = PresetStore.get(getContext());
-        Preset preset = store.byId(Fan.isOn() ? Fan.presetId() : PresetStore.ID_OFF);
-        if (preset == null) {
-            preset = store.byId(PresetStore.ID_OFF);
-        }
+        final Preset preset = Fan.isOn()
+                ? Fan.activePreset(store) : store.byId(PresetStore.ID_OFF);
         final int temperature = Fan.temperatureCelsius();
         mSubtitle.setText(getContext().getString(R.string.tile_fan_dialog_subtitle,
                 Ui.presetName(getContext(), preset), Math.max(0, temperature)));

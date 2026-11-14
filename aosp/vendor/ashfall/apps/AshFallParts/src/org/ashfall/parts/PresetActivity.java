@@ -148,7 +148,11 @@ public class PresetActivity extends PartsActivity {
             final boolean smart = Preset.MODE_SMART.equals(preset.mode);
             final java.util.List<String> actions = new java.util.ArrayList<>();
             actions.add(getString(R.string.activate));
-            actions.add(getString(R.string.preset_change_mode));
+            // Built-in presets have a fixed mode (docs/phase5.md §3); only a
+            // user preset can be changed between fixed %, manual and Smart.
+            if (!builtin) {
+                actions.add(getString(R.string.preset_change_mode));
+            }
             if (smart) {
                 actions.add(getString(R.string.fan_curve_title));
             }

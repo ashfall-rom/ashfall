@@ -22,10 +22,10 @@ import android.os.Parcelable;
 import android.text.TextUtils;
 import android.util.AttributeSet;
 import android.view.View;
+import android.widget.Switch;
 import android.widget.TextView;
 
 import androidx.annotation.Nullable;
-import androidx.appcompat.widget.SwitchCompat;
 import androidx.preference.Preference;
 import androidx.preference.PreferenceViewHolder;
 
@@ -88,7 +88,7 @@ public class MainSwitchPreference extends Preference {
         final View item = holder.itemView;
         final TextView title = item.findViewById(R.id.switch_title);
         final TextView summary = item.findViewById(R.id.switch_summary);
-        final SwitchCompat toggle = item.findViewById(R.id.ashfall_switch);
+        final Switch toggle = item.findViewById(R.id.ashfall_switch);
         if (title != null) {
             title.setText(getTitle());
         }

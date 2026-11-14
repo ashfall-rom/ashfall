@@ -134,6 +134,7 @@ public final class PresetStore {
         final boolean removed = mPresets.remove(preset);
         if (removed) {
             persist();
+            remapActivePreset(preset.id);
         }
         return removed;
     }
@@ -145,6 +146,14 @@ public final class PresetStore {
         }
         for (int i = 0; i < mPresets.size(); i++) {
             if (mPresets.get(i).id.equals(preset.id)) {
+                final Preset existing = mPresets.get(i);
+                if (existing.builtin) {
+                    // Built-in modes are fixed by the contract; only their
+                    // Smart curve is user-editable.
+                    preset.builtin = true;
+                    preset.name = existing.name;
+                    preset.mode = existing.mode;
+                }
                 mPresets.set(i, preset);
                 persist();
                 return;
@@ -155,12 +164,28 @@ public final class PresetStore {
     }
 
     public synchronized void resetUserPresets() {
+        final String activeId = Fan.presetId();
+        boolean activeRemoved = false;
         for (int i = mPresets.size() - 1; i >= 0; i--) {
-            if (!mPresets.get(i).builtin) {
+            final Preset preset = mPresets.get(i);
+            if (!preset.builtin) {
+                if (preset.id.equals(activeId)) {
+                    activeRemoved = true;
+                }
                 mPresets.remove(i);
             }
         }
         persist();
+        if (activeRemoved) {
+            Fan.setPresetId(Fan.builtinPresetId(Fan.mode()));
+        }
+    }
+
+    /** Re-derives the recorded id from the mode after the active preset went away. */
+    private static void remapActivePreset(String removedId) {
+        if (removedId != null && removedId.equals(Fan.presetId())) {
+            Fan.setPresetId(Fan.builtinPresetId(Fan.mode()));
+        }
     }
 
     public synchronized String newPresetName(Context context) {

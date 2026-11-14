@@ -30,11 +30,12 @@
             android:layout_weight="1"
             android:text="@string/tile_lighting_dialog_title" />
 
-        <androidx.appcompat.widget.SwitchCompat
+        <Switch
             android:id="@+id/qs_lighting_switch"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:contentDescription="@string/lighting_switch_title" />
+            android:contentDescription="@string/lighting_switch_title"
+            android:showText="false" />
     </LinearLayout>
 
     <ScrollView

@@ -142,7 +142,13 @@ public class CurveActivity extends PartsActivity {
     private void save(Curve curve) {
         mPreset.curve = curve.format();
         mStore.save(mPreset);
-        if (mPreset.id.equals(Fan.presetId())) {
+        // The daemon follows persist.ashfall.fan.curve, not the preset JSON.
+        // The active preset is resolved from the recorded id with the mode
+        // fallback, so editing Smart on a fresh install (empty preset id) or
+        // after the recorded preset was deleted still reaches the daemon.
+        final Preset active = Fan.activePreset(mStore);
+        if (active != null && active.id.equals(mPreset.id)
+                && Preset.MODE_SMART.equals(Fan.mode())) {
             Fan.setCurve(mPreset.curve);
         }
         updateLive(Fan.temperatureCelsius());

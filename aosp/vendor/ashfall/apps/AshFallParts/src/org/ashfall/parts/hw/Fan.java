@@ -91,6 +91,48 @@ public final class Fan {
         Props.set(PRESET, id == null ? "" : id);
     }
 
+    /**
+     * Built-in preset id for a fan mode, or {@code null} when the mode has no
+     * built-in preset ({@code manual}).
+     */
+    public static String builtinPresetId(String mode) {
+        switch (Preset.sanitizeMode(mode)) {
+            case Preset.MODE_OFF:
+                return PresetStore.ID_OFF;
+            case Preset.MODE_QUIET:
+                return PresetStore.ID_QUIET;
+            case Preset.MODE_BALANCED:
+                return PresetStore.ID_BALANCED;
+            case Preset.MODE_MAX:
+                return PresetStore.ID_MAX;
+            case Preset.MODE_SMART:
+                return PresetStore.ID_SMART;
+            case Preset.MODE_MANUAL:
+            default:
+                return null;
+        }
+    }
+
+    /**
+     * The active preset: the recorded id when it still exists, otherwise the
+     * built-in preset for the current mode.  The mode is the daemon-visible
+     * source of truth, so a stale or empty {@code persist.ashfall.fan.preset}
+     * (fresh install, deleted user preset) never changes what the pages, the
+     * tile or the curve editor show.  Returns {@code null} for a manual mode
+     * without a recorded preset.
+     */
+    public static Preset activePreset(PresetStore store) {
+        if (store == null) {
+            return null;
+        }
+        final Preset recorded = store.byId(presetId());
+        if (recorded != null) {
+            return recorded;
+        }
+        final String builtin = builtinPresetId(mode());
+        return builtin == null ? null : store.byId(builtin);
+    }
+
     public static boolean isOn() {
         return !Preset.MODE_OFF.equals(mode());
     }

@@ -128,10 +128,7 @@ public class HandheldActivity extends PartsActivity {
                 return;
             }
             final PresetStore store = PresetStore.get(requireContext());
-            Preset preset = store.byId(Fan.presetId());
-            if (preset == null) {
-                preset = store.byId(activeIdForMode(store));
-            }
+            final Preset preset = Fan.activePreset(store);
             final String presetName = Ui.presetName(requireContext(), preset);
             final int temperature = Fan.temperatureCelsius();
             final String temperatureText = temperature < 0 ? "—"
@@ -146,21 +143,6 @@ public class HandheldActivity extends PartsActivity {
 
             mControllerRow.setSummary(getString(R.string.home_controller_summary,
                     Pad.inner(), Pad.outer()));
-        }
-
-        private static String activeIdForMode(PresetStore store) {
-            switch (Fan.mode()) {
-                case Preset.MODE_OFF:
-                    return PresetStore.ID_OFF;
-                case Preset.MODE_QUIET:
-                    return PresetStore.ID_QUIET;
-                case Preset.MODE_BALANCED:
-                    return PresetStore.ID_BALANCED;
-                case Preset.MODE_MAX:
-                    return PresetStore.ID_MAX;
-                default:
-                    return PresetStore.ID_SMART;
-            }
         }
     }
 }

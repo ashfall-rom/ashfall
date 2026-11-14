@@ -31,11 +31,17 @@
             android:visibility="gone" />
     </LinearLayout>
 
-    <androidx.appcompat.widget.SwitchCompat
+    <!-- Framework Switch, deliberately not androidx SwitchCompat/MaterialSwitch:
+         this row is inflated with Theme.SubSettingsBase.Expressive, which is
+         not an AppCompat/MaterialComponents theme.  The platform widget is
+         what the framework guarantees to inflate there, and it draws the
+         platform switch (Material You on Android 12+). -->
+    <Switch
         android:id="@+id/ashfall_switch"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:clickable="false"
         android:focusable="false"
-        android:saveEnabled="false" />
+        android:saveEnabled="false"
+        android:showText="false" />
 </LinearLayout>
