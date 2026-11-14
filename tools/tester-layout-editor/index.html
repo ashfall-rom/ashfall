@@ -241,7 +241,7 @@ function bbox(key) {
     return { x1:c.x*W, y1:c.y*H, x2:c.x*W + 0.30*W, y2:c.y*H + 0.17*H };
   }
   if (CIRCLE.has(key)) {
-    const r = key === "dpad" ? c.r*H : c.r*H;
+    const r = key === "dpad" ? c.r*H*1.5 : c.r*H;
     return { x1:c.x*W-r, y1:c.y*H-r, x2:c.x*W+r, y2:c.y*H+r };
   }
   const hw = c.w*W/2, hh = c.h*H/2;
@@ -290,10 +290,18 @@ function shapeFor(key) {
                 "font-size":"24"}, g).textContent = meta.sub;
     el("text", {x:cx, y:cy+r+34, class:"sub", "text-anchor":"middle", "font-size":"24"}, g).textContent = "0.00, 0.00";
   } else if (meta.shape === "dpad") {
-    const a = c.r*H, b = a*0.36;
-    const d = `M ${cx-b} ${cy-a} h ${2*b} v ${a-b} h ${a-b} v ${2*b} h ${-(a-b)} v ${a-b} h ${-2*b} v ${-(a-b)} h ${-(a-b)} v ${-2*b} h ${a-b} z`;
-    el("path", {...common, d}, g);
-    el("text", {x:cx, y:cy+a+34, class:"sub", "text-anchor":"middle", "font-size":"24"}, g).textContent = "D-pad";
+    // 3x3 cross: 1x1 neutral centre plus four non-overlapping 1x1 pentagon
+    // arms (house shape pointing outward). r is the cell size, so the whole
+    // D-pad is 3r x 3r.
+    const a = c.r*H, half = a/2;
+    const pent = (pts) => "M " + pts.map(p => p.join(" ")).join(" L ") + " Z";
+    const up = [[cx-half,cy-half],[cx+half,cy-half],[cx+half,cy-a],[cx,cy-1.5*a],[cx-half,cy-a]];
+    const down = [[cx-half,cy+half],[cx+half,cy+half],[cx+half,cy+a],[cx,cy+1.5*a],[cx-half,cy+a]];
+    const left = [[cx-half,cy-half],[cx-half,cy+half],[cx-a,cy+half],[cx-1.5*a,cy],[cx-a,cy-half]];
+    const right = [[cx+half,cy-half],[cx+half,cy+half],[cx+a,cy+half],[cx+1.5*a,cy],[cx+a,cy-half]];
+    el("rect", {...common, x:cx-half, y:cy-half, width:a, height:a}, g);
+    for (const pts of [up, down, left, right]) el("path", {...common, d:pent(pts)}, g);
+    el("text", {x:cx, y:cy+1.5*a+34, class:"sub", "text-anchor":"middle", "font-size":"24"}, g).textContent = "D-pad";
   } else if (meta.shape === "circle") {
     const r = c.r*H;
     el("circle", {...common, cx, cy, r}, g);
@@ -396,8 +404,14 @@ function updateProps() {
     propsEl.appendChild(row);
   };
   mkRow([["X","x",c.x,0,1], ["Y","y",c.y,0,1]]);
-  if (isCircle) mkRow([["R","r",c.r,0.001,1]]);
+  if (isCircle) mkRow([[selected === "dpad" ? "Cell" : "R", "r", c.r, 0.001,1]]);
   if (isRect) mkRow([["W","w",c.w,0.001,1], ["H","h",c.h,0.001,1]]);
+  if (selected === "dpad") {
+    const note = document.createElement("div");
+    note.className = "empty";
+    note.textContent = "D-pad: cell size; total 3×cell, centre square 1×cell.";
+    propsEl.appendChild(note);
+  }
   if (selected === "status") {
     const note = document.createElement("div");
     note.className = "empty";
