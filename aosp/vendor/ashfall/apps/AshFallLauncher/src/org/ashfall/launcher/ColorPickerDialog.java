@@ -19,7 +19,6 @@ package org.ashfall.launcher;
 import android.app.Activity;
 import android.app.Dialog;
 import android.content.Context;
-import android.content.res.ColorStateList;
 import android.graphics.Color;
 import android.graphics.drawable.GradientDrawable;
 import android.view.Gravity;
@@ -28,10 +27,19 @@ import android.view.View;
 import android.view.ViewGroup;
 import android.widget.FrameLayout;
 import android.widget.LinearLayout;
-import android.widget.SeekBar;
 import android.widget.TextView;
 
-/** Controller-friendly RGB color picker used by every color selector. */
+import java.util.Locale;
+
+/**
+ * Controller- and touch-friendly hue colour picker used by every launcher
+ * colour selector (#95).
+ *
+ * <p>The saturation/value area and the hue bar update the caller on every move;
+ * there is no apply step. The settings screen behind the dialog previews the
+ * colour live, and the dialog has its own preview swatch. The controller can
+ * drive the area with the D-pad and the hue with L1/R1; B/Back closes.
+ */
 final class ColorPickerDialog {
     interface Listener {
         void onColor(int color);
@@ -50,126 +58,105 @@ final class ColorPickerDialog {
 
         LinearLayout panel = new LinearLayout(context);
         panel.setOrientation(LinearLayout.VERTICAL);
-        panel.setPadding(padding, padding, padding, padding);
+        // Keep the whole picker inside the 480 dp-high landscape display.
+        panel.setPadding(padding, Ui.dp(context, 18), padding, Ui.dp(context, 18));
         panel.setBackground(panelBackground(context, accent));
         panel.setClickable(true);
 
+        LinearLayout header = new LinearLayout(context);
+        header.setOrientation(LinearLayout.HORIZONTAL);
+        header.setGravity(Gravity.CENTER_VERTICAL);
         TextView title = new TextView(context);
         title.setText(R.string.color_picker_title);
         title.setTextColor(primaryText);
         title.setTextSize(20f);
         title.setTypeface(title.getTypeface(), android.graphics.Typeface.BOLD);
-        panel.addView(title);
-
-        final int[] rgb = {Color.red(initialColor), Color.green(initialColor),
-                Color.blue(initialColor)};
+        header.addView(title, new LinearLayout.LayoutParams(0,
+                ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+        TextView hex = new TextView(context);
+        hex.setTextColor(secondaryText);
+        hex.setTextSize(15f);
+        header.addView(hex);
+        panel.addView(header);
 
         View preview = new View(context);
         LinearLayout.LayoutParams previewParams = new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, Ui.dp(context, 64));
-        previewParams.topMargin = Ui.dp(context, 14);
-        preview.setLayoutParams(previewParams);
-        panel.addView(preview);
+                ViewGroup.LayoutParams.MATCH_PARENT, Ui.dp(context, 36));
+        previewParams.topMargin = Ui.dp(context, 10);
+        panel.addView(preview, previewParams);
 
-        TextView hex = new TextView(context);
-        hex.setTextColor(secondaryText);
-        hex.setTextSize(13f);
-        hex.setPadding(0, Ui.dp(context, 8), 0, Ui.dp(context, 4));
-        panel.addView(hex);
+        ColorPickerView picker = new ColorPickerView(context, null);
+        picker.setAccent(accent);
+        LinearLayout.LayoutParams pickerParams = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, Ui.dp(context, 150));
+        pickerParams.topMargin = Ui.dp(context, 12);
+        panel.addView(picker, pickerParams);
 
-        SeekBar[] sliders = new SeekBar[3];
-        TextView[] values = new TextView[3];
-        String[] labels = {"R", "G", "B"};
+        LinearLayout hueHeader = new LinearLayout(context);
+        hueHeader.setOrientation(LinearLayout.HORIZONTAL);
+        hueHeader.setGravity(Gravity.CENTER_VERTICAL);
+        hueHeader.setPadding(0, Ui.dp(context, 12), 0, 0);
+        TextView hueLabel = new TextView(context);
+        hueLabel.setText(R.string.color_picker_hue);
+        hueLabel.setTextColor(primaryText);
+        hueLabel.setTextSize(14f);
+        hueLabel.setTypeface(hueLabel.getTypeface(), android.graphics.Typeface.BOLD);
+        hueHeader.addView(hueLabel, new LinearLayout.LayoutParams(0,
+                ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+        TextView hueValue = new TextView(context);
+        hueValue.setTextColor(secondaryText);
+        hueValue.setTextSize(13f);
+        hueHeader.addView(hueValue);
+        panel.addView(hueHeader);
 
-        Runnable refresh = () -> {
-            int color = Color.rgb(rgb[0], rgb[1], rgb[2]);
-            GradientDrawable swatch = new GradientDrawable();
-            swatch.setColor(color);
-            swatch.setCornerRadius(Ui.dp(context, 12));
-            swatch.setStroke(Ui.dp(context, 1), 0x55FFFFFF);
-            preview.setBackground(swatch);
+        HueBarView hueBar = new HueBarView(context, null);
+        hueBar.setAccent(accent);
+        LinearLayout.LayoutParams hueParams = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, Ui.dp(context, 36));
+        hueParams.topMargin = Ui.dp(context, 2);
+        panel.addView(hueBar, hueParams);
+
+        TextView hint = new TextView(context);
+        hint.setText(R.string.color_picker_hint);
+        hint.setTextColor(Ui.themeColor(context, android.R.attr.textColorSecondary,
+                0xFF9AA7BA));
+        hint.setTextSize(11f);
+        hint.setPadding(0, Ui.dp(context, 8), 0, 0);
+        panel.addView(hint);
+
+        TextView done = Ui.optionButton(context, context.getString(R.string.done));
+        Ui.applyOptionBackground(done, accent);
+        done.setOnClickListener(view -> dialog.dismiss());
+        LinearLayout doneRow = new LinearLayout(context);
+        doneRow.setOrientation(LinearLayout.HORIZONTAL);
+        doneRow.setGravity(Gravity.END | Gravity.CENTER_VERTICAL);
+        doneRow.setPadding(0, Ui.dp(context, 12), 0, 0);
+        doneRow.addView(done);
+        panel.addView(doneRow);
+
+        final float[] hsv = new float[3];
+        Color.colorToHSV(initialColor, hsv);
+        picker.setColor(initialColor);
+        hueBar.setHue(hsv[0]);
+
+        GradientDrawable previewShape = new GradientDrawable();
+        previewShape.setCornerRadius(Ui.dp(context, 12));
+        previewShape.setStroke(Ui.dp(context, 1), 0x55FFFFFF);
+
+        Runnable updateUi = () -> {
+            int color = picker.getColor();
+            previewShape.setColor(color);
+            preview.setBackground(previewShape);
             hex.setText(Appearance.hex(color));
+            hueValue.setText(String.format(Locale.US, "%d\u00B0",
+                    Math.round(hueBar.getHue())));
         };
-
-        for (int i = 0; i < 3; i++) {
-            final int channel = i;
-            LinearLayout row = new LinearLayout(context);
-            row.setOrientation(LinearLayout.HORIZONTAL);
-            row.setGravity(Gravity.CENTER_VERTICAL);
-            row.setPadding(0, Ui.dp(context, 8), 0, 0);
-
-            TextView label = new TextView(context);
-            label.setText(labels[i]);
-            label.setTextColor(primaryText);
-            label.setTextSize(14f);
-            label.setTypeface(label.getTypeface(), android.graphics.Typeface.BOLD);
-            label.setWidth(Ui.dp(context, 26));
-            row.addView(label);
-
-            SeekBar slider = new SeekBar(context);
-            slider.setMax(255);
-            slider.setProgress(rgb[i]);
-            ColorStateList accentState = ColorStateList.valueOf(accent);
-            slider.setProgressTintList(accentState);
-            slider.setThumbTintList(accentState);
-            slider.setProgressBackgroundTintList(ColorStateList.valueOf(
-                    Appearance.withAlpha(accent, 0x55)));
-            slider.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
-                @Override
-                public void onProgressChanged(SeekBar seekBar, int progress, boolean fromUser) {
-                    rgb[channel] = progress;
-                    values[channel].setText(String.valueOf(progress));
-                    refresh.run();
-                }
-
-                @Override
-                public void onStartTrackingTouch(SeekBar seekBar) {
-                }
-
-                @Override
-                public void onStopTrackingTouch(SeekBar seekBar) {
-                }
-            });
-            row.addView(slider, new LinearLayout.LayoutParams(0,
-                    ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
-            sliders[i] = slider;
-
-            TextView value = new TextView(context);
-            value.setText(String.valueOf(rgb[i]));
-            value.setTextColor(secondaryText);
-            value.setTextSize(13f);
-            value.setGravity(Gravity.END);
-            value.setWidth(Ui.dp(context, 46));
-            row.addView(value);
-            values[i] = value;
-
-            panel.addView(row);
-        }
-
-        LinearLayout buttons = new LinearLayout(context);
-        buttons.setOrientation(LinearLayout.HORIZONTAL);
-        buttons.setGravity(Gravity.END | Gravity.CENTER_VERTICAL);
-        buttons.setPadding(0, Ui.dp(context, 18), 0, 0);
-
-        TextView cancel = Ui.optionButton(context, context.getString(R.string.cancel));
-        Ui.applyOptionBackground(cancel, accent);
-        cancel.setOnClickListener(view -> dialog.dismiss());
-
-        TextView apply = Ui.optionButton(context, context.getString(R.string.apply));
-        Ui.applyOptionBackground(apply, accent);
-        apply.setOnClickListener(view -> {
-            listener.onColor(Color.rgb(rgb[0], rgb[1], rgb[2]));
-            dialog.dismiss();
+        picker.setListener(color -> {
+            updateUi.run();
+            listener.onColor(color);
         });
-
-        LinearLayout.LayoutParams buttonParams = new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-        buttonParams.leftMargin = Ui.dp(context, 8);
-        buttons.addView(cancel);
-        buttons.addView(apply, buttonParams);
-        panel.addView(buttons);
-
-        refresh.run();
+        hueBar.setListener(hue -> picker.setHue(hue));
+        updateUi.run();
 
         // Full-screen modal container: the panel is centred and every input
         // that lands outside it is swallowed instead of reaching the settings
@@ -185,30 +172,48 @@ final class ColorPickerDialog {
         dialog.setContentView(container);
         dialog.setCanceledOnTouchOutside(false);
         dialog.setOnKeyListener((d, keyCode, event) -> {
-            if (keyCode == KeyEvent.KEYCODE_BUTTON_B) {
-                if (event.getAction() == KeyEvent.ACTION_UP) {
-                    dialog.dismiss();
+            if (keyCode == KeyEvent.KEYCODE_BUTTON_L1
+                    || keyCode == KeyEvent.KEYCODE_BUTTON_R1) {
+                if (event.getAction() == KeyEvent.ACTION_DOWN) {
+                    float step = keyCode == KeyEvent.KEYCODE_BUTTON_L1 ? -4f : 4f;
+                    hueBar.setHue(hueBar.getHue() + step);
+                    picker.setHue(hueBar.getHue());
                 }
                 return true;
             }
-            if (keyCode == KeyEvent.KEYCODE_BUTTON_A
-                    || keyCode == KeyEvent.KEYCODE_DPAD_CENTER
-                    || keyCode == KeyEvent.KEYCODE_ENTER) {
-                if (event.getAction() == KeyEvent.ACTION_DOWN) {
+            if (keyCode == KeyEvent.KEYCODE_BUTTON_START) {
+                if (event.getAction() == KeyEvent.ACTION_UP) {
+                    done.performClick();
+                }
+                return true;
+            }
+            if (event.getAction() == KeyEvent.ACTION_UP) {
+                if (keyCode == KeyEvent.KEYCODE_BUTTON_B
+                        || keyCode == KeyEvent.KEYCODE_BACK) {
+                    dialog.dismiss();
                     return true;
                 }
-                View focused = dialog.getWindow() == null
-                        ? null : dialog.getWindow().getCurrentFocus();
-                if (focused == cancel || focused == apply) {
-                    focused.performClick();
+                if (keyCode == KeyEvent.KEYCODE_BUTTON_A
+                        || keyCode == KeyEvent.KEYCODE_DPAD_CENTER
+                        || keyCode == KeyEvent.KEYCODE_ENTER) {
+                    View focused = dialog.getWindow() == null
+                            ? null : dialog.getWindow().getCurrentFocus();
+                    if (focused == done) {
+                        done.performClick();
+                    }
+                    return true;
                 }
+            } else if (keyCode == KeyEvent.KEYCODE_BUTTON_A
+                    || keyCode == KeyEvent.KEYCODE_DPAD_CENTER
+                    || keyCode == KeyEvent.KEYCODE_ENTER) {
+                // Consume the down event so the framework does not also click.
                 return true;
             }
             return false;
         });
         dialog.setOnShowListener(d -> {
             Ui.makeDialogModal(dialog, 0.75f);
-            sliders[0].post(sliders[0]::requestFocus);
+            picker.post(picker::requestFocus);
         });
         dialog.show();
     }

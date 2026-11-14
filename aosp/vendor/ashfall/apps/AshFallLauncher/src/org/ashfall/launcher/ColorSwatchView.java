@@ -33,6 +33,10 @@ final class ColorSwatchView extends View {
         super(context);
         setFocusable(true);
         setClickable(true);
+        // The view draws its own circular focus ring; the platform's default
+        // rectangular focus highlight would draw a grey square around it (#95).
+        setDefaultFocusHighlightEnabled(false);
+        setBackground(null);
         updateDescription();
     }
 

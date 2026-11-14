@@ -128,8 +128,11 @@ visually distinct:
   frame, page dots, app-options dialog and settings highlights and is applied
   live when returning to the home screen.
 - **Custom color**: every palette (solid, gradient start, gradient end and
-  accent) also has a `Custom color…` button that opens an RGB picker with a
-  live preview and R/G/B sliders. The custom swatch next to the button shows
+  accent) also has a `Custom color…` button that opens a hue-based picker
+  (#95): a saturation/value area, a rainbow hue bar (0–360°, also on L1/R1),
+  and a live preview swatch plus hex value. Every change is applied live to
+  the settings preview - there are no R/G/B sliders and no apply/Set button,
+  only `Done` (B/Back also closes). The custom swatch next to the button shows
   the current value.
 - **Controller card** (at the end): the controller mapping that used to be
   printed along the bottom of the home screen.
@@ -355,7 +358,8 @@ live test on the RP5 (AshFall GSI v0.1.0-gsi, 1920x1080, 360 dpi):
   updates in place. Switching the accent to blue immediately updates the focus
   ring, page dots and app-options dialog after returning home.
 - The custom color picker opens for the solid, gradient start/end and accent
-  palettes; its R/G/B sliders and preview render correctly.
+  palettes; its preview renders correctly. (These tests used the RGB sliders of
+  the #81 build; #95 replaced them with the hue/S-V picker.)
 - The app-options panel uses the accent (black panel, accent outline/icons) and
   exposes Kill for system and user apps; Uninstall remains available for user
   apps.
@@ -386,9 +390,11 @@ this test; the affected navigation/back/page tests were repeated afterwards on
 an exclusive device.
 
 The #81 changes (system-wallpaper background, live wallpaper, Launcher3 HOME
-candidacy removal, modal/themed dialogs, swatch ring) were compile-checked with
-aapt2 + javac against the platform system stubs but have not been device-tested
-yet; see the checklist in section 6 and `docs/ui.md` 7.4.
+candidacy removal, modal/themed dialogs, swatch ring) and the #95 follow-up
+(swatch focus highlight, hue picker) were compile-checked with aapt2 + javac
+against the platform system stubs but not device-tested in this worktree; the
+#81 part was tested as build 20261114-111954, which produced #95. See the
+checklist in section 6, `docs/ui.md` 7.4 and 7.5.
 
 ## 6. User test checklist (after flashing)
 
@@ -417,9 +423,11 @@ yet; see the checklist in section 6 and `docs/ui.md` 7.4.
    gradient direction and enable animation; choose an image and drag the dim
    slider; switch the accent to blue and check the focus ring, page dots,
    settings highlights and app-options dialog. Try the `Custom color…` picker
-   on each palette. The focused colour swatch's white ring must be fully
-   visible (no clipping at the edges), and the settings page must have the
-   blank line where the old intro text was.
+   on each palette: the hue bar and colour area update the preview live, the
+   colour area is controller-navigable with the D-pad, L1/R1 change the hue,
+   and `Done`/B closes it. The focused colour swatch must show only the white
+   circular ring - no square grey platform focus highlight - and the settings
+   page must have the blank line where the old intro text was.
 9. Leave Settings and check the system wallpaper: the chosen background is
    visible in HOME, in Recents (swipe up and hold) and during the app-to-home
    transition; no stock LineageOS wallpaper appears at any point. With
