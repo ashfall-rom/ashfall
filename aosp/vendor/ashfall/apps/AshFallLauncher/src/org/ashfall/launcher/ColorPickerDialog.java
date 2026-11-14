@@ -120,7 +120,7 @@ final class ColorPickerDialog {
         hint.setText(R.string.color_picker_hint);
         hint.setTextColor(Ui.themeColor(context, android.R.attr.textColorSecondary,
                 0xFF9AA7BA));
-        hint.setTextSize(11f);
+        hint.setTextSize(12f);
         hint.setPadding(0, Ui.dp(context, 8), 0, 0);
         panel.addView(hint);
 
@@ -148,8 +148,9 @@ final class ColorPickerDialog {
             previewShape.setColor(color);
             preview.setBackground(previewShape);
             hex.setText(Appearance.hex(color));
+            // Normalized hue is [0, 360); rounding must not print 360.
             hueValue.setText(String.format(Locale.US, "%d\u00B0",
-                    Math.round(hueBar.getHue())));
+                    Math.round(hueBar.getHue()) % 360));
         };
         picker.setListener(color -> {
             updateUi.run();

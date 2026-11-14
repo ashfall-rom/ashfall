@@ -639,7 +639,10 @@ chooser only offers AshFall.
   the settings preview and the stored colour update live, and the dialog has
   its own preview swatch and hex value. There is no "Set"/"Apply" step; `Done`
   (or B/Back/Start) only closes the dialog. Both views disable the platform
-  focus highlight as well, drawing their own focus indicator.
+  focus highlight as well, drawing their own focus indicator. The colour area
+  releases D-pad down at the bottom edge so focus reaches the hue bar and
+  `Done`; on a zero-brightness colour (e.g. the default black) the hue alone
+  cannot change the RGB, so the colour area must be raised first.
 - Dialog surface/modality is unchanged: system `Theme.DeviceDefault.Dialog`
   colours, full-screen modal window, tap outside dismisses.
 - Test: open `Custom color…` on solid/gradient start/end/accent; drag the

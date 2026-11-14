@@ -133,7 +133,11 @@ visually distinct:
   and a live preview swatch plus hex value. Every change is applied live to
   the settings preview - there are no R/G/B sliders and no apply/Set button,
   only `Done` (B/Back also closes). The custom swatch next to the button shows
-  the current value.
+  the current value. On a zero-brightness colour (the default solid black) the
+  hue alone cannot change the RGB; drag up in the colour area first - the hue
+  readout and thumb still move. Down at the bottom edge of the colour area
+  moves the focus to the hue bar (and on to Done), so the D-pad is never
+  trapped.
 - **Controller card** (at the end): the controller mapping that used to be
   printed along the bottom of the home screen.
 

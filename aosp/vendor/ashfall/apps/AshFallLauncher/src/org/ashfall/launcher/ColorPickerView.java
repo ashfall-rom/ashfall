@@ -102,7 +102,10 @@ final class ColorPickerView extends View {
     @Override
     protected void onDraw(Canvas canvas) {
         super.onDraw(canvas);
-        float inset = Ui.dp(getContext(), 2);
+        // Inset by the crosshair radius so the marker is never clipped at the
+        // saturation/value extremes (the initial black colour sits at 0/0).
+        float radius = Ui.dp(getContext(), 10);
+        float inset = radius + Ui.dp(getContext(), 1);
         rect.set(inset, inset, getWidth() - inset, getHeight() - inset);
 
         // White -> full-saturation hue across, transparent -> black down.
@@ -115,7 +118,6 @@ final class ColorPickerView extends View {
 
         float x = rect.left + saturation * rect.width();
         float y = rect.top + (1f - value) * rect.height();
-        float radius = Ui.dp(getContext(), 10);
         crosshairPaint.setColor(isFocused() ? accent : 0xFFFFFFFF);
         canvas.drawCircle(x, y, radius, crosshairPaint);
         ringPaint.setColor(saturation > 0.7f && value > 0.7f ? 0x66000000 : 0x66FFFFFF);
@@ -156,6 +158,11 @@ final class ColorPickerView extends View {
                 value = clamp01(value + 0.02f);
                 break;
             case KeyEvent.KEYCODE_DPAD_DOWN:
+                if (value <= 0f) {
+                    // At the bottom edge, down moves the focus to the hue bar
+                    // (and from there to Done); the area never traps the D-pad.
+                    return super.onKeyDown(keyCode, event);
+                }
                 value = clamp01(value - 0.02f);
                 break;
             default:
