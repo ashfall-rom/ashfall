@@ -81,6 +81,22 @@ void ah_logf(int prio, const char *fmt, ...)
     va_start(ap, fmt);
 #if defined(AH_HAVE_ANDROID_LOG)
     __android_log_vprint(prio, g_tag, fmt, ap);
+    va_end(ap);
+    /*
+     * Mirror to stderr as well: init redirects it to the kernel log
+     * (`stdio_to_kmsg` in the service rc).  This daemon is started by
+     * class_start core, i.e. possibly before logd accepts writes, so without
+     * the mirror its startup lines (LED backend, thermal watch set,
+     * calibration source) would be lost - exactly the lines needed to verify
+     * the hardware on a fresh boot.
+     */
+    va_start(ap, fmt);
+    fprintf(stderr, "%s/%s: ", prio >= AH_LOG_ERROR ? "E"
+                              : prio >= AH_LOG_WARN ? "W"
+                                                    : "I",
+            g_tag);
+    vfprintf(stderr, fmt, ap);
+    fputc('\n', stderr);
 #else
     {
         const char *level = prio >= AH_LOG_ERROR ? "E"

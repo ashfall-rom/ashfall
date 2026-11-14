@@ -358,3 +358,23 @@ Still needs the integration build (and a human):
 * `ashfall.status.*` publishing (needs `system` uid).
 * enforcing-mode `avc` check with the real policy.
 * which stick ring lights up (write-only nodes, see §4).
+
+## 8. Integration build verification (2026-11-14, build 20261114-002243)
+
+First build that contains this branch (`1c9ffc2`); everything below was measured
+on the device as `shell` (no adb root).
+
+| check | result |
+|---|---|
+| daemons | `ashfall-hwd` and `ashfall-rp5-input` both `running`, no crashes, no `avc` denials for the ashfall domains |
+| fan | `mode=off` kept for the user, `state=0 duty=0`, 37-42 C idle; `ashfall.status.fan.rpm=0` |
+| tach | `dmesg | grep -c "Unbalanced enable"` = **0** (the RPM read is skipped entirely while off) |
+| thermal reads | **90 `temp` reads/min** = 3 watched zones / 2 s, stable over a 60 s sample (the stock driver prints **2** `temp_show` lines per read, so kmsg shows 180 lines/min; with all 16 zones it was 8 reads/s) |
+| watched zones | the 3 hottest, re-picked by the 5 min sweep (observed `cpu-1-0`, `cpu-1-1`, `cpu-1-5` at ~40 C) |
+| LED | `led: sn3112 backend (left=yes right=yes)` and no write errors when the same binary is run from `/data/local/tmp`; the visual result is still a user step (§4) |
+
+**Logging at boot (fixed here):** a `class core` daemon starts before logd
+accepts writes, so every startup line (LED backend, thermal watch set,
+calibration source) was silently lost - the lines needed to verify exactly the
+items above.  Both services now set `stdio_to_kmsg` and `ah_logf()` mirrors to
+stderr, so boot-time lines land in `dmesg` (`I/ashfall-hwd: ...`).

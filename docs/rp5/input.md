@@ -330,6 +330,32 @@ Numeric `persist.ashfall.pad.*` values are invalid -> default, not clamped:
 `deadzone_inner` outside 0..30, `deadzone_outer` outside 0..20 and
 `trigger_deadzone` outside 0..30 use 5/3/3 and log the bad value once.
 
+### On-device verification (2026-11-14, build 20261114-002243)
+
+* **`GET CAL` with the screen off and no MCU frames** (the #70 case): the
+  daemon was started against an inherited socket (`ANDROID_SOCKET_ashfall_input`,
+  the init contract) with the screen off; it logged `waiting for MCU status
+  frames` and still answered `GET CAL` -> `OK default <16 keys>` and an unknown
+  command -> `ERR unknown command`.
+* The init socket is `srw-rw---- system system u:object_r:ashfall_input_socket`
+  (0660).  A plain `adb shell` client (uid 2000) is rejected by **DAC** with
+  `connect: Permission denied`, not SELinux; the Parts app is the client that
+  works (it runs as uid `system`).  Testing from `adb shell` therefore needs a
+  system-uid helper (or root, which this build does not allow).
+* **`/data/misc/ashfall/joys.factory` is NOT being used on this build**: the
+  Parts Controller page reports `Source: default` although
+  `/mnt/vendor/persist/retrostation/joys` exists (282 B, all 16 keys, 0666),
+  the service rc (installed at `/system/etc/init/ashfall-rp5-input.rc`) has the
+  `copy` line, our rc block clearly ran (`/data/misc/ashfall` exists with
+  `0770 system system` and the `ashfall_data_file` label) and no `init` avc
+  denials are recorded.  The daemon's own `calibration:` line is the thing to
+  check after the next build (see `docs/rp5/hw.md` §8, boot logging).  A
+  shell-run instance cannot tell us more: it is denied by DAC on the 0770
+  directory (`cannot open .../joys.factory: Permission denied`).
+* `MCU went quiet; released held input` appears in logcat after the screen
+  cycle, so the quiet path (#71) runs on the device with no events to emit
+  (nothing was held).
+
 ### On-device verification (2026-11-13)
 
 The daemons are not in build `20261113-213314`; the static NDK binary was

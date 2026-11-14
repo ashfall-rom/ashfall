@@ -3,6 +3,10 @@ service ashfall-hwd /system/bin/ashfall-hwd
     user system
     group system
     seclabel u:r:ashfall_hwd:s0
+    # class core starts before logd is reachable, so the startup lines (LED
+    # backend, thermal watch set, first fan decision) would be lost.  Mirror
+    # them into the kernel log instead of losing them.
+    stdio_to_kmsg
 
 # The daemon is the only writer of the fan (gpio5_pwm2) and stick LED
 # (sn3112) nodes.  It applies persist.ashfall.* at boot and at runtime and
