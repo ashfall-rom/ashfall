@@ -63,6 +63,7 @@ final class Appearance {
     private static final String KEY_IMAGE_URI = "image_uri";
     private static final String KEY_IMAGE_DIM = "image_dim";
     private static final String KEY_ACCENT = "accent";
+    private static final String KEY_WALLPAPER_APPLIED = "wallpaper_applied";
 
     final int backgroundType;
     final int solidColor;
@@ -140,6 +141,33 @@ final class Appearance {
 
     static void setAccent(Context context, int accent) {
         preferences(context).edit().putInt(KEY_ACCENT, accent).apply();
+    }
+
+    /**
+     * Identifies the appearance currently installed as the system wallpaper, so
+     * the launcher only rewrites it when something changed.
+     */
+    String wallpaperSignature() {
+        if (backgroundType == BACKGROUND_GRADIENT && gradientAnimate) {
+            // The live wallpaper reads the colours itself; only a change here
+            // needs a redraw (the accent and the image settings are irrelevant).
+            return "live:" + Integer.toHexString(gradientStart) + ":"
+                    + Integer.toHexString(gradientEnd) + ":" + gradientDirection;
+        }
+        return "static:" + backgroundType + ":"
+                + Integer.toHexString(solidColor) + ":"
+                + Integer.toHexString(gradientStart) + ":"
+                + Integer.toHexString(gradientEnd) + ":"
+                + gradientDirection + ":"
+                + (imageUri == null ? "" : imageUri) + ":" + imageDim;
+    }
+
+    static String getAppliedWallpaper(Context context) {
+        return preferences(context).getString(KEY_WALLPAPER_APPLIED, null);
+    }
+
+    static void setAppliedWallpaper(Context context, String signature) {
+        preferences(context).edit().putString(KEY_WALLPAPER_APPLIED, signature).apply();
     }
 
     static int withAlpha(int color, int alpha) {

@@ -118,7 +118,11 @@ visually distinct:
   palettes side by side, top-to-bottom or left-to-right direction, optional
   animated hue shift), or a custom image chosen through `ACTION_OPEN_DOCUMENT`
   with a 0–80% dim slider. Images use a persistable URI grant so the choice
-  survives reboots.
+  survives reboots. The choice is written to the **system wallpaper**, not
+  drawn by the launcher (see "Background = system wallpaper" below): solid
+  colors, static gradients and (dimmed) images through `WallpaperManager`, the
+  animated gradient through the app's built-in live wallpaper. The settings
+  screen previews the result locally before it is applied on the way home.
 - **Accent color card**: nine presets (ember red by default, plus orange, amber,
   green, teal, blue, violet, pink and white). The accent drives the focus
   frame, page dots, app-options dialog and settings highlights and is applied
@@ -131,7 +135,55 @@ visually distinct:
   printed along the bottom of the home screen.
 
 Settings are stored in the `appearance` `SharedPreferences` file. The default
-background is pure black (`#000000`); no wallpaper is read.
+background is pure black (`#000000`).
+
+### Background = system wallpaper (#81)
+
+The HOME activity does not draw the background itself. It uses a transparent
+window with `android:windowShowWallpaper` and shows the **system wallpaper**, so
+the fallback Recents (`RecentsActivity`, which also declares
+`windowShowWallpaper`) and the app-to-home transition show exactly the same
+surface. This removes the stock-LineageOS-wallpaper flash that appeared when
+leaving an app.
+
+- `WallpaperController` compares a signature of the stored appearance with the
+  last one it installed. On a change it
+  - renders solid/static-gradient/image (with the dim scrim baked in) at the
+    display size and calls `WallpaperManager.setBitmap(...)` (the 3-argument
+    overload applies to `FLAG_SYSTEM | FLAG_LOCK`); or
+  - installs `AshFallWallpaperService` with `setWallpaperComponent` when the
+    gradient is animated.
+  The first run always installs the AshFall appearance (that is the fix). After
+  that, a wallpaper set by another app is not fought over while the appearance
+  signature is unchanged; only our own live wallpaper is always replaced when
+  the appearance becomes static. The first bitmap write after an upgrade
+  without wiping `/data` happens on the first HOME resume, so the previous
+  wallpaper can remain visible for the few hundred milliseconds the render
+  takes; a fresh `/data` already boots with the AshFall default below.
+- `AshFallWallpaperService` is a `WallpaperService` in this package: it reads
+  the same `appearance` preferences, rotates the two gradient hues once per
+  24 s, and draws at 20 fps **only while visible**. `onVisibilityChanged(false)`,
+  a destroyed surface or screen off removes the frame callback, so it costs
+  nothing in the background. The settings activity uses an opaque theme
+  without `windowShowWallpaper` (`Theme.AshFall.Settings`), so opening settings
+  also hides the wallpaper window instead of animating it behind the preview.
+- The product overlay replaces the framework `default_wallpaper` with an
+  AshFall near-black gradient (every density bucket), so even a fresh `/data`
+  boots to an AshFall background before the launcher runs.
+- `SET_WALLPAPER` (normal) and `SET_WALLPAPER_COMPONENT` (signature, satisfied
+  by the platform certificate) are declared; the service holds
+  `BIND_WALLPAPER`.
+
+### Dialogs (#81)
+
+The app-options panel and the colour picker are full-screen modal dialogs: the
+window covers the display, so a touch outside the panel cannot reach the HOME
+grid or the settings list behind it, and the gamepad cannot navigate them
+either. A tap outside still dismisses (or Back on the gamepad). Their surface
+uses the system dialog background (`colorBackgroundFloating` from
+`Theme.DeviceDefault.Dialog`), i.e. the default dark grey or LineageOS' pure
+black, instead of a hardcoded colour; only the accent outline and the action
+tiles keep the AshFall look.
 
 ### App list
 
@@ -162,10 +214,9 @@ background is pure black (`#000000`); no wallpaper is read.
   (`KILL_BACKGROUND_PROCESSES` is declared). This is the same best-effort kill
   available to a non-privileged app and matches the stock launcher's "Clear".
 
-The options panel uses the same two-color language as the rest of the launcher:
-a black rounded panel with an accent outline, accent action icons and the
-accent focus frame. It is controller-navigable: left/right move between actions,
-A selects, B/Back closes.
+The options panel is a full-screen modal window (see "Dialogs" above) with the
+system dialog surface, an accent outline and accent action icons. It is
+controller-navigable: left/right move between actions, A selects, B/Back closes.
 
 ### System chrome
 
@@ -190,9 +241,10 @@ once; the app list and icons load on a background thread while the chrome is
 already visible. On the RP5 the activity reports `Displayed ... +120ms` on first
 launch (logcat, 2026-11-13 test).
 
-## 3. Known blocker: seamless HOME transition
+## 3. Seamless HOME transition (fixed in #64)
 
-On the real RP5 (Android 17, no wipe) pressing Home still uses the
+Before `patches/frameworks/base/0004-wm-shell-instant-third-party-home.patch`,
+on the real RP5 (Android 17, no wipe) pressing Home still used the
 WindowManagerShell default home-task animation, not the Quickstep home
 animation. Logcat shows `ShellRecents: RecentsTransitionHandler.startAnimation:
 no controller found`, followed by `DefaultTransitionHandler` animating the home
@@ -206,21 +258,32 @@ The cause is outside this app: Quickstep sets
 is not Launcher3 and uses the fallback activity interface; the shell then has
 no home-animation controller and falls back to the default task animation.
 Setting `windowAnimationStyle=@null` in the app does not remove the shell
-animation, so a fix needs one of these changes outside `vendor/ashfall/apps`
-(ask before touching):
-
-1. Patch Launcher3/Quickstep to support a third-party default HOME in
-   `OverviewComponentObserver`/`FallbackSwipeHandler` (the stock
-   `Launcher3QuickStepEX` likely carries such a change), or
-2. Patch WindowManagerShell to mark home task opens as no-animation when the
-   role holder is not Launcher3, or
-3. Set the device's transition animation scale to 0 (not recommended: it
-   affects every app).
+animation. **Fixed** by option 2:
+`patches/frameworks/base/0004-wm-shell-instant-third-party-home.patch` makes
+`DefaultTransitionHandler` finish a transition that opens a non-Launcher3 HOME
+task immediately (the `transition_animation_scale=0` result, scoped to that
+case only). The alternatives that were rejected (patching Quickstep's
+third-party-home path, or removing Launcher3's HOME candidacy to force the
+same-home path) are documented in `docs/ui.md` 3.4. Note that #81 does remove
+Launcher3's HOME candidacy for a different reason (home-app chooser); the
+instant transition still comes from patch 0004, because AshFall remains a
+third-party home for Quickstep.
 
 ## 4. Integration: default HOME without losing recents
 
 `aosp/vendor/ashfall/apps.mk` adds `AshFallLauncher` to `PRODUCT_PACKAGES`.
-`Launcher3QuickStep` is not overridden, removed or modified.
+`Launcher3QuickStep` is not overridden or removed; it keeps providing the
+recents/quickstep surface.
+
+As of #81 it is also no longer a HOME app:
+`patches/packages/apps/Launcher3/0002-launcher3-drop-home-candidacy.patch`
+removes `CATEGORY_HOME` from the Launcher activity and makes
+`OverviewComponentObserver` tolerate its own home intent no longer resolving
+(the constructor dereferenced the `ResolveInfo` without a null check). It never
+declared `CATEGORY_LAUNCHER`, so it is not an app-drawer entry either. The
+home-app chooser (Settings > Default apps > Home app) therefore only lists
+AshFall, and a stale RoleManager holder from an old image is not resolvable as
+a home activity any more.
 
 Android 17 has no `config_defaultHome`; RoleManager grants the HOME role to the
 **highest-priority HOME intent filter** when no holder exists
@@ -244,8 +307,11 @@ role.
 
 **No-wipe caveat:** RoleManager only fills an *empty* role. If the device
 already has a HOME holder (for example Trebuchet from the previous image),
-flashing a new `system.img` without wiping `userdata` keeps that holder. In that
-case set it once from the flash/test flow or from the UI:
+flashing a new `system.img` without wiping `userdata` can keep that holder.
+With #81, Trebuchet is no longer resolvable as a home activity (the HOME
+category is gone), so HOME presses/gestures still land on AshFall; only the
+stored role holder can look stale. Set it explicitly from the flash/test flow
+or from the UI:
 
 ```bash
 adb shell cmd role add-role-holder android.app.role.HOME org.ashfall.launcher
@@ -319,6 +385,11 @@ The device was shared with the keyguard/taskbar work (#50/#51) during part of
 this test; the affected navigation/back/page tests were repeated afterwards on
 an exclusive device.
 
+The #81 changes (system-wallpaper background, live wallpaper, Launcher3 HOME
+candidacy removal, modal/themed dialogs, swatch ring) were compile-checked with
+aapt2 + javac against the platform system stubs but have not been device-tested
+yet; see the checklist in section 6 and `docs/ui.md` 7.4.
+
 ## 6. User test checklist (after flashing)
 
 1. Boot to the home screen. With fresh `userdata`, AshFall is the HOME app; if
@@ -346,7 +417,20 @@ an exclusive device.
    gradient direction and enable animation; choose an image and drag the dim
    slider; switch the accent to blue and check the focus ring, page dots,
    settings highlights and app-options dialog. Try the `Custom color…` picker
-   on each palette.
-9. Check the Controller card at the end of Settings for the button mapping.
-10. Cold start: pressing Home after a reboot should feel immediate (no splash
+   on each palette. The focused colour swatch's white ring must be fully
+   visible (no clipping at the edges), and the settings page must have the
+   blank line where the old intro text was.
+9. Leave Settings and check the system wallpaper: the chosen background is
+   visible in HOME, in Recents (swipe up and hold) and during the app-to-home
+   transition; no stock LineageOS wallpaper appears at any point. With
+   "Animate colors" on, the background keeps shifting and stops moving while
+   another app is in front.
+10. Open the app-options panel and the colour picker: both are modal (D-pad,
+    stick and touch do not move the grid/settings behind), and their surface is
+    the system dark grey (or pure black with the LineageOS black theme), not a
+    hardcoded black.
+11. Settings > Apps > Default apps > Home app lists only AshFall (no
+    Trebuchet), while Recents still shows the Launcher3QuickStep surface.
+12. Check the Controller card at the end of Settings for the button mapping.
+13. Cold start: pressing Home after a reboot should feel immediate (no splash
     or white flash).

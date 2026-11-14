@@ -22,15 +22,11 @@ import android.app.Dialog;
 import android.content.Context;
 import android.content.pm.ApplicationInfo;
 import android.content.pm.PackageManager;
-import android.graphics.Color;
-import android.graphics.drawable.ColorDrawable;
 import android.graphics.drawable.GradientDrawable;
 import android.os.SystemClock;
 import android.view.KeyEvent;
 import android.view.View;
 import android.view.ViewGroup;
-import android.view.Window;
-import android.view.WindowManager;
 import android.widget.ImageView;
 import android.widget.TextView;
 import android.widget.Toast;
@@ -56,8 +52,8 @@ final class AppOptionsDialog {
         this.swallowOpeningAction = swallowOpeningRelease;
         shownAt = SystemClock.uptimeMillis();
         dialog = new Dialog(activity, R.style.Theme_AshFall_Dialog);
-        dialog.setContentView(R.layout.dialog_app_options);
-        dialog.setCanceledOnTouchOutside(true);
+        dialog.setContentView(R.layout.dialog_container);
+        dialog.setCanceledOnTouchOutside(false);
 
         TextView title = dialog.findViewById(R.id.app_title);
         TextView packageName = dialog.findViewById(R.id.app_package);
@@ -80,12 +76,17 @@ final class AppOptionsDialog {
         tintIcon(uninstall, accent);
         tintIcon(kill, accent);
 
+        // Follow the system dialog theme; only the accent outline stays AshFall.
         GradientDrawable panel = new GradientDrawable();
-        panel.setColor(Color.BLACK);
+        panel.setColor(Ui.dialogBackgroundColor(dialog.getContext()));
         panel.setCornerRadius(activity.getResources().getDimensionPixelSize(
                 R.dimen.dialog_radius));
         panel.setStroke(Ui.dp(activity, 1.5f), accent);
         root.setBackground(panel);
+        root.setClickable(true);
+
+        View container = dialog.findViewById(R.id.dialog_modal_root);
+        container.setOnClickListener(view -> dismiss());
 
         dialog.setOnDismissListener(d -> {
             dialog = null;
@@ -181,17 +182,7 @@ final class AppOptionsDialog {
         dialog.setOnShowListener(d -> {
             shownAt = SystemClock.uptimeMillis();
             open.post(open::requestFocus);
-            Window window = dialog.getWindow();
-            if (window != null) {
-                WindowManager.LayoutParams params = window.getAttributes();
-                params.width = activity.getResources().getDimensionPixelSize(
-                        R.dimen.dialog_width);
-                params.height = ViewGroup.LayoutParams.WRAP_CONTENT;
-                params.gravity = android.view.Gravity.CENTER;
-                params.dimAmount = 0.7f;
-                window.setAttributes(params);
-                window.setBackgroundDrawable(new ColorDrawable(Color.TRANSPARENT));
-            }
+            Ui.makeDialogModal(dialog, 0.7f);
         });
         dialog.show();
     }

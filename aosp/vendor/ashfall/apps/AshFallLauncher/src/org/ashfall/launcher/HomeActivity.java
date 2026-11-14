@@ -56,7 +56,6 @@ public final class HomeActivity extends Activity implements AppPager.Listener {
     private final Handler handler = new Handler(Looper.getMainLooper());
 
     private AppPager pager;
-    private LauncherBackgroundView backgroundView;
     private PageIndicatorView pageDots;
     private BottomBarView bottomBar;
     private TextView emptyState;
@@ -97,7 +96,6 @@ public final class HomeActivity extends Activity implements AppPager.Listener {
         pager = findViewById(R.id.pager);
         pager.setListener(this);
 
-        backgroundView = findViewById(R.id.background);
         pageDots = findViewById(R.id.page_dots);
         bottomBar = findViewById(R.id.bottom_bar);
         emptyState = findViewById(R.id.empty_state);
@@ -212,7 +210,9 @@ public final class HomeActivity extends Activity implements AppPager.Listener {
     @Override
     public boolean dispatchKeyEvent(KeyEvent event) {
         if (optionsShowing) {
-            return super.dispatchKeyEvent(event);
+            // The options dialog owns input while it is open: never let a key
+            // fall through to the grid behind it (#81).
+            return true;
         }
 
         if (bottomBar.isSettingsFocused()) {
@@ -320,7 +320,7 @@ public final class HomeActivity extends Activity implements AppPager.Listener {
     @Override
     public boolean dispatchGenericMotionEvent(MotionEvent event) {
         if (optionsShowing) {
-            return super.dispatchGenericMotionEvent(event);
+            return true;
         }
         if (event.getAction() != MotionEvent.ACTION_MOVE) {
             return super.dispatchGenericMotionEvent(event);
@@ -443,7 +443,9 @@ public final class HomeActivity extends Activity implements AppPager.Listener {
 
     private void applyAppearance() {
         Appearance appearance = Appearance.load(this);
-        backgroundView.apply(appearance);
+        // The window is transparent and shows the system wallpaper; keep that
+        // wallpaper in sync with the stored appearance (docs/launcher.md).
+        WallpaperController.apply(this);
         pager.setAccent(appearance.accent);
         pageDots.setAccent(appearance.accent);
         bottomBar.setAccent(appearance.accent);

@@ -22,6 +22,8 @@ the seamless HOME transition with the third-party AshFall launcher (section 3).
 | `patches/packages/apps/Launcher3/0001-launcher3-keep-external-display-taskbar.patch` | #63: only the primary display follows `enable_taskbar=0` |
 | `patches/frameworks/base/0003-settingsprovider-keep-settings-version.patch` | keeps the AOSP settings DB version at 237 after removing the old seed |
 | `patches/frameworks/base/0004-wm-shell-instant-third-party-home.patch` | #64: no default task-open animation for a third-party HOME |
+| `patches/packages/apps/Launcher3/0002-launcher3-drop-home-candidacy.patch` | #81: Trebuchet is not a HOME app; Quickstep keeps recents |
+| `aosp/vendor/ashfall/overlay/no-rro/frameworks/base/core/res/res/drawable-*/default_wallpaper.png` | #81: AshFall default wallpaper replaces the LineageOS one |
 | `aosp/vendor/ashfall/ui.mk` | overlay wiring and the list of hooks |
 | `docs/ui.md` | this document |
 
@@ -509,3 +511,110 @@ navigation_bar_hint`); it is unused by the UI and can be ignored or deleted.
 13. The second display (port 130, 1280x720) is unchanged: it still has its
     48 dp taskbar/navigation bar even though the primary display does not
     (`dumpsys window` shows a `Taskbar` window for that display).
+
+## 7. #81 - AshFall background, Recents and the home app
+
+The user test on 2026-11-14 found that leaving an app to Recents or to HOME
+still showed the stock LineageOS wallpaper, that Trebuchet was still offered as
+a home app, and that launcher dialogs were hardcoded black and could be
+navigated behind. The plan agreed with the user is a two-step one: the AshFall
+background becomes the **system wallpaper** now; a fully custom Recents UI
+remains a later project.
+
+### 7.1 Background is the system wallpaper
+
+- `HomeActivity` no longer draws a background. Its window is transparent with
+  `android:windowShowWallpaper`, so the wallpaper layer is visible under the
+  grid, under the **fallback Recents** (`RecentsActivity` uses
+  `LauncherTheme`, which already has `windowShowWallpaper=true` and a
+  transparent window background) and during the app-to-home transition. This
+  is what removes the stock-wallpaper flash; no Launcher3/SystemUI drawing
+  patch was needed for it.
+- `WallpaperController` renders solid colours, static gradients and images
+  (dim baked in) with `WallpaperManager.setBitmap(...)` (system + lock); for
+  the animated gradient it installs `AshFallWallpaperService` (a
+  `WallpaperService` in `AshFallLauncher`) with `setWallpaperComponent`.
+  A signature prevents rewriting an unchanged wallpaper; after the first
+  install, a wallpaper set by another app is left alone unless the appearance
+  changes. The first write on an upgraded (not wiped) `/data` is asynchronous,
+  so the old wallpaper can survive the first few hundred milliseconds of the
+  first HOME resume.
+- The live wallpaper paints at 20 fps only while `onVisibilityChanged(true)`;
+  going to another app, turning the screen off or losing the surface removes
+  the frame callback. The hue phase is derived from `uptimeMillis`, so the
+  speed does not depend on the frame rate.
+- `LauncherSettingsActivity` uses `Theme.AshFall.Settings` (opaque, no
+  `windowShowWallpaper`), so opening settings also hides the wallpaper window
+  instead of keeping the live wallpaper engine drawing behind the preview.
+- `vendor/ashfall/overlay/no-rro/frameworks/base/core/res/res/drawable-*/
+  default_wallpaper.png` replaces LineageOS' default wallpaper in every
+  density bucket with an AshFall near-black gradient. It covers the window
+  between a fresh boot and the first launcher run (and a wiped `/data` before
+  the launcher ever starts).
+- Permissions: `SET_WALLPAPER` (normal) and `SET_WALLPAPER_COMPONENT`
+  (signature|privileged, satisfied by the platform certificate); the live
+  wallpaper service holds `BIND_WALLPAPER`.
+
+Recents itself keeps its Material/dynamic-colour chrome. Its backdrop is now
+the AshFall wallpaper (near-black by default), which is the "dark/black
+background" part of the request; tinting every Recents action button with the
+launcher accent is intentionally deferred instead of duplicating Launcher3's
+Material theme in an overlay.
+
+### 7.2 Trebuchet is not a home app any more
+
+`patches/packages/apps/Launcher3/0002-launcher3-drop-home-candidacy.patch`:
+
+- removes `CATEGORY_HOME` from `com.android.launcher3.Launcher` in
+  `AndroidManifest.xml`. The activity never declared `CATEGORY_LAUNCHER`, so
+  it was not an app-drawer entry; removing HOME only drops the home candidacy
+  and the entry in Settings > Apps > Default apps > Home app;
+- makes `OverviewComponentObserver`'s constructor tolerate
+  `resolveActivity(own HOME intent) == null`. It previously dereferenced the
+  `ResolveInfo` unconditionally; with the category gone that is a
+  `NullPointerException` in the Quickstep provider. The code now uses the
+  `Launcher` activity component directly for the container interface and the
+  configChanges map. The overview target logic already takes the
+  fallback-Recents path when another app is the default home, so
+  gestures/Recents are unchanged.
+
+Why not remove/disable the package: it is the recents/quickstep surface, as on
+the stock firmware (`rp3launcher` + `Launcher3QuickStepEX`). Why not rely on
+role priority only: on a no-wipe flash an old Trebuchet role holder could
+linger; with no HOME filter it is not resolvable as a home activity, and the
+chooser only offers AshFall.
+
+### 7.3 Dialogs follow the system theme and are modal
+
+- `Theme.AshFall.Dialog` (parent `Theme.DeviceDefault.Dialog.NoActionBar`) is
+  used for the app-options panel and the colour picker. Their panel fill is
+  `android:colorBackgroundFloating` (dark grey by default, black with
+  LineageOS' pure-black theme) and their text uses the theme's text colours;
+  only the accent outline, action tiles and icons are AshFall-coloured.
+- Both dialogs occupy the whole display (`Ui.makeDialogModal`): the window is
+  `MATCH_PARENT` with `FLAG_LAYOUT_IN_SCREEN`, so touches outside the panel
+  are delivered to the dialog and never to the HOME grid or the settings list
+  behind it; a tap on the empty area dismisses. The HOME activity additionally
+  consumes every key/motion event while its options panel is open instead of
+  forwarding unhandled events to the grid.
+- Small fixes in the same test: the white focus ring of a colour swatch is now
+  drawn inside the view (it used to be clipped by the next swatch), and the
+  "Tune the home screen..." intro line is gone with its vertical space kept.
+
+### 7.4 Test checklist (#81)
+
+1. Set a solid colour, a gradient and an image in launcher Settings; HOME,
+   Recents and the app-to-home transition show it immediately. No stock
+   wallpaper is visible at any point, also right after a fresh boot.
+2. Enable "Animate colors": the gradient keeps shifting on HOME and in Recents;
+   open an app (the wallpaper stops drawing) and return (it resumes). Check
+   `dumpsys wallpaper` shows `org.ashfall.launcher/.AshFallWallpaperService`
+   while it is active.
+3. Settings > Apps > Default apps > Home app lists only AshFall; Recents still
+   works (swipe up and hold, select/swipe away tasks).
+4. Open the app-options panel and the colour picker: D-pad/stick/touch do not
+   move the grid or the settings list behind them; tap outside dismisses; the
+   panel background matches the system dialog colour (dark grey, or black with
+   the LineageOS black theme).
+5. The focused colour swatch's white ring is complete on all four sides; the
+   settings header has no intro text but the same vertical spacing.

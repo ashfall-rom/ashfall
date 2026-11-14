@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Copyright (C) 2026 The AshFall Project. Apache-2.0.
+
+  Full-screen modal container for the launcher dialogs (#81): the window covers
+  the display, so no touch or gamepad event reaches the HOME grid or the
+  settings list behind it. Tapping the container (outside the panel) dismisses.
+-->
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/dialog_modal_root"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@android:color/transparent"
+    android:clickable="true"
+    android:focusable="false">
+
+    <include
+        layout="@layout/dialog_app_options"
+        android:layout_width="@dimen/dialog_width"
+        android:layout_height="wrap_content"
+        android:layout_gravity="center" />
+</FrameLayout>

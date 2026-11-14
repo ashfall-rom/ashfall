@@ -17,28 +17,23 @@
 package org.ashfall.launcher;
 
 import android.animation.ValueAnimator;
-import android.content.ContentResolver;
 import android.content.Context;
 import android.graphics.Bitmap;
-import android.graphics.BitmapFactory;
 import android.graphics.Canvas;
 import android.graphics.Color;
-import android.graphics.LinearGradient;
-import android.graphics.Matrix;
 import android.graphics.Paint;
-import android.graphics.Shader;
-import android.net.Uri;
 import android.util.AttributeSet;
 import android.view.View;
 import android.view.animation.LinearInterpolator;
 
-import java.io.InputStream;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
 /**
- * Full-screen appearance layer: solid color, animated/static gradient, or a
- * center-cropped image with a dim scrim.
+ * Full-screen appearance preview: solid color, animated/static gradient, or a
+ * center-cropped image with a dim scrim. The HOME screen does not use this
+ * view any more; it shows the system wallpaper, which carries the same
+ * appearance (docs/launcher.md).
  */
 public final class LauncherBackgroundView extends View {
     private static final ExecutorService LOADER = Executors.newSingleThreadExecutor(runnable -> {
@@ -48,7 +43,6 @@ public final class LauncherBackgroundView extends View {
     });
 
     private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
-    private final Matrix matrix = new Matrix();
     private final float[] hsv = new float[3];
 
     private int backgroundType = Appearance.BACKGROUND_SOLID;
@@ -142,34 +136,15 @@ public final class LauncherBackgroundView extends View {
         int start = gradientStart;
         int end = gradientEnd;
         if (gradientAnimate) {
-            start = shiftHue(start, phase);
-            end = shiftHue(end, phase);
+            start = BackgroundArt.shiftedHue(start, phase, hsv);
+            end = BackgroundArt.shiftedHue(end, phase, hsv);
         }
-        float x0 = 0f;
-        float y0 = 0f;
-        float x1 = gradientDirection == Appearance.DIRECTION_HORIZONTAL ? getWidth() : 0f;
-        float y1 = gradientDirection == Appearance.DIRECTION_HORIZONTAL ? 0f : getHeight();
-        paint.setShader(new LinearGradient(x0, y0, x1, y1, start, end, Shader.TileMode.CLAMP));
-        canvas.drawRect(0f, 0f, getWidth(), getHeight(), paint);
+        BackgroundArt.drawGradient(canvas, getWidth(), getHeight(), start, end,
+                gradientDirection == Appearance.DIRECTION_HORIZONTAL);
     }
 
     private void drawImage(Canvas canvas) {
-        float scale = Math.max(getWidth() / (float) bitmap.getWidth(),
-                getHeight() / (float) bitmap.getHeight());
-        float dx = (getWidth() - bitmap.getWidth() * scale) / 2f;
-        float dy = (getHeight() - bitmap.getHeight() * scale) / 2f;
-        matrix.setScale(scale, scale);
-        matrix.postTranslate(dx, dy);
-        canvas.drawBitmap(bitmap, matrix, paint);
-    }
-
-    private int shiftHue(int color, float amount) {
-        Color.colorToHSV(color, hsv);
-        if (hsv[1] <= 0.01f) {
-            return color;
-        }
-        hsv[0] = (hsv[0] + amount * 360f) % 360f;
-        return Color.HSVToColor(Color.alpha(color), hsv);
+        BackgroundArt.drawCenterCrop(canvas, bitmap, getWidth(), getHeight());
     }
 
     private void loadImage(String uriString) {
@@ -178,7 +153,7 @@ public final class LauncherBackgroundView extends View {
         }
         final String requestedUri = uriString;
         LOADER.execute(() -> {
-            Bitmap decoded = decode(requestedUri);
+            Bitmap decoded = BackgroundArt.decode(getContext(), requestedUri, 2048);
             post(() -> {
                 if (!requestedUri.equals(imageUri)) {
                     if (decoded != null) {
@@ -192,36 +167,6 @@ public final class LauncherBackgroundView extends View {
                 invalidate();
             });
         });
-    }
-
-    private Bitmap decode(String uriString) {
-        ContentResolver resolver = getContext().getApplicationContext().getContentResolver();
-        Uri uri = Uri.parse(uriString);
-        try {
-            BitmapFactory.Options bounds = new BitmapFactory.Options();
-            bounds.inJustDecodeBounds = true;
-            try (InputStream stream = resolver.openInputStream(uri)) {
-                if (stream == null) {
-                    return null;
-                }
-                BitmapFactory.decodeStream(stream, null, bounds);
-            }
-            if (bounds.outWidth <= 0 || bounds.outHeight <= 0) {
-                return null;
-            }
-            int sample = 1;
-            int largest = Math.max(bounds.outWidth, bounds.outHeight);
-            while (largest / sample > 2048) {
-                sample *= 2;
-            }
-            BitmapFactory.Options options = new BitmapFactory.Options();
-            options.inSampleSize = sample;
-            try (InputStream stream = resolver.openInputStream(uri)) {
-                return stream == null ? null : BitmapFactory.decodeStream(stream, null, options);
-            }
-        } catch (Exception e) {
-            return null;
-        }
     }
 
     private void recycleBitmap() {

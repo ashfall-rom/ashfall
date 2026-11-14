@@ -58,18 +58,16 @@ final class ColorSwatchView extends View {
     }
 
     @Override
-    protected void onMeasure(int widthMeasureSpec, int heightMeasureSpec) {
-        int size = Ui.dp(getContext(), 42);
-        setMeasuredDimension(resolveSize(size, widthMeasureSpec),
-                resolveSize(size, heightMeasureSpec));
-    }
-
-    @Override
     protected void onDraw(Canvas canvas) {
         super.onDraw(canvas);
         float cx = getWidth() / 2f;
         float cy = getHeight() / 2f;
-        float radius = Math.min(getWidth(), getHeight()) / 2f - Ui.dp(getContext(), 5);
+        float ringStroke = Ui.dp(getContext(), 2);
+        float focusOffset = Ui.dp(getContext(), 5);
+        // The focus ring is the outermost circle; keep its stroke inside the
+        // view so a focused swatch in a dense row is never clipped (#81).
+        float radius = Math.min(getWidth(), getHeight()) / 2f
+                - ringStroke / 2f - focusOffset - Ui.dp(getContext(), 1);
 
         paint.setStyle(Paint.Style.FILL);
         paint.setColor(color);
@@ -81,14 +79,14 @@ final class ColorSwatchView extends View {
         canvas.drawCircle(cx, cy, radius, paint);
 
         if (selected) {
-            paint.setStrokeWidth(Ui.dp(getContext(), 2));
+            paint.setStrokeWidth(ringStroke);
             paint.setColor(accent);
             canvas.drawCircle(cx, cy, radius + Ui.dp(getContext(), 3), paint);
         }
         if (isFocused()) {
-            paint.setStrokeWidth(Ui.dp(getContext(), 2));
+            paint.setStrokeWidth(ringStroke);
             paint.setColor(0xFFFFFFFF);
-            canvas.drawCircle(cx, cy, radius + Ui.dp(getContext(), 6), paint);
+            canvas.drawCircle(cx, cy, radius + focusOffset, paint);
         }
     }
 

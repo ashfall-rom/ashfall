@@ -15,9 +15,10 @@
 // AshFall launcher: a small, controller-first landscape HOME app for the RP5.
 //
 // Deliberately free of AndroidX / Kotlin / Compose: plain framework views keep
-// the APK tiny and the cold start short. The app is not privileged and asks for
-// no signature permissions; it only reads the launcher activity list and the
-// network/battery state.
+// the APK tiny and the cold start short. The app is not in priv-app, but it is
+// platform-signed and needs one signature permission: SET_WALLPAPER_COMPONENT
+// for the built-in live wallpaper (#81). It also asks for SET_WALLPAPER and the
+// launcher/package-inspection permissions.
 android_app {
     name: "AshFallLauncher",
     manifest: "AndroidManifest.xml",

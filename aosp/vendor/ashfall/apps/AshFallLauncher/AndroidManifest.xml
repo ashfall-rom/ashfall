@@ -23,6 +23,14 @@
     <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES" />
     <uses-permission android:name="android.permission.REQUEST_DELETE_PACKAGES" />
     <uses-permission android:name="android.permission.KILL_BACKGROUND_PROCESSES" />
+    <!-- The background is installed as the system wallpaper; the animated
+         gradient uses the built-in live wallpaper below. -->
+    <uses-permission android:name="android.permission.SET_WALLPAPER" />
+    <uses-permission android:name="android.permission.SET_WALLPAPER_COMPONENT" />
+
+    <uses-feature
+        android:name="android.software.live_wallpaper"
+        android:required="false" />
 
     <queries>
         <intent>
@@ -48,7 +56,9 @@
           RoleManager on first boot (HomeRoleBehavior picks the highest-priority
           HOME filter). Launcher3QuickStep is intentionally NOT overridden: it
           stays installed and keeps providing the recents/quickstep surface, as
-          on the stock firmware (rp3launcher + Launcher3QuickStepEX).
+          on the stock firmware (rp3launcher + Launcher3QuickStepEX). A
+          Launcher3 patch removes its own HOME candidacy, so AshFall is the only
+          home app in the chooser (docs/launcher.md).
         -->
         <activity
             android:name=".HomeActivity"
@@ -77,6 +87,24 @@
             android:excludeFromRecents="true"
             android:exported="false"
             android:screenOrientation="landscape"
-            android:theme="@style/Theme.AshFall" />
+            android:theme="@style/Theme.AshFall.Settings" />
+
+        <!--
+          Live wallpaper for the animated gradient background. Installed by
+          WallpaperController when "Animate colors" is on; it only draws while
+          visible and reads the same appearance preferences as the launcher.
+        -->
+        <service
+            android:name=".AshFallWallpaperService"
+            android:exported="true"
+            android:label="@string/app_name"
+            android:permission="android.permission.BIND_WALLPAPER">
+            <intent-filter>
+                <action android:name="android.service.wallpaper.WallpaperService" />
+            </intent-filter>
+            <meta-data
+                android:name="android.service.wallpaper"
+                android:resource="@xml/wallpaper" />
+        </service>
     </application>
 </manifest>
