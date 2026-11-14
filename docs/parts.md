@@ -180,16 +180,19 @@ The UI target selector maps onto the daemon's `led.sync`:
   (`user`, `factory`, `default`, or “No calibration available”).
 * **Reset to factory calibration** confirms, then sends `RESET CAL`; the
   factory file is never touched.
-* **Tester** (`TesterActivity`) draws a landscape RP5 outline: sticks with the
-  configured inner/outer deadzone rings, D-pad, A/B/X/Y, L1/R1, exact analog
-  L2/R2 bars, Start/Select, Home/Back and L3/R3.  Since the 2026-11-14 follow-up
-  (issue #84) it sends `GRAB ON` on the raw-stream socket, so nothing is
-  injected into uinput and every button is drawn from the `RAW` mask - including
-  Home, Back and Select, which the system would otherwise consume.  It shows
-  the raw MCU values and the recalibrated values side by side.  Leave by holding
-  Start + Select for 2 s or tapping Close; the key-event path remains only as a
-  fallback when the daemon is unreachable (B/Back then exits).  Details and the
-  button-layout note: [parts-controller.md](parts-controller.md).
+* **Tester** (`TesterActivity`) draws only the controls, large, with no
+  handheld outline (issue #101): sticks with the configured inner/outer deadzone
+  rings, D-pad, A/B/X/Y, L1/R1, exact analog L2/R2 bars, Start/Select, Home/Back
+  and L3/R3, using the full landscape space.  The face buttons follow the
+  physical RP5 layout: X top, Y left, A right, B bottom.  Since the 2026-11-14
+  follow-up (issue #84) it sends `GRAB ON` on the raw-stream socket, so nothing
+  is injected into uinput and every button is drawn from the `RAW` mask -
+  including Home, Back and Select, which the system would otherwise consume.
+  The live RAW counts, calibration source and GRAB state are shown between the
+  two control clusters.  Leave by holding Start + Select for 2 s or tapping
+  Close; the key-event path remains only as a fallback when the daemon is
+  unreachable (B/Back then exits).  Details and the button-layout note:
+  [parts-controller.md](parts-controller.md).
 * **Calibration wizard** (`CalibrationActivity`) opens a socket and requests
   `RAW ON`, then runs four steps; each capture step now waits for the user to
   press **Start** instead of running on a timer (issue #84):

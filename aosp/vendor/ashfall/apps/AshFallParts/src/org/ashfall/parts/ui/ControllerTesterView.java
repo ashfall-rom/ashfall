@@ -39,23 +39,26 @@ import org.ashfall.parts.ipc.RawSample;
 import java.util.Locale;
 
 /**
- * Clean-room drawing of the RP5 front face with live input.
+ * Live controller tester: only the controls, no handheld silhouette (issue #101).
  *
- * <p><b>Button positions.</b>  The layout is not the generic Xbox one: it is
- * derived from the button table in {@code docs/rp5/input.md}, which is what the
- * stock firmware itself uses.  The MCU reports bit 12 as {@code BTN_X} (Linux
- * {@code BTN_NORTH}, 0x133) and bit 13 as {@code BTN_Y} (Linux
- * {@code BTN_WEST}, 0x134), so on this device <b>X is the top button and Y the
- * left one</b>, while A is south and B east:
+ * <p>Every control is a big, focus-independent drawing that uses the full
+ * landscape screen: the left stick and the D-pad on the left, the face buttons
+ * and the right stick on the right, the triggers on the outer edges, the
+ * shoulder buttons above them, and Start/Select plus Home/Back in the middle.
+ * Between the two halves the live RAW counts, the calibration source and the
+ * GRAB state are shown.
+ *
+ * <p><b>Button positions (physical RP5, issue #101):</b> X top, Y left,
+ * A right, B bottom.
  *
  * <pre>
  *          X
- *      Y       B
- *          A
+ *      Y       A
+ *          B
  * </pre>
  *
- * The previous drawing used the Xbox arrangement (Y top, X left) and therefore
- * showed X and Y swapped on real hardware (issue #84).
+ * <p>The MCU bits are unchanged (12 X, 13 Y, 14 A, 15 B); only the drawn
+ * position of A and B differs from the first version of this view.
  *
  * <p><b>Input.</b>  While the tester is open the daemon is grabbed
  * ({@code GRAB ON}), so nothing is injected into uinput and no {@code KeyEvent}
@@ -97,7 +100,6 @@ public class ControllerTesterView extends View {
     };
 
     private static final long RAW_STALE_MS = 500;
-    private static final long HOLD_MS = 2000;
 
     private final boolean[] mFallback = new boolean[BTN_COUNT];
     private PadState mState = PadState.rest();
@@ -109,18 +111,13 @@ public class ControllerTesterView extends View {
     private boolean mGrabActive;
     private float mExitHold;
 
-    private final Paint mBodyFill = new Paint(Paint.ANTI_ALIAS_FLAG);
-    private final Paint mBodyStroke = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Paint mFill = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Paint mStroke = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Paint mLabel = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Paint mSmall = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Paint mDot = new Paint(Paint.ANTI_ALIAS_FLAG);
-    private final Path mSilhouette = new Path();
-    private final Path mTempPath = new Path();
     private final Path mPath = new Path();
     private final RectF mRect = new RectF();
-    private final RectF mScreen = new RectF();
     private final TypedValue mValue = new TypedValue();
 
     private int mAccent;
@@ -135,15 +132,13 @@ public class ControllerTesterView extends View {
     public ControllerTesterView(Context context, @Nullable AttributeSet attrs) {
         super(context, attrs);
         mDensity = getResources().getDisplayMetrics().density;
-        mBodyFill.setStyle(Paint.Style.FILL);
-        mBodyStroke.setStyle(Paint.Style.STROKE);
-        mBodyStroke.setStrokeWidth(1.5f * mDensity);
         mFill.setStyle(Paint.Style.FILL);
         mStroke.setStyle(Paint.Style.STROKE);
-        mStroke.setStrokeWidth(1.5f * mDensity);
-        mLabel.setTextSize(13 * mDensity);
+        mStroke.setStrokeWidth(2 * mDensity);
+        mLabel.setTextSize(16 * mDensity);
         mLabel.setTypeface(Typeface.create("sans-serif-medium", Typeface.NORMAL));
-        mSmall.setTextSize(11 * mDensity);
+        mSmall.setTextSize(14 * mDensity);
+        mSmall.setTypeface(Typeface.MONOSPACE);
         mDot.setStyle(Paint.Style.FILL);
         setFocusable(false);
         setImportantForAccessibility(IMPORTANT_FOR_ACCESSIBILITY_YES);
@@ -338,12 +333,9 @@ public class ControllerTesterView extends View {
     }
 
     private void resolveTheme() {
-        final Context context = getContext();
         mAccent = themeColor(android.R.attr.colorAccent, 0xFFFF2020);
         mPrimary = themeColor(android.R.attr.textColorPrimary, 0xFFEEEEEE);
         mSecondary = themeColor(android.R.attr.textColorSecondary, 0xFF888888);
-        mBodyFill.setColor(Ui.fade(mPrimary, 0.05f));
-        mBodyStroke.setColor(Ui.fade(mSecondary, 0.75f));
         mFill.setColor(Ui.fade(mPrimary, 0.05f));
         mStroke.setColor(Ui.fade(mSecondary, 0.75f));
         mLabel.setColor(mPrimary);
@@ -366,99 +358,87 @@ public class ControllerTesterView extends View {
             return;
         }
         resolveTheme();
-        final float unit = Math.min(w * 0.052f, h * 0.085f);
 
-        drawInfo(canvas, w, h);
-        drawBody(canvas, w, h);
-        drawScreen(canvas, w, h);
-        drawTriggers(canvas, w, h);
+        // Sizes scale with the shorter axis so the controls stay large in
+        // landscape (1920x1080 / 853x480 dp) without overlapping.
+        final float stickRadius = Math.min(h * 0.175f, w * 0.10f);
+        final float dpadArm = Math.min(h * 0.130f, w * 0.072f);
+        final float faceRadius = Math.min(h * 0.057f, w * 0.030f);
+
+        drawStatus(canvas, w, h);
+        drawTriggerBars(canvas, w, h);
         drawShoulders(canvas, w, h);
-        drawSticks(canvas, w, h, unit);
-        drawDpad(canvas, w, h, unit);
-        drawFaceButtons(canvas, w, h, unit);
+        drawSticks(canvas, w, h, stickRadius);
+        drawDpad(canvas, w, h, dpadArm);
+        drawFaceButtons(canvas, w, h, faceRadius);
         drawSystemButtons(canvas, w, h);
         drawExitHold(canvas, w, h);
     }
 
-    /** Top strip: raw counts, grab state and calibration source. */
-    private void drawInfo(Canvas canvas, float w, float h) {
-        final String text;
-        if (!mRawAvailable || mRaw == null) {
-            text = "RAW stream unavailable - using normal input events";
-        } else {
-            text = String.format(Locale.US,
-                    "RAW  lx %.0f  ly %.0f  rx %.0f  ry %.0f   l2 %.0f  r2 %.0f   buttons 0x%04X"
-                            + "   %s%s", mRaw.leftX, mRaw.leftY, mRaw.rightX, mRaw.rightY,
-                    mRaw.l2, mRaw.r2, mRaw.buttons,
-                    mCalibration == null ? "cal default"
-                            : "cal " + mCalibration.source(),
-                    mGrabActive ? "  ·  GRAB ON" : "");
-        }
-        mSmall.setColor(mRaw != null ? mSecondary : Ui.fade(mSecondary, 0.9f));
-        canvas.drawText(text, w * 0.03f, h * 0.055f, mSmall);
-    }
-
     /**
-     * The handheld outline: a rounded body with two grips and shoulder bumps,
-     * unioned into one path so the fill and the outline stay clean.
+     * Live RAW read-out in the free space between the two control clusters.
+     * It replaces the old "screen" of the silhouette; no body art is drawn.
      */
-    private void drawBody(Canvas canvas, float w, float h) {
-        final float left = w * 0.045f;
-        final float right = w * 0.955f;
-        final float top = h * 0.12f;
-        final float bottom = h * 0.93f;
-        mRect.set(left, top, right, bottom);
-        mSilhouette.reset();
-        mSilhouette.addRoundRect(mRect, h * 0.075f, h * 0.075f, Path.Direction.CW);
+    private void drawStatus(Canvas canvas, float w, float h) {
+        final float x = w * 0.365f;
+        float y = h * 0.24f;
+        final float line = 22 * mDensity;
+        mSmall.setTextSize(14 * mDensity);
+        mLabel.setTextSize(18 * mDensity);
 
-        // Grips: lower, slightly wider than the body.
-        mTempPath.reset();
-        mRect.set(w * 0.02f, h * 0.62f, w * 0.245f, h * 0.995f);
-        mTempPath.addRoundRect(mRect, h * 0.10f, h * 0.10f, Path.Direction.CW);
-        mRect.set(w * 0.755f, h * 0.62f, w * 0.98f, h * 0.995f);
-        mTempPath.addRoundRect(mRect, h * 0.10f, h * 0.10f, Path.Direction.CW);
-        mSilhouette.op(mTempPath, Path.Op.UNION);
+        mLabel.setColor(mSecondary);
+        canvas.drawText("RAW", x, y, mLabel);
+        y += line * 1.35f;
 
-        canvas.drawPath(mSilhouette, mBodyFill);
-        canvas.drawPath(mSilhouette, mBodyStroke);
+        if (!mRawAvailable || mRaw == null) {
+            mSmall.setColor(mSecondary);
+            canvas.drawText("Input daemon not reachable", x, y, mSmall);
+            y += line;
+            canvas.drawText("Normal buttons are shown", x, y, mSmall);
+            y += line;
+            canvas.drawText("B or Back leaves", x, y, mSmall);
+            mLabel.setTextSize(16 * mDensity);
+            return;
+        }
 
-        // Shoulder bumps on the top edge, behind the L1/R1 pills.
-        mRect.set(w * 0.07f, h * 0.055f, w * 0.30f, h * 0.145f);
-        canvas.drawRoundRect(mRect, h * 0.03f, h * 0.03f, mBodyFill);
-        canvas.drawRoundRect(mRect, h * 0.03f, h * 0.03f, mStroke);
-        mRect.set(w * 0.70f, h * 0.055f, w * 0.93f, h * 0.145f);
-        canvas.drawRoundRect(mRect, h * 0.03f, h * 0.03f, mBodyFill);
-        canvas.drawRoundRect(mRect, h * 0.03f, h * 0.03f, mStroke);
+        mSmall.setColor(mPrimary);
+        canvas.drawText(String.format(Locale.US, "lx %7.0f    ly %7.0f",
+                mRaw.leftX, mRaw.leftY), x, y, mSmall);
+        y += line;
+        canvas.drawText(String.format(Locale.US, "rx %7.0f    ry %7.0f",
+                mRaw.rightX, mRaw.rightY), x, y, mSmall);
+        y += line;
+        canvas.drawText(String.format(Locale.US, "l2 %7.0f    r2 %7.0f",
+                mRaw.l2, mRaw.r2), x, y, mSmall);
+        y += line * 1.25f;
+        mSmall.setColor(mSecondary);
+        canvas.drawText(String.format(Locale.US, "buttons 0x%04X", mRaw.buttons), x, y, mSmall);
+        y += line;
+        canvas.drawText("cal " + (mCalibration == null ? "default" : mCalibration.source()),
+                x, y, mSmall);
+        y += line;
+        if (mGrabActive) {
+            mSmall.setColor(mAccent);
+            canvas.drawText("GRAB ON", x, y, mSmall);
+        } else {
+            mSmall.setColor(mSecondary);
+            canvas.drawText("GRAB OFF", x, y, mSmall);
+        }
+        mLabel.setTextSize(16 * mDensity);
+        mSmall.setTextSize(14 * mDensity);
     }
 
-    private void drawScreen(Canvas canvas, float w, float h) {
-        mScreen.set(w * 0.315f, h * 0.185f, w * 0.685f, h * 0.80f);
-        // Bezel.
-        mRect.set(mScreen);
-        mRect.inset(-6 * mDensity, -6 * mDensity);
-        mFill.setColor(Ui.fade(mPrimary, 0.07f));
-        canvas.drawRoundRect(mRect, h * 0.02f, h * 0.02f, mFill);
-        mFill.setColor(Ui.fade(mPrimary, 0.025f));
-        canvas.drawRoundRect(mScreen, h * 0.015f, h * 0.015f, mFill);
-        canvas.drawRoundRect(mScreen, h * 0.015f, h * 0.015f, mStroke);
-
-        mSmall.setColor(Ui.fade(mSecondary, 0.8f));
-        final String label = "AshFall";
-        canvas.drawText(label, mScreen.centerX() - mSmall.measureText(label) / 2,
-                mScreen.centerY(), mSmall);
-    }
-
-    /** L2/R2 as vertical analog bars: the fill is the real value, never a snap. */
-    private void drawTriggers(Canvas canvas, float w, float h) {
-        drawTriggerBar(canvas, w * 0.062f, h * 0.19f, h * 0.79f, mState.l2, "L2");
-        drawTriggerBar(canvas, w * 0.938f, h * 0.19f, h * 0.79f, mState.r2, "R2");
+    /** L2/R2 as tall vertical analog bars on the outer edges: exact values. */
+    private void drawTriggerBars(Canvas canvas, float w, float h) {
+        drawTriggerBar(canvas, w * 0.028f, h * 0.16f, h * 0.85f, mState.l2, "L2");
+        drawTriggerBar(canvas, w * 0.972f, h * 0.16f, h * 0.85f, mState.r2, "R2");
     }
 
     private void drawTriggerBar(Canvas canvas, float cx, float top, float bottom, float value,
             String label) {
         final float halfW = 13 * mDensity;
         mRect.set(cx - halfW, top, cx + halfW, bottom);
-        mFill.setColor(Ui.fade(mPrimary, 0.04f));
+        mFill.setColor(Ui.fade(mPrimary, 0.05f));
         canvas.drawRoundRect(mRect, halfW, halfW, mFill);
         if (value > 0.001f) {
             mRect.set(cx - halfW, bottom - (bottom - top) * value, cx + halfW, bottom);
@@ -469,68 +449,67 @@ public class ControllerTesterView extends View {
         mRect.set(cx - halfW, top, cx + halfW, bottom);
         canvas.drawRoundRect(mRect, halfW, halfW, mStroke);
         mLabel.setColor(mPrimary);
-        canvas.drawText(label, cx - mLabel.measureText(label) / 2, top - 8 * mDensity, mLabel);
+        canvas.drawText(label, cx - mLabel.measureText(label) / 2, top - 10 * mDensity, mLabel);
         final String percent = String.format(Locale.US, "%d%%", Math.round(value * 100));
         mSmall.setColor(mSecondary);
         canvas.drawText(percent, cx - mSmall.measureText(percent) / 2,
-                bottom + 16 * mDensity, mSmall);
+                bottom + 26 * mDensity, mSmall);
     }
 
     private void drawShoulders(Canvas canvas, float w, float h) {
-        drawButton(canvas, w * 0.135f, h * 0.10f, w * 0.055f, h * 0.026f,
+        drawButton(canvas, w * 0.115f, h * 0.075f, w * 0.065f, h * 0.036f,
                 isPressed(BTN_L1), "L1");
-        drawButton(canvas, w * 0.865f, h * 0.10f, w * 0.055f, h * 0.026f,
+        drawButton(canvas, w * 0.885f, h * 0.075f, w * 0.065f, h * 0.036f,
                 isPressed(BTN_R1), "R1");
     }
 
     /**
-     * RP5 stick positions: the left stick sits above the D-pad and the right
-     * stick below the face buttons (offset, like the device).
+     * Left stick above the D-pad, right stick below the face buttons: the
+     * physical RP5 arrangement, without the body around it.
      */
     private void drawSticks(Canvas canvas, float w, float h, float radius) {
-        drawStick(canvas, w * 0.15f, h * 0.31f, radius, mState.leftX, mState.leftY, true);
-        drawStick(canvas, w * 0.85f, h * 0.665f, radius, mState.rightX, mState.rightY, false);
+        drawStick(canvas, w * 0.165f, h * 0.30f, radius, mState.leftX, mState.leftY, true);
+        drawStick(canvas, w * 0.835f, h * 0.72f, radius, mState.rightX, mState.rightY, false);
     }
 
     private void drawStick(Canvas canvas, float cx, float cy, float radius, float nx, float ny,
             boolean left) {
         final float inner = radius * (Pad.inner() / 100f);
         final float outer = radius * (1f - Pad.outer() / 100f);
-        mFill.setColor(Ui.fade(mPrimary, 0.03f));
+        mFill.setColor(Ui.fade(mPrimary, 0.04f));
         canvas.drawCircle(cx, cy, radius, mFill);
         mStroke.setColor(Ui.fade(mSecondary, 0.75f));
         canvas.drawCircle(cx, cy, radius, mStroke);
         if (inner > 0.5f) {
-            mStroke.setColor(Ui.fade(mSecondary, 0.30f));
+            mStroke.setColor(Ui.fade(mSecondary, 0.32f));
             canvas.drawCircle(cx, cy, inner, mStroke);
         }
         if (outer < radius - 0.5f) {
-            mStroke.setColor(Ui.fade(mSecondary, 0.30f));
+            mStroke.setColor(Ui.fade(mSecondary, 0.32f));
             canvas.drawCircle(cx, cy, outer, mStroke);
         }
-        mStroke.setColor(Ui.fade(mSecondary, 0.22f));
+        mStroke.setColor(Ui.fade(mSecondary, 0.24f));
         canvas.drawLine(cx - radius, cy, cx + radius, cy, mStroke);
         canvas.drawLine(cx, cy - radius, cx, cy + radius, mStroke);
 
         final float dotX = cx + clamp(nx) * radius * 0.90f;
         final float dotY = cy + clamp(ny) * radius * 0.90f;
-        mDot.setColor(isPressed(left ? BTN_L3 : BTN_R3) ? mAccent : Ui.fade(mAccent, 0.85f));
-        canvas.drawCircle(dotX, dotY, Math.max(6 * mDensity, radius * 0.17f), mDot);
+        mDot.setColor(isPressed(left ? BTN_L3 : BTN_R3) ? mAccent : Ui.fade(mAccent, 0.9f));
+        canvas.drawCircle(dotX, dotY, Math.max(10 * mDensity, radius * 0.18f), mDot);
 
         final String click = left ? "L3" : "R3";
-        mSmall.setColor(isPressed(left ? BTN_L3 : BTN_R3) ? mAccent : mSecondary);
-        canvas.drawText(click, cx + radius * 0.78f, cy + radius * 0.15f, mSmall);
+        mLabel.setColor(isPressed(left ? BTN_L3 : BTN_R3) ? mAccent : mSecondary);
+        canvas.drawText(click, cx + radius * 0.66f, cy + radius * 0.18f, mLabel);
 
         final String value = String.format(Locale.US, "%.2f  %.2f", nx, ny);
         mSmall.setColor(mSecondary);
         canvas.drawText(value, cx - mSmall.measureText(value) / 2,
-                cy + radius + 16 * mDensity, mSmall);
+                cy + radius + 22 * mDensity, mSmall);
     }
 
-    /** D-pad at the lower left; X/Y/A/B diamond at the upper right (see class docs). */
     private void drawDpad(Canvas canvas, float w, float h, float arm) {
-        final float cx = w * 0.15f;
-        final float cy = h * 0.665f;
+        final float cx = w * 0.165f;
+        final float cy = h * 0.72f;
         final float half = arm * 0.36f;
         drawArrow(canvas, cx, cy - arm, half, arm, isPressed(BTN_UP), false, -1f);
         drawArrow(canvas, cx, cy + arm, half, arm, isPressed(BTN_DOWN), false, 1f);
@@ -550,7 +529,7 @@ public class ControllerTesterView extends View {
         canvas.drawRect(mRect, mStroke);
         // Small direction notch in the middle of the arm.
         mFill.setColor(pressed ? mPrimary : Ui.fade(mSecondary, 0.55f));
-        final float notch = 4 * mDensity;
+        final float notch = 7 * mDensity;
         mPath.reset();
         if (sideways) {
             mPath.moveTo(cx + halfW * 0.5f * sign, cy);
@@ -565,15 +544,15 @@ public class ControllerTesterView extends View {
         canvas.drawPath(mPath, mFill);
     }
 
-    private void drawFaceButtons(Canvas canvas, float w, float h, float unit) {
-        final float cx = w * 0.85f;
-        final float cy = h * 0.31f;
-        final float radius = unit * 0.42f;
+    /** X top, Y left, A right, B bottom (physical RP5, issue #101). */
+    private void drawFaceButtons(Canvas canvas, float w, float h, float radius) {
+        final float cx = w * 0.835f;
+        final float cy = h * 0.32f;
         final float offset = radius * 2.05f;
         drawCircle(canvas, cx, cy - offset, radius, isPressed(BTN_X), "X");
         drawCircle(canvas, cx - offset, cy, radius, isPressed(BTN_Y), "Y");
-        drawCircle(canvas, cx, cy + offset, radius, isPressed(BTN_A), "A");
-        drawCircle(canvas, cx + offset, cy, radius, isPressed(BTN_B), "B");
+        drawCircle(canvas, cx + offset, cy, radius, isPressed(BTN_A), "A");
+        drawCircle(canvas, cx, cy + offset, radius, isPressed(BTN_B), "B");
     }
 
     private void drawCircle(Canvas canvas, float cx, float cy, float radius, boolean pressed,
@@ -588,16 +567,14 @@ public class ControllerTesterView extends View {
     }
 
     private void drawSystemButtons(Canvas canvas, float w, float h) {
-        // Home/Back sit on the top edge, as on the device.
-        drawButton(canvas, w * 0.40f, h * 0.115f, w * 0.038f, h * 0.021f,
+        drawButton(canvas, w * 0.415f, h * 0.145f, w * 0.055f, h * 0.037f,
                 isPressed(BTN_BACK), "Back");
-        drawButton(canvas, w * 0.60f, h * 0.115f, w * 0.038f, h * 0.021f,
+        drawButton(canvas, w * 0.585f, h * 0.145f, w * 0.055f, h * 0.037f,
                 isPressed(BTN_HOME), "Home");
 
-        // Start/Select below the screen, with the exit-hold bar.
-        drawButton(canvas, w * 0.465f, h * 0.875f, w * 0.042f, h * 0.023f,
+        drawButton(canvas, w * 0.445f, h * 0.885f, w * 0.062f, h * 0.043f,
                 isPressed(BTN_SELECT), "Select");
-        drawButton(canvas, w * 0.535f, h * 0.875f, w * 0.042f, h * 0.023f,
+        drawButton(canvas, w * 0.555f, h * 0.885f, w * 0.062f, h * 0.043f,
                 isPressed(BTN_START), "Start");
     }
 
@@ -608,9 +585,9 @@ public class ControllerTesterView extends View {
         canvas.drawRoundRect(mRect, halfH, halfH, mFill);
         mStroke.setColor(pressed ? mAccent : Ui.fade(mSecondary, 0.8f));
         canvas.drawRoundRect(mRect, halfH, halfH, mStroke);
-        mSmall.setColor(pressed ? mPrimary : mSecondary);
-        canvas.drawText(label, cx - mSmall.measureText(label) / 2,
-                cy + mSmall.getTextSize() * 0.35f, mSmall);
+        mLabel.setColor(pressed ? mPrimary : mSecondary);
+        canvas.drawText(label, cx - mLabel.measureText(label) / 2,
+                cy + mLabel.getTextSize() * 0.36f, mLabel);
     }
 
     /** Progress of the Start+Select exit chord, drawn under the two pills. */
@@ -618,10 +595,10 @@ public class ControllerTesterView extends View {
         if (mExitHold <= 0f) {
             return;
         }
-        final float width = w * 0.18f;
-        final float height = 5 * mDensity;
-        mRect.set(w * 0.5f - width / 2, h * 0.925f, w * 0.5f + width / 2,
-                h * 0.925f + height);
+        final float width = w * 0.20f;
+        final float height = 6 * mDensity;
+        mRect.set(w * 0.5f - width / 2, h * 0.965f, w * 0.5f + width / 2,
+                h * 0.965f + height);
         mFill.setColor(Ui.fade(mSecondary, 0.35f));
         canvas.drawRoundRect(mRect, height / 2, height / 2, mFill);
         mRect.right = mRect.left + width * mExitHold;
