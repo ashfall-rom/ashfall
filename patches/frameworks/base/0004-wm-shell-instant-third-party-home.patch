@@ -1,0 +1,132 @@
+From 05889842d4cf0dd3831a77fc57f7f22a3b81a89e Mon Sep 17 00:00:00 2001
+From: AshFall UI <ui@ashfall.local>
+Date: Fri, 13 Nov 2026 23:11:42 +0000
+Subject: [PATCH] WindowManagerShell: instant home transition for a third-party
+ HOME
+
+With the AshFall launcher as the default HOME, Launcher3QuickStep is not the
+home app: OverviewComponentObserver sets mIsHomeAndOverviewSame=false and uses
+the fallback (RecentsActivity) overview, and the home launch reaches the shell
+as an ordinary TRANSIT_OPEN of a HOME task. The default handler then loads
+task_open_enter/task_open_exit, which slides the incoming home in from the right
+while the outgoing app slides out to the left: the app and AshFall are visible
+side by side for ~500ms, and the stale Launcher3 home task that still lives in
+the home root task is briefly exposed behind them.
+
+Quickstep's FallbackSwipeHandler only sets a zero custom animation on the home
+activity itself, not on the rest of the transition, so the outgoing app still
+animates. Recognise a transition that opens a HOME task whose top activity is
+not com.android.launcher3 and finish it immediately (the same outcome as
+transition_animation_scale=0, but scoped to this case). Launcher3-as-home keeps
+its normal animation, and fallback recents (a RECENTS task with its own remote
+animation) is untouched.
+
+Fixes #64
+---
+ .../transition/DefaultTransitionHandler.java  | 55 +++++++++++++++++++
+ 1 file changed, 55 insertions(+)
+
+diff --git a/libs/WindowManager/Shell/src/com/android/wm/shell/transition/DefaultTransitionHandler.java b/libs/WindowManager/Shell/src/com/android/wm/shell/transition/DefaultTransitionHandler.java
+index 89810e0..8793e6c 100644
+--- a/libs/WindowManager/Shell/src/com/android/wm/shell/transition/DefaultTransitionHandler.java
++++ b/libs/WindowManager/Shell/src/com/android/wm/shell/transition/DefaultTransitionHandler.java
+@@ -25,6 +25,7 @@ import static android.app.ActivityOptions.ANIM_SCALE_UP;
+ import static android.app.ActivityOptions.ANIM_SCENE_TRANSITION;
+ import static android.app.ActivityOptions.ANIM_THUMBNAIL_SCALE_DOWN;
+ import static android.app.ActivityOptions.ANIM_THUMBNAIL_SCALE_UP;
++import static android.app.WindowConfiguration.ACTIVITY_TYPE_HOME;
+ import static android.app.WindowConfiguration.WINDOWING_MODE_MULTI_WINDOW;
+ import static android.app.WindowConfiguration.WINDOWING_MODE_PINNED;
+ import static android.app.admin.DevicePolicyManager.ACTION_DEVICE_POLICY_RESOURCE_UPDATED;
+@@ -79,6 +80,7 @@ import android.app.ActivityManager;
+ import android.app.ActivityThread;
+ import android.app.admin.DevicePolicyManager;
+ import android.content.BroadcastReceiver;
++import android.content.ComponentName;
+ import android.content.Context;
+ import android.content.Intent;
+ import android.content.IntentFilter;
+@@ -91,6 +93,7 @@ import android.os.Handler;
+ import android.os.IBinder;
+ import android.os.UserHandle;
+ import android.util.ArrayMap;
++import android.util.Slog;
+ import android.view.SurfaceControl;
+ import android.view.WindowManager;
+ import android.view.animation.Animation;
+@@ -130,6 +133,9 @@ import java.util.function.Consumer;
+ public class DefaultTransitionHandler implements Transitions.TransitionHandler {
+     private static final int SIZE_CHANGE_ANIMATION_DURATION = 400;
+     private static final int MERGE_ANIMATION_DURATION = 400;
++    /** AshFall: package of the bundled Quickstep/Launcher3, which has its own home animation. */
++    private static final String LAUNCHER3_PACKAGE = "com.android.launcher3";
++    private static final String TAG = "DefaultTransitionHandler";
+ 
+     private final TransactionPool mTransactionPool;
+     private final DisplayController mDisplayController;
+@@ -359,6 +365,22 @@ public class DefaultTransitionHandler implements Transitions.TransitionHandler {
+             return true;
+         }
+ 
++        // AshFall: a third-party HOME app has no Launcher3 workspace reveal, so the generic
++        // task-open animation slides the outgoing app out to the left while the home task
++        // slides in from the right. That shows both side by side for ~500ms and briefly
++        // exposes the stale Launcher3 home task that stays in the home root task.
++        // Quickstep's fallback home path only zeroes the home activity's own animation, not
++        // the rest of the transition, so finish the whole home transition immediately.
++        // This is the same result as transition_animation_scale=0, scoped to a third-party
++        // home only (Launcher3 as home keeps its normal animation), and it leaves the
++        // fallback recents (a separate RECENTS task/animation) untouched.
++        if (isThirdPartyHomeTransition(info)) {
++            Slog.i(TAG, "AshFall: instant transition for third-party home");
++            startTransaction.apply();
++            finishCallback.onTransitionFinished(null /* wct */);
++            return true;
++        }
++
+         if (mTransitionAnimators.containsKey(transition)) {
+             throw new IllegalStateException("Got a duplicate startAnimation call for "
+                     + transition);
+@@ -722,6 +744,39 @@ public class DefaultTransitionHandler implements Transitions.TransitionHandler {
+         return disabled;
+     }
+ 
++    /**
++     * AshFall: true when this transition opens a HOME task that belongs to a third-party
++     * launcher (i.e. the default home is not the bundled Launcher3/Quickstep). Such a home
++     * has no workspace-reveal animation, so the shell's generic task-open animation must not
++     * run: it animates the outgoing app and the home task against each other.
++     */
++    private static boolean isThirdPartyHomeTransition(@NonNull TransitionInfo info) {
++        // Never shortcut a keyguard transition: it owns its own unocclude/wake animation.
++        if (info.isKeyguardGoingAway()) {
++            return false;
++        }
++        final List<TransitionInfo.Change> changes = info.getChanges();
++        for (int i = 0; i < changes.size(); i++) {
++            final TransitionInfo.Change change = changes.get(i);
++            final ActivityManager.RunningTaskInfo taskInfo = change.getTaskInfo();
++            if (taskInfo == null
++                    || (taskInfo.getActivityType() != ACTIVITY_TYPE_HOME
++                            && taskInfo.topActivityType != ACTIVITY_TYPE_HOME)
++                    || !TransitionUtil.isOpeningMode(change.getMode())) {
++                continue;
++            }
++            final ComponentName homeActivity = taskInfo.topActivity != null
++                    ? taskInfo.topActivity
++                    : (taskInfo.baseActivity != null
++                            ? taskInfo.baseActivity : taskInfo.realActivity);
++            if (homeActivity != null
++                    && !LAUNCHER3_PACKAGE.equals(homeActivity.getPackageName())) {
++                return true;
++            }
++        }
++        return false;
++    }
++
+     private void addBackgroundColor(@NonNull TransitionInfo info,
+             @ColorInt int color, @NonNull SurfaceControl.Transaction startTransaction,
+             @NonNull SurfaceControl.Transaction finishTransaction) {
+-- 
+2.56.0
+
