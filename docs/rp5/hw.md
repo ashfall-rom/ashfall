@@ -376,9 +376,11 @@ Run on a build that contains `ashfall-hwd` (a manually pushed binary runs as
    `brightness 0` is dark; `ashfall.ui.led_override=FF0000:0000FF` shows the
    exact colours regardless of mode and stops the animation.
 8. Performance override: `setprop ashfall.perf.throttle_override 1` ->
-   `ashfall.status.perf.throttle=1`, `trip_point_0_temp` of the `cpu-1-*` and
-   `gpuss-*` zones raised to 105/110 °C, `0` restores the stock 75/95 °C.
-   Critical trips, the 110 °C CPU-pause trip and LMh stay untouched (§9).
+   `ashfall.status.perf.throttle=1`, the clock trips bound to the CPU/GPU
+   cooling devices raised to 105 °C (`ddr`) / 110 °C (GPU-only trips), `0`
+   restores the stock 95/100 °C.  The 75 °C `cpu-1-*` trip has no cdev and is
+   left alone.  Critical trips, the 110 °C CPU-pause trip and LMh stay
+   untouched (§9).
 9. `adb shell dmesg | grep avc` (and `logcat -b events | grep avc`) is clean
    after exercising all of the above on an **enforcing** build.
 
@@ -451,68 +453,93 @@ the override explicitly after a reboot (the permanent switch is the developer
 opt-in).  While the override is active the fan rules, the 90 °C safety rule and
 the fixed thermal fan curve are unchanged.
 
-### 9.1 What software throttling exists on the RP5 (source survey)
+### 9.1 What software throttling exists on the RP5 (live sysfs survey)
 
-Evidence: the stock `vendor_boot` device tree (parsed from the dumped
-`dtb`, `lun4_dtbo_a.bin`), the stock `vendor`/`vendor_dlkm` images and the
-2026-11-12 device snapshot (`dumpsys thermalservice`).
+Evidence: **live `/sys/class/thermal` on build 20261114-021714** (thermal zone
+and trip dump plus the kernel's own `cdevN_trip_point` bindings), `dumpsys
+thermalservice`, `lsmod`, the stock `vendor_boot` device tree, and the stock
+`vendor`/`vendor_dlkm` images.  The live binding is what matters: the device
+tree also contains an unbound 75 °C trip on the CPU zones.
 
-* **Kernel thermal zones/trips** (from the device tree, not a userspace
-  daemon).  The relevant passive trips are:
+* **Kernel thermal zones/trips and their real cooling-device bindings**
+  (`thermal_zoneN/cdevM_trip_point`):
 
-  | zone(s) | trip | cooling device | effect |
+  | zone(s) | trip | bound clock cooling device | effect |
   |---|---|---|---|
-  | `cpu-1-0` .. `cpu-1-7` (gold/prime tsens) | **75 °C**, hyst 5 °C | `cpufreq-cpu7` | caps the big/prime CPU max frequency — this is the throttle a game hits |
-  | `gpuss-0`, `gpuss-1` | **95 °C** | `kgsl-3d0` (devfreq) | caps the GPU frequency |
-  | `ddr` | 95/100 °C | gpu + cdsp + modem + cpu | DDR/GPU/modem mitigation (mixed, not a pure clock knob) |
-  | `cpu-0-*`, `cpu-1-*` | 110 °C | `thermal-pause-*` (CPU hotplug) | last-resort core offlining (`thermal_pause.ko`) |
+  | `ddr` | **95 °C** (trip 1) | `cpufreq-cpu4`, `cpufreq-cpu7`, `devfreq-…kgsl-3d0` (+ `cdsp`) | caps the big/prime CPU max frequency **and** the GPU — this is the clock throttle a game hits |
+  | `gpuss-0`, `gpuss-1` | **95 °C** (trip 2) | `devfreq-…kgsl-3d0` | caps the GPU frequency |
+  | `cwlan`, `video`, `q6-hvx`, `camera`, `cmpss` | **100 °C** (trip 1) | `devfreq-…kgsl-3d0` | additional GPU clock caps |
+  | `npu` | **100 °C** (trip 2) | `devfreq-…kgsl-3d0` | additional GPU clock cap |
+  | `cpu-1-*` | 75 °C (trip 2) | **none** | present in the DT but no cooling device is bound on this kernel; reporting only |
+  | `cpu-0-*`, `cpu-1-*` | 110 °C | `thermal-pause-*` (CPU pause) | last-resort core offlining (`thermal_pause.ko`) |
   | `cpu-1-*`, `gpuss-*` | 115 °C (`reset-mon-cfg`) | — (notifier) | reset monitor |
   | `cpu-1-*`, `gpuss-*` | 125 °C (`thermal-engine`/`thermal-hal` trips) | — | reported to the thermal HAL |
-  | `pm8150_tz` | 155 °C `critical` | — | PMIC/SoC hardware shutdown |
+  | `pm8150_tz` | 155 °C `critical` | — | PMIC/SoC hardware shutdown (the only critical trip) |
+
+  At rest (30 °C idle) every cooling device reports `cur_state=0`, `dumpsys
+  thermalservice` has `Thermal Status: 0` and **no static thresholds**, and
+  every CPU runs at `cpuinfo_max_freq` (`cpu0 1804800`, `cpu4 2419200`,
+  `cpu7 2841600`).
 
 * **Cooling devices exposed to Android** (`dumpsys thermalservice`):
-  `cpufreq-cpu0/4/7`, `thermal-pause-1/2/4/8/10/20/40/80`,
-  `devfreq-3d00000.qcom,kgsl-3d0`, `gpu`, `cdsp`.  Only `cpufreq-*` and the
-  GPU devfreq device affect the CPU/GPU clocks.
-* **LMh** (`msm_lmh_dcvs.ko`) is the Qualcomm hardware DVFS limiter.  It is a
-  hardware block fed by the PMIC/tsens; userspace cannot disable it and this
+  `cpufreq-cpu0/4/7`, `cpu-cluster0/1/2`, `pause-cpuN`,
+  `thermal-pause-1/2/4/8/10/20/40/80`, `cpu-hotplugN`,
+  `devfreq-3d00000.qcom,kgsl-3d0`, `gpu`, `cdsp`, `hvx`, `npu`, `ufs1`.
+  Only the devices bound to a trip (above) can be driven by the thermal core.
+* **LMh** (`msm_lmh_dcvs.ko`, permanent) is the Qualcomm hardware DVFS
+  limiter.  It is a hardware block fed by the PMIC/tsens, has no sysfs
+  parameters on this build, cannot be disabled from userspace, and this
   override does **not** touch it (hardware limits must stay).
+* **`msm_performance`** (the perf HAL's limit interface) is present:
+  `/sys/kernel/msm_performance/parameters/cpu_{max,min}_freq` are `0644 root`.
+  They currently read `2147483647` / `0` for every CPU (no limit), so the perf
+  HAL is not throttling at rest; this override does not write them.
 * **Vendor thermal-engine is not running**: `init_thermal-engine-v2.rc` has
   the `thermal-engine` service commented out and `/vendor/etc/thermal-engine.conf`
   is empty ("File empty by default").  The QTI thermal HAL
-  (`android.hardware.thermal@2.0-service.qti-v2`) runs as root but only
-  *reports* temperatures/cooling devices (`IThermal` has no mitigation API).
-  The framework `ThermalService` therefore only changes its reported status.
-* **No `msm_thermal` module** is present; `thermal_pause.ko` is the only CPU
-  mitigation module besides the standard cpufreq/devfreq cooling.
+  (`android.hardware.thermal@2.0-service.qti-v2`, root) only *reports*
+  temperatures/cooling devices (`IThermal` has no mitigation API).  The
+  framework `ThermalService` therefore only changes its reported status.
 
 ### 9.2 What the override does
 
-`throttle.c` surveys `/sys/class/thermal/thermal_zone*` at start and, for the
-`cpu-1-*` and `gpuss-*` zones, finds the **lowest passive trip** (the clock
-trip: 75 °C CPU / 95 °C GPU) and saves its temperature.  On `...=1` it raises
-only that trip to **just below the next trip** (next - 5 °C, capped at 110 °C):
+`throttle.c` surveys `/sys/class/thermal/thermal_zone*` at start and reads each
+zone's `cdevM/type` plus the kernel's `cdevM_trip_point` binding.  Only cooling
+devices that set a clock are targeted: `cpufreq-*` and `cpu-cluster*` (CPU),
+`devfreq-*`/`gpu` (GPU).  `thermal-pause-*`, `pause-cpu*`, `cpu-hotplug*`,
+`cdsp`, `hvx`, `npu` and `ufs*` are ignored.  For every trip that drives a
+clock device it raises the trip temperature to:
 
-| zone | stock | override |
+| bound clock device | stock trip | override |
 |---|---|---|
-| `cpu-1-*` | 75 °C | **105 °C** (next trip 110 °C CPU-pause) |
-| `gpuss-*` | 95 °C | **110 °C** (next trip 115 °C reset-mon) |
+| `cpufreq-cpu4`/`cpufreq-cpu7` (on `ddr` trip 1) | 95 °C | **105 °C** |
+| `devfreq-…kgsl-3d0` on `gpuss-0/1` trip 2 | 95 °C | **110 °C** |
+| `devfreq-…kgsl-3d0` on `cwlan`/`video`/`q6-hvx`/`camera`/`cmpss` trip 1, `npu` trip 2 | 100 °C | **110 °C** |
 
-The kernel's step-wise governor then stops applying the cpufreq/devfreq
-cooling state in the normal operating range, so the CPU/GPU are no longer
-clock-capped at 75/95 °C.  On `...=0` (and on daemon shutdown) the saved
-temperatures are written back.  If init restarts the daemon while the override
-is still requested (same boot), the scan recognises the already-raised
-105/110 °C values, remembers the stock 75/95 °C as the restore value, and keeps
-working; an explicit `...=0` still restores.
+A trip shared by CPU and GPU cdevs (the `ddr` trip) uses the lower CPU target
+(105 °C), so the CPU pause at 110 °C remains the next protective step.  The
+kernel's step-wise governor then stops applying the cpufreq/devfreq cooling
+state in the normal operating range; the CPU/GPU are no longer clock-capped at
+95/100 °C.
+
+The `cpu-1-*` 75 °C trip is deliberately **not** touched: on this kernel build
+it has no bound cooling device (verified with `cdevN_trip_point`), so raising
+it would not change any clock; it is only reported.
+
+On `...=0` (and on daemon shutdown) the saved temperatures are written back.
+If init restarts the daemon while the override is still requested (same boot),
+the scan recognises the already-raised 105/110 °C values, remembers the stock
+95/100 °C as the restore value, and keeps working; an explicit `...=0` still
+restores.
 
 **Not disabled (deliberately):**
 
-* `critical` trips (155 °C PMIC shutdown) — never written.
-* the 110 °C CPU-pause/hotplug trip and `thermal_pause.ko`.
+* `critical` trips (the only one is 155 °C on `pm8150_tz`) — never written.
+* the 110 °C CPU-pause/hotplug trips and `thermal_pause.ko`.
 * the 115 °C reset monitor and the 125 °C thermal-engine/HAL trips.
-* the PMIC/battery/DDR/modem/camera cooling maps (DDR is skipped: its trip
-  also drives modem/cdsp, not just the CPU/GPU clock).
+* the `ddr` trip also drives `cdsp`; raising it to 105 °C delays that
+  mitigation too (it is unavoidable: the same trip is the CPU clock trip).
+* the PMIC/battery/modem/camera cooling maps that are not clock devices.
 * LMh hardware DVFS limits and all hardware protection.
 * the fan safety rule (90 °C -> 100 %).
 
@@ -522,38 +549,61 @@ step out of the gaming range.
 
 ### 9.3 Permissions
 
-`/sys/class/thermal/thermal_zone*/trip_point_*_temp` is a root-owned `0644`
-sysfs attribute (the vendor `init.qcom.rc` only `chmod 0660`s the zone `mode`
-attribute, and that is for the root thermal-engine/HAL).  DAC cannot be
-bypassed by SELinux, so `ashfall-hwd` now starts as `user root` (it was
+Live check on build 20261114-021714 (`ro.debuggable=0`, `adb shell` = uid 2000):
+
+```
+-rw-r--r-- 1 root root u:object_r:sysfs_thermal:s0 ... thermal_zone31/trip_point_1_temp
+-rw-r--r-- 1 root root u:object_r:sysfs_thermal:s0 ... thermal_zone31/mode
+run-as org.ashfall.parts id   -> package not an application
+echo 105000 > .../trip_point_1_temp -> Permission denied
+```
+
+The trip, `mode` and `policy` attributes are root-owned `0644`; SELinux cannot
+bypass DAC.  `ashfall-hwd` therefore starts as `user root` (it was
 `user system` in phase 5 v1) — **the SELinux domain `ashfall_hwd` is still the
 security boundary** and only has read/write on the fan, LED and
 `sysfs_thermal` types.  `persist.ashfall.*` writes remain restricted to
-`system_app`.
+`system_app`.  The QTI thermal HAL already runs as root on the same nodes.
 
 If a future build makes the trip attributes writable by `system`, the `.rc`
-`user` line can go back to `system`; the code does not depend on the uid (it
-logs the failed write and publishes `ashfall.status.perf.throttle=-1`).
+`user` line can go back to `system`; the code logs the failed write and
+publishes `ashfall.status.perf.throttle=-1`.
 
 ### 9.4 Verification
 
-Host test: `make -C aosp/vendor/ashfall/rp5/hw/tests check` covers scanning a
-fake zone tree, raising/restoring both the CPU (75 -> 105) and GPU (95 -> 110)
-trips, and asserts that the 110/115/155 °C protective trips are untouched.
+Host test: `make -C aosp/vendor/ashfall/rp5/hw/tests check` builds a fake zone
+tree that mirrors the live bindings (a `ddr` trip 1 shared by `cpufreq-cpu4`,
+`cpufreq-cpu7` and the GPU devfreq device, a `gpuss-0` 95 °C trip, a `cwlan`
+100 °C trip, a 75 °C `cpu-1-*` trip with no cdev, and the 110/115/125/155 °C
+protective trips).  It asserts:
 
-On the device (no root; `shell` can read the trip files):
+* the 75 °C trip is **skipped** (no cdev bound),
+* the shared `ddr` trip raises to **105 °C** (CPU target wins over GPU),
+* the GPU-only 95 °C and 100 °C trips raise to **110 °C**,
+* OFF restores 95000/100000 exactly, and
+* after an init restart the fresh scan recognises the raised values as its own
+  (stock 95/100 remembered) and OFF still restores.
+
+On the device (build 20261114-021714, `ro.debuggable=0`, no root; `shell` can
+read but not write the trip files):
 
 ```sh
 adb shell 'for z in /sys/class/thermal/thermal_zone*; do
-  echo "$z $(cat $z/type) $(cat $z/trip_point_0_temp 2>/dev/null)"; done'
+  echo "$z $(cat $z/type)"; for c in $z/cdev*; do
+    [ -d "$c" ] || continue; echo "  $c $(cat $c/type) trip=$(cat ${c}_trip_point)"; done; done'
 adb shell setprop ashfall.perf.throttle_override 1   # via the app/settings proxy
 adb shell getprop ashfall.status.perf.throttle      # 1
 adb shell dumpsys thermalservice | grep -A2 "cpufreq"
 ```
 
-and confirm the CPU/GPU stop being capped at 75/95 °C in a sustained load while
-the critical/hotplug trips are unchanged.  The exact measured result is in
-§10 after the integration build.
+Confirmed live during the #82 device session: the trip, `mode` and `policy`
+attributes are `0644 root:root u:object_r:sysfs_thermal:s0`, `shell` writes are
+denied (`Permission denied`), `run-as org.ashfall.parts` is unavailable
+(priv-app, not an application), and all cooling devices are at `cur_state=0`
+while the device idles at ~30 °C.  The write path itself is therefore verified
+on the host (same sysfs interface) and the SELinux policy in
+`sepolicy/ashfall_hwd.te`; the end-to-end `105000`/`110000` read-back needs the
+integration build (§10).
 
 ## 10. Phase 5 v2 on-device verification (build 2026-11-14+, pending)
 
@@ -562,18 +612,21 @@ builds `integ/phase5` and hands the RP5 over serially).  The checks to run:
 
 1. `adb shell getprop init.svc.ashfall-hwd` -> `running`; `dmesg | grep
    ashfall-hwd` or `logcat -s ashfall-hwd` shows the `throttle: ...` scan
-   lines (one per `cpu-1-*` and `gpuss-*` zone) and `throttle: software clock
-   throttling disabled` when the override is requested.  Note that
-   `stdio_to_kmsg` needs `ro.debuggable=1`; on the release boot image the
+   lines (one per clock trip: `ddr` -> 105 °C, `gpuss-0/1` -> 110 °C, the
+   `cwlan/video/q6-hvx/camera/cmpss/npu` GPU trips -> 110 °C) and `throttle:
+   software clock throttling disabled` when the override is requested.  Note
+   that `stdio_to_kmsg` needs `ro.debuggable=1`; on the release boot image the
    `ashfall.status.perf.throttle` property is the reliable indicator.
 2. `adb shell 'for z in /sys/class/thermal/thermal_zone*; do for t in $z/trip_point_*_temp; do echo "$z $t $(cat $t 2>/dev/null)"; done; done'`
-   at a cool temperature -> the `cpu-1-*` zones have a `75000` trip and
-   `gpuss-*` a `95000` trip (the index is whatever the kernel exposes; the
-   daemon picks the lowest passive one).  These files are root `0644`; after
-   `setprop ashfall.perf.throttle_override 1` (through the app, which has
-   `ashfall_perf_prop` write access) the clock trip reads `105000` / `110000`
-   and `ashfall.status.perf.throttle` = `1`.  `0` restores `75000` / `95000`.
-   `dmesg | grep avc` must be clean.
+   at a cool temperature -> the live stock values are `ddr` trip 1 = `95000`,
+   `gpuss-0/1` trip 2 = `95000`, the secondary GPU zones trip 1/2 = `100000`,
+   and `cpu-1-*` trip 2 = `75000` (that one has **no** cdev and is never
+   touched).  After `setprop ashfall.perf.throttle_override 1` (through the
+   app, which has `ashfall_perf_prop` write access) the clock trips read
+   `105000` (the shared `ddr` trip) / `110000` (GPU-only trips) and
+   `ashfall.status.perf.throttle` = `1`.  `0` restores `95000` / `100000`;
+   the 75/110/115/125/155 °C trips must be unchanged.  `dmesg | grep avc` must
+   be clean.
 3. Fish: press physical **X (top)** and **Y (left)** while
    `getevent -l /dev/input/event4` runs: `BTN_X` / `BTN_Y` respectively (the
    daemon mapping is stock; the tester drawing is the app worker's item).

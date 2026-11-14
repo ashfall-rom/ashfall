@@ -754,12 +754,14 @@ static void test_thermal_watch(void)
 
 /* --- #82: soft clock-throttle override ---------------------------------- */
 
+/* Matches the live RP5: the CPU/GPU clock cdevs are bound with
+ * `cdevN_trip_point` to the ddr/gpuss trips (95 C) and secondary GPU zones
+ * (100 C); the cpu-1-* 75 C trip has no cooling device on this kernel. */
 static void test_throttle(void)
 {
     throttle_state th;
 
-    /* A gold-CPU zone as on the RP5: 75 C cpufreq trip, 110 C CPU-pause,
-     * 115 C reset monitor, 125 C thermal-engine/HAL. */
+    /* cpu-1-0: a 75 C reporting trip with NO cdev and the 110 C pause trip. */
     mkdir_p("/sys/class/thermal/thermal_zone5");
     write_file("/sys/class/thermal/thermal_zone5/type", "cpu-1-0\n");
     write_file("/sys/class/thermal/thermal_zone5/temp", "65000\n");
@@ -772,7 +774,7 @@ static void test_throttle(void)
     write_file("/sys/class/thermal/thermal_zone5/trip_point_3_type", "passive\n");
     write_file("/sys/class/thermal/thermal_zone5/trip_point_3_temp", "125000\n");
 
-    /* test_sensor_fault() recreated the GPU zone without its trip files. */
+    /* test_sensor_fault() recreated the GPU zone without its trip/cdev files. */
     write_file("/sys/class/thermal/thermal_zone2/trip_point_0_type", "passive\n");
     write_file("/sys/class/thermal/thermal_zone2/trip_point_0_temp", "95000\n");
     write_file("/sys/class/thermal/thermal_zone2/trip_point_1_type", "passive\n");
@@ -781,52 +783,107 @@ static void test_throttle(void)
     write_file("/sys/class/thermal/thermal_zone2/trip_point_2_temp", "125000\n");
     write_file("/sys/class/thermal/thermal_zone2/trip_point_3_type", "critical\n");
     write_file("/sys/class/thermal/thermal_zone2/trip_point_3_temp", "155000\n");
+    mkdir_p("/sys/class/thermal/thermal_zone2/cdev0");
+    write_file("/sys/class/thermal/thermal_zone2/cdev0/type",
+               "devfreq-3d00000.qcom,kgsl-3d0\n");
+    write_file("/sys/class/thermal/thermal_zone2/cdev0_trip_point", "0\n");
+
+    /* ddr: cpufreq-cpu4 + cpufreq-cpu7 + GPU devfreq + cdsp all on trip 1
+     * (95 C).  Only the clock cdevs are targeted; the trip target is the CPU
+     * one (105 C). */
+    mkdir_p("/sys/class/thermal/thermal_zone6");
+    write_file("/sys/class/thermal/thermal_zone6/type", "ddr\n");
+    write_file("/sys/class/thermal/thermal_zone6/trip_point_0_type", "passive\n");
+    write_file("/sys/class/thermal/thermal_zone6/trip_point_0_temp", "125000\n");
+    write_file("/sys/class/thermal/thermal_zone6/trip_point_1_type", "passive\n");
+    write_file("/sys/class/thermal/thermal_zone6/trip_point_1_temp", "95000\n");
+    write_file("/sys/class/thermal/thermal_zone6/trip_point_2_type", "passive\n");
+    write_file("/sys/class/thermal/thermal_zone6/trip_point_2_temp", "100000\n");
+    write_file("/sys/class/thermal/thermal_zone6/trip_point_3_type", "passive\n");
+    write_file("/sys/class/thermal/thermal_zone6/trip_point_3_temp", "115000\n");
+    for (int i = 0; i < 4; i++) {
+        char dir[128];
+        char file[128];
+
+        snprintf(dir, sizeof(dir), "/sys/class/thermal/thermal_zone6/cdev%d", i);
+        mkdir_p(dir);
+        snprintf(file, sizeof(file), "%s/type", dir);
+        write_file(file, i == 0   ? "cpufreq-cpu4\n"
+                         : i == 1 ? "cpufreq-cpu7\n"
+                         : i == 2 ? "devfreq-3d00000.qcom,kgsl-3d0\n"
+                                  : "cdsp\n");
+        snprintf(file, sizeof(file), "%s/cdev%d_trip_point",
+                 "/sys/class/thermal/thermal_zone6", i);
+        write_file(file, "1\n");
+    }
+
+    /* A secondary GPU zone at 100 C (restart must remember 100, not 95). */
+    mkdir_p("/sys/class/thermal/thermal_zone7");
+    write_file("/sys/class/thermal/thermal_zone7/type", "cwlan\n");
+    write_file("/sys/class/thermal/thermal_zone7/trip_point_0_type", "passive\n");
+    write_file("/sys/class/thermal/thermal_zone7/trip_point_0_temp", "125000\n");
+    write_file("/sys/class/thermal/thermal_zone7/trip_point_1_type", "passive\n");
+    write_file("/sys/class/thermal/thermal_zone7/trip_point_1_temp", "100000\n");
+    mkdir_p("/sys/class/thermal/thermal_zone7/cdev0");
+    write_file("/sys/class/thermal/thermal_zone7/cdev0/type",
+               "devfreq-3d00000.qcom,kgsl-3d0\n");
+    write_file("/sys/class/thermal/thermal_zone7/cdev0_trip_point", "1\n");
 
     throttle_scan(&th);
     CHECK(th.supported);
-    CHECK_EQ(th.trip_count, 2); /* cpu-1-0 and gpuss-0-usr */
+    CHECK_EQ(th.trip_count, 3); /* ddr, gpuss-0, cwlan; 75 C has no cdev */
     CHECK_EQ(throttle_status(&th), 0);
 
     CHECK(throttle_set(&th, true));
     CHECK_EQ(throttle_status(&th), 1);
-    CHECK_EQ(read_int("/sys/class/thermal/thermal_zone5/trip_point_0_temp"),
-             105000); /* next trip (110 C) - 5 C */
+    CHECK_EQ(read_int("/sys/class/thermal/thermal_zone6/trip_point_1_temp"),
+             105000); /* CPU clock target */
     CHECK_EQ(read_int("/sys/class/thermal/thermal_zone2/trip_point_0_temp"),
-             110000); /* capped below the 115 C reset-monitor trip */
-    /* Protective trips are never touched (CPU-pause / reset / critical). */
+             110000); /* GPU clock target */
+    CHECK_EQ(read_int("/sys/class/thermal/thermal_zone7/trip_point_1_temp"),
+             110000);
+    /* Protective/reporting trips are never touched. */
+    CHECK_EQ(read_int("/sys/class/thermal/thermal_zone5/trip_point_0_temp"),
+             75000);
     CHECK_EQ(read_int("/sys/class/thermal/thermal_zone5/trip_point_1_temp"),
              110000);
-    CHECK_EQ(read_int("/sys/class/thermal/thermal_zone5/trip_point_2_temp"),
-             115000);
+    CHECK_EQ(read_int("/sys/class/thermal/thermal_zone6/trip_point_2_temp"),
+             100000);
     CHECK_EQ(read_int("/sys/class/thermal/thermal_zone2/trip_point_3_temp"),
              155000);
 
     CHECK(throttle_set(&th, false));
     CHECK_EQ(throttle_status(&th), 0);
-    CHECK_EQ(read_int("/sys/class/thermal/thermal_zone5/trip_point_0_temp"),
-             75000);
+    CHECK_EQ(read_int("/sys/class/thermal/thermal_zone6/trip_point_1_temp"),
+             95000);
     CHECK_EQ(read_int("/sys/class/thermal/thermal_zone2/trip_point_0_temp"),
              95000);
+    CHECK_EQ(read_int("/sys/class/thermal/thermal_zone7/trip_point_1_temp"),
+             100000);
 
-    /* An init restart of the daemon sees the trips still raised.  A fresh
-     * scan must recognise them (stock value remembered) instead of treating
-     * the zone as "not clock-throttled", and OFF must still restore. */
+    /* An init restart sees the raised trips.  The fresh scan must recognise
+     * them and restore each one to its own stock value (95 or 100 C). */
     {
         throttle_state restarted;
 
         CHECK(throttle_set(&th, true));
         throttle_scan(&restarted);
         CHECK(restarted.supported);
-        CHECK_EQ(restarted.trip_count, 2);
-        CHECK(restarted.active); /* already overridden by the previous run */
+        CHECK_EQ(restarted.trip_count, 3);
+        CHECK(restarted.active);
         CHECK(throttle_set(&restarted, false));
-        CHECK_EQ(read_int("/sys/class/thermal/thermal_zone5/trip_point_0_temp"),
-                 75000);
+        CHECK_EQ(read_int("/sys/class/thermal/thermal_zone6/trip_point_1_temp"),
+                 95000);
         CHECK_EQ(read_int("/sys/class/thermal/thermal_zone2/trip_point_0_temp"),
                  95000);
+        CHECK_EQ(read_int("/sys/class/thermal/thermal_zone7/trip_point_1_temp"),
+                 100000);
     }
 
     remove_rel("/sys/class/thermal/thermal_zone5");
+    remove_rel("/sys/class/thermal/thermal_zone6");
+    remove_rel("/sys/class/thermal/thermal_zone7");
+    remove_rel("/sys/class/thermal/thermal_zone2/cdev0");
 }
 
 int main(void)
