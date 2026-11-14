@@ -34,13 +34,20 @@
   .section-head { display: flex; align-items: baseline; gap: 12px; margin-bottom: 16px; }
   .section-head h2 { margin: 0; font-size: 22px; letter-spacing: -.01em; }
   .section-head span { color: #7f8998; font-size: 13px; }
-  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(330px, 1fr)); gap: 20px; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(330px, 1fr)); gap: 20px; }
   .card {
     background: #12161c; border: 1px solid #232a35; border-radius: 16px;
     padding: 18px; display: flex; flex-direction: column; gap: 14px;
   }
   .card-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; }
   .card-head h3 { margin: 0 0 4px; font-size: 17px; letter-spacing: -.01em; }
+  .chosen {
+    display: inline-block; margin-left: 8px; vertical-align: 3px;
+    font: 600 9.5px/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+    letter-spacing: .08em; text-transform: uppercase; color: #9fe0b0;
+    border: 1px solid #234a33; background: #10241a; border-radius: 999px;
+    padding: 4px 7px;
+  }
   .path { font: 11.5px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; color: #7f8998; }
   .file {
     flex: none; text-decoration: none; color: #e8a15c; border: 1px solid #3a2d20;
@@ -102,12 +109,13 @@
     <div class="eyebrow">AshFall · Phase 5 · issue #85</div>
     <h1>Fan &amp; Lighting icon drafts <em>- preview only</em></h1>
     <p class="lede">
-      Six clean-room 24dp vectors, three per family. Geometry follows the LineageOS 24
-      Settings language (960 viewport, 80-unit stroke = 2dp, rounded joins, one colour).
-      Nothing here is wired into the app.
+      Four clean-room 24dp vectors: three new Fan variants (four-blade,
+      three-blade and framed four-blade) plus the chosen Lighting B. The fans are
+      filled, broad swept blades in the LineageOS 24 Settings weight; the ring is
+      the selected RGB metaphor. Nothing here is wired into the app.
     </p>
     <div class="chips">
-      <span class="chip"><b>6</b> variants</span>
+      <span class="chip"><b>4</b> variants</span>
       <span class="chip"><b>24dp</b> Android vector</span>
       <span class="chip"><b>960</b> viewport</span>
       <span class="chip"><b>80</b> stroke (= 2dp)</span>
@@ -115,9 +123,9 @@
       <span class="chip"><b>Light + dark</b> PNGs at 24/48/96</span>
     </div>
     <div class="warn">
-      Drafts only. The vectors are not copied into <code>AshFallParts/res</code> and no
-      app, tile or Settings code was changed. Pick a variant, then it can be promoted
-      in a follow-up.
+      Fan drafts only. The vectors are not copied into <code>AshFallParts/res</code> and no
+      app, tile or Settings code was changed. Lighting B is the user's choice; pick one
+      Fan variant and it can be promoted in a follow-up.
     </div>
   </header>
   
@@ -130,102 +138,102 @@
       <article class="card">
         <div class="card-head">
           <div>
-            <h3>A - Turbine</h3>
-            <div class="path">vectors/fan-a-turbine.xml</div>
+            <h3>A - Four-blade</h3>
+            <div class="path">vectors/fan-a-four-blade.xml</div>
           </div>
-          <a class="file" href="vectors/fan-a-turbine.xml">XML</a>
+          <a class="file" href="vectors/fan-a-four-blade.xml">XML</a>
         </div>
-        <p class="summary">Three swept blades inside a thin shroud; the most literal fan silhouette and the closest match to a Settings row icon.</p>
+        <p class="summary">Four broad swept blades around a round hub. The classic QS-tile fan silhouette, with filled shapes that stay readable at 24dp.</p>
         <div class="themes">
         <div class="theme light">
           <div class="theme-cap">Light</div>
-          <div class="hero"><img src="png/fan-a-turbine-light-96.png" width="96" height="96" alt="A - Turbine on light"></div>
+          <div class="hero"><img src="png/fan-a-four-blade-light-96.png" width="96" height="96" alt="A - Four-blade on light"></div>
           <div class="hero-label">96</div>
           <div class="small">
-            <div class="sz"><img src="png/fan-a-turbine-light-48.png" width="48" height="48" alt=""><span>48</span></div>
-            <div class="sz"><img src="png/fan-a-turbine-light-24.png" width="24" height="24" alt=""><span>24</span></div>
+            <div class="sz"><img src="png/fan-a-four-blade-light-48.png" width="48" height="48" alt=""><span>48</span></div>
+            <div class="sz"><img src="png/fan-a-four-blade-light-24.png" width="24" height="24" alt=""><span>24</span></div>
           </div>
         </div>
         <div class="theme dark">
           <div class="theme-cap">Dark</div>
-          <div class="hero"><img src="png/fan-a-turbine-dark-96.png" width="96" height="96" alt="A - Turbine on dark"></div>
+          <div class="hero"><img src="png/fan-a-four-blade-dark-96.png" width="96" height="96" alt="A - Four-blade on dark"></div>
           <div class="hero-label">96</div>
           <div class="small">
-            <div class="sz"><img src="png/fan-a-turbine-dark-48.png" width="48" height="48" alt=""><span>48</span></div>
-            <div class="sz"><img src="png/fan-a-turbine-dark-24.png" width="24" height="24" alt=""><span>24</span></div>
+            <div class="sz"><img src="png/fan-a-four-blade-dark-48.png" width="48" height="48" alt=""><span>48</span></div>
+            <div class="sz"><img src="png/fan-a-four-blade-dark-24.png" width="24" height="24" alt=""><span>24</span></div>
           </div>
         </div></div>
         <div class="card-foot">
-          <a href="vectors/fan-a-turbine.xml">vector</a>
-          <a href="svg/fan-a-turbine.svg">svg</a>
+          <a href="vectors/fan-a-four-blade.xml">vector</a>
+          <a href="svg/fan-a-four-blade.svg">svg</a>
           <span>96 / 48 / 24 px</span>
         </div>
       </article>
       <article class="card">
         <div class="card-head">
           <div>
-            <h3>B - Case fan</h3>
-            <div class="path">vectors/fan-b-case.xml</div>
+            <h3>B - Three-blade</h3>
+            <div class="path">vectors/fan-b-three-blade.xml</div>
           </div>
-          <a class="file" href="vectors/fan-b-case.xml">XML</a>
+          <a class="file" href="vectors/fan-b-three-blade.xml">XML</a>
         </div>
-        <p class="summary">A square fan housing with four blades. Rounded-square silhouette makes it easy to tell apart from Lighting at 24dp.</p>
+        <p class="summary">Three wider swept blades around the same hub. More open than A and a little lighter in a Settings row.</p>
         <div class="themes">
         <div class="theme light">
           <div class="theme-cap">Light</div>
-          <div class="hero"><img src="png/fan-b-case-light-96.png" width="96" height="96" alt="B - Case fan on light"></div>
+          <div class="hero"><img src="png/fan-b-three-blade-light-96.png" width="96" height="96" alt="B - Three-blade on light"></div>
           <div class="hero-label">96</div>
           <div class="small">
-            <div class="sz"><img src="png/fan-b-case-light-48.png" width="48" height="48" alt=""><span>48</span></div>
-            <div class="sz"><img src="png/fan-b-case-light-24.png" width="24" height="24" alt=""><span>24</span></div>
+            <div class="sz"><img src="png/fan-b-three-blade-light-48.png" width="48" height="48" alt=""><span>48</span></div>
+            <div class="sz"><img src="png/fan-b-three-blade-light-24.png" width="24" height="24" alt=""><span>24</span></div>
           </div>
         </div>
         <div class="theme dark">
           <div class="theme-cap">Dark</div>
-          <div class="hero"><img src="png/fan-b-case-dark-96.png" width="96" height="96" alt="B - Case fan on dark"></div>
+          <div class="hero"><img src="png/fan-b-three-blade-dark-96.png" width="96" height="96" alt="B - Three-blade on dark"></div>
           <div class="hero-label">96</div>
           <div class="small">
-            <div class="sz"><img src="png/fan-b-case-dark-48.png" width="48" height="48" alt=""><span>48</span></div>
-            <div class="sz"><img src="png/fan-b-case-dark-24.png" width="24" height="24" alt=""><span>24</span></div>
+            <div class="sz"><img src="png/fan-b-three-blade-dark-48.png" width="48" height="48" alt=""><span>48</span></div>
+            <div class="sz"><img src="png/fan-b-three-blade-dark-24.png" width="24" height="24" alt=""><span>24</span></div>
           </div>
         </div></div>
         <div class="card-foot">
-          <a href="vectors/fan-b-case.xml">vector</a>
-          <a href="svg/fan-b-case.svg">svg</a>
+          <a href="vectors/fan-b-three-blade.xml">vector</a>
+          <a href="svg/fan-b-three-blade.svg">svg</a>
           <span>96 / 48 / 24 px</span>
         </div>
       </article>
       <article class="card">
         <div class="card-head">
           <div>
-            <h3>C - Airflow</h3>
-            <div class="path">vectors/fan-c-airflow.xml</div>
+            <h3>C - Framed four-blade</h3>
+            <div class="path">vectors/fan-c-four-blade-framed.xml</div>
           </div>
-          <a class="file" href="vectors/fan-c-airflow.xml">XML</a>
+          <a class="file" href="vectors/fan-c-four-blade-framed.xml">XML</a>
         </div>
-        <p class="summary">A fan with two airflow strokes. Best fit for the QS tile, where it reads as 'cooling active' at a glance.</p>
+        <p class="summary">The four-blade rotor inside a thin circular frame. Reads as a housed case fan and keeps a perfectly round row icon.</p>
         <div class="themes">
         <div class="theme light">
           <div class="theme-cap">Light</div>
-          <div class="hero"><img src="png/fan-c-airflow-light-96.png" width="96" height="96" alt="C - Airflow on light"></div>
+          <div class="hero"><img src="png/fan-c-four-blade-framed-light-96.png" width="96" height="96" alt="C - Framed four-blade on light"></div>
           <div class="hero-label">96</div>
           <div class="small">
-            <div class="sz"><img src="png/fan-c-airflow-light-48.png" width="48" height="48" alt=""><span>48</span></div>
-            <div class="sz"><img src="png/fan-c-airflow-light-24.png" width="24" height="24" alt=""><span>24</span></div>
+            <div class="sz"><img src="png/fan-c-four-blade-framed-light-48.png" width="48" height="48" alt=""><span>48</span></div>
+            <div class="sz"><img src="png/fan-c-four-blade-framed-light-24.png" width="24" height="24" alt=""><span>24</span></div>
           </div>
         </div>
         <div class="theme dark">
           <div class="theme-cap">Dark</div>
-          <div class="hero"><img src="png/fan-c-airflow-dark-96.png" width="96" height="96" alt="C - Airflow on dark"></div>
+          <div class="hero"><img src="png/fan-c-four-blade-framed-dark-96.png" width="96" height="96" alt="C - Framed four-blade on dark"></div>
           <div class="hero-label">96</div>
           <div class="small">
-            <div class="sz"><img src="png/fan-c-airflow-dark-48.png" width="48" height="48" alt=""><span>48</span></div>
-            <div class="sz"><img src="png/fan-c-airflow-dark-24.png" width="24" height="24" alt=""><span>24</span></div>
+            <div class="sz"><img src="png/fan-c-four-blade-framed-dark-48.png" width="48" height="48" alt=""><span>48</span></div>
+            <div class="sz"><img src="png/fan-c-four-blade-framed-dark-24.png" width="24" height="24" alt=""><span>24</span></div>
           </div>
         </div></div>
         <div class="card-foot">
-          <a href="vectors/fan-c-airflow.xml">vector</a>
-          <a href="svg/fan-c-airflow.svg">svg</a>
+          <a href="vectors/fan-c-four-blade-framed.xml">vector</a>
+          <a href="svg/fan-c-four-blade-framed.svg">svg</a>
           <span>96 / 48 / 24 px</span>
         </div>
       </article>
@@ -234,52 +242,18 @@
     <section>
       <div class="section-head">
         <h2>Lighting</h2>
-        <span>3 variants</span>
+        <span>1 variant</span>
       </div>
       <div class="grid">
       <article class="card">
         <div class="card-head">
           <div>
-            <h3>A - Light bars</h3>
-            <div class="path">vectors/lighting-a-bars.xml</div>
-          </div>
-          <a class="file" href="vectors/lighting-a-bars.xml">XML</a>
-        </div>
-        <p class="summary">Three rounded light bars under a rail. Direct evolution of the current ic_led / ic_tile_lighting asset, so the tile keeps its meaning.</p>
-        <div class="themes">
-        <div class="theme light">
-          <div class="theme-cap">Light</div>
-          <div class="hero"><img src="png/lighting-a-bars-light-96.png" width="96" height="96" alt="A - Light bars on light"></div>
-          <div class="hero-label">96</div>
-          <div class="small">
-            <div class="sz"><img src="png/lighting-a-bars-light-48.png" width="48" height="48" alt=""><span>48</span></div>
-            <div class="sz"><img src="png/lighting-a-bars-light-24.png" width="24" height="24" alt=""><span>24</span></div>
-          </div>
-        </div>
-        <div class="theme dark">
-          <div class="theme-cap">Dark</div>
-          <div class="hero"><img src="png/lighting-a-bars-dark-96.png" width="96" height="96" alt="A - Light bars on dark"></div>
-          <div class="hero-label">96</div>
-          <div class="small">
-            <div class="sz"><img src="png/lighting-a-bars-dark-48.png" width="48" height="48" alt=""><span>48</span></div>
-            <div class="sz"><img src="png/lighting-a-bars-dark-24.png" width="24" height="24" alt=""><span>24</span></div>
-          </div>
-        </div></div>
-        <div class="card-foot">
-          <a href="vectors/lighting-a-bars.xml">vector</a>
-          <a href="svg/lighting-a-bars.svg">svg</a>
-          <span>96 / 48 / 24 px</span>
-        </div>
-      </article>
-      <article class="card">
-        <div class="card-head">
-          <div>
-            <h3>B - Glow ring</h3>
+            <h3>B - Glow ring<span class="chosen">chosen</span></h3>
             <div class="path">vectors/lighting-b-ring.xml</div>
           </div>
           <a class="file" href="vectors/lighting-b-ring.xml">XML</a>
         </div>
-        <p class="summary">One RGB stick ring with a sparkle. Reads as 'lit ring' rather than generic brightness, and echoes the RP5 hardware.</p>
+        <p class="summary">One RGB stick ring with a sparkle. Chosen by the user; reads as a lit ring rather than generic brightness and echoes the RP5 hardware.</p>
         <div class="themes">
         <div class="theme light">
           <div class="theme-cap">Light</div>
@@ -305,54 +279,20 @@
           <span>96 / 48 / 24 px</span>
         </div>
       </article>
-      <article class="card">
-        <div class="card-head">
-          <div>
-            <h3>C - Left/right rings</h3>
-            <div class="path">vectors/lighting-c-dual-rings.xml</div>
-          </div>
-          <a class="file" href="vectors/lighting-c-dual-rings.xml">XML</a>
-        </div>
-        <p class="summary">Both stick rings plus a sparkle. The most product-specific option for the Settings row; still legible at 24dp.</p>
-        <div class="themes">
-        <div class="theme light">
-          <div class="theme-cap">Light</div>
-          <div class="hero"><img src="png/lighting-c-dual-rings-light-96.png" width="96" height="96" alt="C - Left/right rings on light"></div>
-          <div class="hero-label">96</div>
-          <div class="small">
-            <div class="sz"><img src="png/lighting-c-dual-rings-light-48.png" width="48" height="48" alt=""><span>48</span></div>
-            <div class="sz"><img src="png/lighting-c-dual-rings-light-24.png" width="24" height="24" alt=""><span>24</span></div>
-          </div>
-        </div>
-        <div class="theme dark">
-          <div class="theme-cap">Dark</div>
-          <div class="hero"><img src="png/lighting-c-dual-rings-dark-96.png" width="96" height="96" alt="C - Left/right rings on dark"></div>
-          <div class="hero-label">96</div>
-          <div class="small">
-            <div class="sz"><img src="png/lighting-c-dual-rings-dark-48.png" width="48" height="48" alt=""><span>48</span></div>
-            <div class="sz"><img src="png/lighting-c-dual-rings-dark-24.png" width="24" height="24" alt=""><span>24</span></div>
-          </div>
-        </div></div>
-        <div class="card-foot">
-          <a href="vectors/lighting-c-dual-rings.xml">vector</a>
-          <a href="svg/lighting-c-dual-rings.svg">svg</a>
-          <span>96 / 48 / 24 px</span>
-        </div>
-      </article>
       </div>
     </section>
   <section class="context">
-    <div class="section-head"><h2>In context</h2><span>example: the two <b>A</b> variants at 2x (48 px)</span></div>
+    <div class="section-head"><h2>In context</h2><span>example: Fan A + Lighting B at 2x (48 px)</span></div>
     <div class="context-grid">
       <div class="device light">
         <div class="device-cap">Settings · light</div>
         <div class="row">
-          <img src="png/fan-a-turbine-light-48.png" width="48" height="48" alt="">
+          <img src="png/fan-a-four-blade-light-48.png" width="48" height="48" alt="">
           <div><div class="row-title">Fan</div><div class="row-sub">Presets, curve and live temperature</div></div>
           <div class="row-chev">›</div>
         </div>
         <div class="row">
-          <img src="png/lighting-a-bars-light-48.png" width="48" height="48" alt="">
+          <img src="png/lighting-b-ring-light-48.png" width="48" height="48" alt="">
           <div><div class="row-title">Lighting</div><div class="row-sub">Stick rings, colour and effects</div></div>
           <div class="row-chev">›</div>
         </div>
@@ -360,12 +300,12 @@
       <div class="device dark">
         <div class="device-cap">Settings · dark</div>
         <div class="row">
-          <img src="png/fan-a-turbine-dark-48.png" width="48" height="48" alt="">
+          <img src="png/fan-a-four-blade-dark-48.png" width="48" height="48" alt="">
           <div><div class="row-title">Fan</div><div class="row-sub">Presets, curve and live temperature</div></div>
           <div class="row-chev">›</div>
         </div>
         <div class="row">
-          <img src="png/lighting-a-bars-dark-48.png" width="48" height="48" alt="">
+          <img src="png/lighting-b-ring-dark-48.png" width="48" height="48" alt="">
           <div><div class="row-title">Lighting</div><div class="row-sub">Stick rings, colour and effects</div></div>
           <div class="row-chev">›</div>
         </div>

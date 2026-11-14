@@ -1,9 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- AshFall icon draft (issue #85). Clean-room, original design.
-     B - Glow ring: One RGB stick ring with a sparkle. Reads as 'lit ring' rather than generic brightness, and echoes the RP5 hardware.
+     B - Glow ring: One RGB stick ring with a sparkle. Chosen by the user; reads as a lit ring rather than generic brightness and echoes the RP5 hardware.
      Preview only: not wired into the app. 24dp, single colour,
-     tintable. Geometry matches the LineageOS 24 Settings weight
-     (960 viewport, 80 = 2dp stroke). -->
+     tintable. 960 viewport; 80 = 2dp where stroked. -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="24dp"
     android:height="24dp"

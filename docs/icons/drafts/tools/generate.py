@@ -58,34 +58,35 @@ def circle(cx: float, cy: float, r: float) -> str:
     )
 
 
-def rounded_rect(x: float, y: float, w: float, h: float, r: float) -> str:
-    return (
-        f"M{x + r:.2f},{y:.2f}"
-        f"L{x + w - r:.2f},{y:.2f}"
-        f"Q{x + w:.2f},{y:.2f} {x + w:.2f},{y + r:.2f}"
-        f"L{x + w:.2f},{y + h - r:.2f}"
-        f"Q{x + w:.2f},{y + h:.2f} {x + w - r:.2f},{y + h:.2f}"
-        f"L{x + r:.2f},{y + h:.2f}"
-        f"Q{x:.2f},{y + h:.2f} {x:.2f},{y + h - r:.2f}"
-        f"L{x:.2f},{y + r:.2f}"
-        f"Q{x:.2f},{y:.2f} {x + r:.2f},{y:.2f}Z"
-    )
+def swept_blade(cx: float, cy: float, base_deg: float, r_in: float, r_out: float,
+                half_base: float, sweep: float, tip_half: float) -> str:
+    """One broad, filled fan blade, swept clockwise around the hub.
 
-
-def blade(cx: float, cy: float, base_deg: float, r0: float, r1: float,
-          sweep: float, bow: float = 0.0) -> str:
-    """One curved fan blade, swept clockwise from r0 to r1.
-
-    ``bow`` pushes the control points sideways (positive = outward from the
-    rotation direction) to keep the blade silhouette fan-like rather than a
-    plain arc.
+    The leading edge is convex; the trailing edge is scooped, so the blade is
+    narrow at the hub and broad at the rounded outer tip. All coordinates are
+    absolute (no SVG transforms), so the same pathData works in Android.
     """
-    s = polar(cx, cy, r0, base_deg)
-    e = polar(cx, cy, r1, base_deg + sweep)
-    c1 = polar(cx, cy, r0 + (r1 - r0) * 0.30 + bow, base_deg + sweep * 0.12)
-    c2 = polar(cx, cy, r0 + (r1 - r0) * 0.78 + bow, base_deg + sweep * 0.62)
-    return (f"M{s[0]:.2f},{s[1]:.2f}"
-            f"C{c1[0]:.2f},{c1[1]:.2f} {c2[0]:.2f},{c2[1]:.2f} {e[0]:.2f},{e[1]:.2f}")
+    def pt(r: float, deg: float) -> tuple[float, float]:
+        return polar(cx, cy, r, deg)
+
+    b1 = pt(r_in, base_deg - half_base)
+    c1 = pt(r_in + (r_out - r_in) * 0.30, base_deg - half_base - 2)
+    c2 = pt(r_in + (r_out - r_in) * 0.74,
+            base_deg + sweep - tip_half - 12)
+    p1 = pt(r_out, base_deg + sweep - tip_half)
+    pc = pt(r_out + 28, base_deg + sweep)
+    p2 = pt(r_out, base_deg + sweep + tip_half)
+    c3 = pt(r_in + (r_out - r_in) * 0.72,
+            base_deg + sweep + tip_half - 12)
+    c4 = pt(r_in + (r_out - r_in) * 0.32, base_deg + half_base - 6)
+    b2 = pt(r_in, base_deg + half_base)
+    return (
+        f"M{b1[0]:.2f},{b1[1]:.2f}"
+        f"C{c1[0]:.2f},{c1[1]:.2f} {c2[0]:.2f},{c2[1]:.2f} {p1[0]:.2f},{p1[1]:.2f}"
+        f"Q{pc[0]:.2f},{pc[1]:.2f} {p2[0]:.2f},{p2[1]:.2f}"
+        f"C{c3[0]:.2f},{c3[1]:.2f} {c4[0]:.2f},{c4[1]:.2f} {b2[0]:.2f},{b2[1]:.2f}"
+        f"A{r_in:.2f},{r_in:.2f} 0 0 0 {b1[0]:.2f},{b1[1]:.2f}Z"
+    )
 
 
 def sparkle(cx: float, cy: float, size: float) -> str:
@@ -112,87 +113,60 @@ def fill(d: str) -> dict:
     return {"d": d, "fill": True}
 
 
+def fan_elements(blades: int, *, r_in: float = 80, r_out: float = 340,
+                 half_base: float = 18, sweep: float = 28,
+                 tip_half: float = 14, hub: float = 80,
+                 offset: float = 0, frame: float | None = None) -> list[dict]:
+    """A filled fan rotor: N swept blades plus a round hub (and optional shroud)."""
+    elements = []
+    if frame is not None:
+        elements.append(stroke(circle(480, 480, frame)))
+    for k in range(blades):
+        base = offset + 360.0 * k / blades
+        elements.append(fill(swept_blade(480, 480, base, r_in, r_out,
+                                         half_base, sweep, tip_half)))
+    elements.append(fill(circle(480, 480, hub)))
+    return elements
+
+
 ICONS = [
     {
-        "slug": "fan-a-turbine",
+        "slug": "fan-a-four-blade",
         "family": "Fan",
-        "label": "A - Turbine",
-        "summary": "Three swept blades inside a thin shroud; the most literal "
-                   "fan silhouette and the closest match to a Settings row icon.",
-        "elements": [
-            stroke(circle(480, 480, 330)),
-            stroke(blade(480, 480, 270, 165, 270, 55, bow=10)),
-            stroke(blade(480, 480, 30, 165, 270, 55, bow=10)),
-            stroke(blade(480, 480, 150, 165, 270, 55, bow=10)),
-            fill(circle(480, 480, 92)),
-        ],
+        "label": "A - Four-blade",
+        "summary": "Four broad swept blades around a round hub. The classic "
+                   "QS-tile fan silhouette, with filled shapes that stay readable "
+                   "at 24dp.",
+        "elements": fan_elements(4, tip_half=18),
     },
     {
-        "slug": "fan-b-case",
+        "slug": "fan-b-three-blade",
         "family": "Fan",
-        "label": "B - Case fan",
-        "summary": "A square fan housing with four blades. Rounded-square "
-                   "silhouette makes it easy to tell apart from Lighting at 24dp.",
-        "elements": [
-            stroke(rounded_rect(180, 180, 600, 600, 112)),
-            stroke(blade(480, 480, 45, 112, 208, 45, bow=8)),
-            stroke(blade(480, 480, 135, 112, 208, 45, bow=8)),
-            stroke(blade(480, 480, 225, 112, 208, 45, bow=8)),
-            stroke(blade(480, 480, 315, 112, 208, 45, bow=8)),
-            fill(circle(480, 480, 74)),
-        ],
+        "label": "B - Three-blade",
+        "summary": "Three wider swept blades around the same hub. More open "
+                   "than A and a little lighter in a Settings row.",
+        "elements": fan_elements(3, half_base=28, tip_half=24, hub=82, offset=30),
     },
     {
-        "slug": "fan-c-airflow",
+        "slug": "fan-c-four-blade-framed",
         "family": "Fan",
-        "label": "C - Airflow",
-        "summary": "A fan with two airflow strokes. Best fit for the QS tile, "
-                   "where it reads as 'cooling active' at a glance.",
-        "elements": [
-            stroke(circle(380, 480, 210)),
-            stroke(blade(380, 480, 270, 90, 175, 55, bow=8)),
-            stroke(blade(380, 480, 30, 90, 175, 55, bow=8)),
-            stroke(blade(380, 480, 150, 90, 175, 55, bow=8)),
-            fill(circle(380, 480, 58)),
-            stroke("M700,390C750,390 770,380 810,400"),
-            stroke("M700,570C750,570 770,580 810,560"),
-        ],
-    },
-    {
-        "slug": "lighting-a-bars",
-        "family": "Lighting",
-        "label": "A - Light bars",
-        "summary": "Three rounded light bars under a rail. Direct evolution of "
-                   "the current ic_led / ic_tile_lighting asset, so the tile keeps "
-                   "its meaning.",
-        "elements": [
-            stroke("M180,200L780,200"),
-            stroke("M230,420L230,780"),
-            stroke("M480,380L480,780"),
-            stroke("M730,450L730,780"),
-        ],
+        "label": "C - Framed four-blade",
+        "summary": "The four-blade rotor inside a thin circular frame. Reads "
+                   "as a housed case fan and keeps a perfectly round row icon.",
+        "elements": fan_elements(4, r_in=78, r_out=288, tip_half=18, hub=78,
+                                 frame=360, offset=45),
     },
     {
         "slug": "lighting-b-ring",
         "family": "Lighting",
         "label": "B - Glow ring",
-        "summary": "One RGB stick ring with a sparkle. Reads as 'lit ring' "
-                   "rather than generic brightness, and echoes the RP5 hardware.",
+        "chosen": True,
+        "summary": "One RGB stick ring with a sparkle. Chosen by the user; "
+                   "reads as a lit ring rather than generic brightness and "
+                   "echoes the RP5 hardware.",
         "elements": [
             stroke(circle(440, 512, 228)),
             fill(sparkle(756, 244, 108)),
-        ],
-    },
-    {
-        "slug": "lighting-c-dual-rings",
-        "family": "Lighting",
-        "label": "C - Left/right rings",
-        "summary": "Both stick rings plus a sparkle. The most product-specific "
-                   "option for the Settings row; still legible at 24dp.",
-        "elements": [
-            stroke(circle(260, 566, 132)),
-            stroke(circle(700, 566, 132)),
-            fill(sparkle(480, 270, 90)),
         ],
     },
 ]
@@ -228,8 +202,7 @@ def vector_doc(icon: dict) -> str:
         "<!-- AshFall icon draft (issue #85). Clean-room, original design.",
         f"     {icon['label']}: {icon['summary']}",
         "     Preview only: not wired into the app. 24dp, single colour,",
-        "     tintable. Geometry matches the LineageOS 24 Settings weight",
-        "     (960 viewport, 80 = 2dp stroke). -->",
+        "     tintable. 960 viewport; 80 = 2dp where stroked. -->",
         '<vector xmlns:android="http://schemas.android.com/apk/res/android"',
         '    android:width="24dp"',
         '    android:height="24dp"',
@@ -280,11 +253,13 @@ def html_doc(icons: list[dict]) -> str:
 
     def card(icon: dict) -> str:
         slug = icon["slug"]
+        badge = ('<span class="chosen">chosen</span>'
+                 if icon.get("chosen") else "")
         return f"""
       <article class="card">
         <div class="card-head">
           <div>
-            <h3>{icon['label']}</h3>
+            <h3>{icon['label']}{badge}</h3>
             <div class="path">vectors/{slug}.xml</div>
           </div>
           <a class="file" href="vectors/{slug}.xml">XML</a>
@@ -305,7 +280,7 @@ def html_doc(icons: list[dict]) -> str:
     <section>
       <div class="section-head">
         <h2>{family}</h2>
-        <span>{len(items)} variants</span>
+        <span>{len(items)} variant{'s' if len(items) != 1 else ''}</span>
       </div>
       <div class="grid">{cards}
       </div>
@@ -347,13 +322,20 @@ def html_doc(icons: list[dict]) -> str:
   .section-head {{ display: flex; align-items: baseline; gap: 12px; margin-bottom: 16px; }}
   .section-head h2 {{ margin: 0; font-size: 22px; letter-spacing: -.01em; }}
   .section-head span {{ color: #7f8998; font-size: 13px; }}
-  .grid {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(330px, 1fr)); gap: 20px; }}
+  .grid {{ display: grid; grid-template-columns: repeat(auto-fill, minmax(330px, 1fr)); gap: 20px; }}
   .card {{
     background: #12161c; border: 1px solid #232a35; border-radius: 16px;
     padding: 18px; display: flex; flex-direction: column; gap: 14px;
   }}
   .card-head {{ display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; }}
   .card-head h3 {{ margin: 0 0 4px; font-size: 17px; letter-spacing: -.01em; }}
+  .chosen {{
+    display: inline-block; margin-left: 8px; vertical-align: 3px;
+    font: 600 9.5px/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+    letter-spacing: .08em; text-transform: uppercase; color: #9fe0b0;
+    border: 1px solid #234a33; background: #10241a; border-radius: 999px;
+    padding: 4px 7px;
+  }}
   .path {{ font: 11.5px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; color: #7f8998; }}
   .file {{
     flex: none; text-decoration: none; color: #e8a15c; border: 1px solid #3a2d20;
@@ -415,12 +397,13 @@ def html_doc(icons: list[dict]) -> str:
     <div class="eyebrow">AshFall · Phase 5 · issue #85</div>
     <h1>Fan &amp; Lighting icon drafts <em>- preview only</em></h1>
     <p class="lede">
-      Six clean-room 24dp vectors, three per family. Geometry follows the LineageOS 24
-      Settings language (960 viewport, 80-unit stroke = 2dp, rounded joins, one colour).
-      Nothing here is wired into the app.
+      Four clean-room 24dp vectors: three new Fan variants (four-blade,
+      three-blade and framed four-blade) plus the chosen Lighting B. The fans are
+      filled, broad swept blades in the LineageOS 24 Settings weight; the ring is
+      the selected RGB metaphor. Nothing here is wired into the app.
     </p>
     <div class="chips">
-      <span class="chip"><b>6</b> variants</span>
+      <span class="chip"><b>{len(icons)}</b> variants</span>
       <span class="chip"><b>24dp</b> Android vector</span>
       <span class="chip"><b>960</b> viewport</span>
       <span class="chip"><b>80</b> stroke (= 2dp)</span>
@@ -428,24 +411,24 @@ def html_doc(icons: list[dict]) -> str:
       <span class="chip"><b>Light + dark</b> PNGs at 24/48/96</span>
     </div>
     <div class="warn">
-      Drafts only. The vectors are not copied into <code>AshFallParts/res</code> and no
-      app, tile or Settings code was changed. Pick a variant, then it can be promoted
-      in a follow-up.
+      Fan drafts only. The vectors are not copied into <code>AshFallParts/res</code> and no
+      app, tile or Settings code was changed. Lighting B is the user's choice; pick one
+      Fan variant and it can be promoted in a follow-up.
     </div>
   </header>
   {''.join(sections)}
   <section class="context">
-    <div class="section-head"><h2>In context</h2><span>example: the two <b>A</b> variants at 2x (48 px)</span></div>
+    <div class="section-head"><h2>In context</h2><span>example: Fan A + Lighting B at 2x (48 px)</span></div>
     <div class="context-grid">
       <div class="device light">
         <div class="device-cap">Settings · light</div>
         <div class="row">
-          <img src="png/fan-a-turbine-light-48.png" width="48" height="48" alt="">
+          <img src="png/fan-a-four-blade-light-48.png" width="48" height="48" alt="">
           <div><div class="row-title">Fan</div><div class="row-sub">Presets, curve and live temperature</div></div>
           <div class="row-chev">›</div>
         </div>
         <div class="row">
-          <img src="png/lighting-a-bars-light-48.png" width="48" height="48" alt="">
+          <img src="png/lighting-b-ring-light-48.png" width="48" height="48" alt="">
           <div><div class="row-title">Lighting</div><div class="row-sub">Stick rings, colour and effects</div></div>
           <div class="row-chev">›</div>
         </div>
@@ -453,12 +436,12 @@ def html_doc(icons: list[dict]) -> str:
       <div class="device dark">
         <div class="device-cap">Settings · dark</div>
         <div class="row">
-          <img src="png/fan-a-turbine-dark-48.png" width="48" height="48" alt="">
+          <img src="png/fan-a-four-blade-dark-48.png" width="48" height="48" alt="">
           <div><div class="row-title">Fan</div><div class="row-sub">Presets, curve and live temperature</div></div>
           <div class="row-chev">›</div>
         </div>
         <div class="row">
-          <img src="png/lighting-a-bars-dark-48.png" width="48" height="48" alt="">
+          <img src="png/lighting-b-ring-dark-48.png" width="48" height="48" alt="">
           <div><div class="row-title">Lighting</div><div class="row-sub">Stick rings, colour and effects</div></div>
           <div class="row-chev">›</div>
         </div>
@@ -485,9 +468,13 @@ def readme_doc(icons: list[dict]) -> str:
     return f"""# AshFall icon drafts - Fan & Lighting (issue #85)
 
 Status: **drafts only**. Nothing in this directory is wired into the app. The
-vectors are preview material for the user to choose from; promoting one means
-copying it into `AshFallParts/res/drawable/` (and deciding the final resource
-name) in a follow-up change.
+vectors are preview material; promoting one means copying it into
+`AshFallParts/res/drawable/` (and deciding the final resource name) in a
+follow-up change.
+
+**Revision after user review of PR #86:** the three earlier thin-line Fan
+drafts and Lighting A/C were removed. **Lighting B is kept and chosen.** The
+Fan set is redrawn as three filled, broad swept-blade fans.
 
 ## Style basis
 
@@ -498,16 +485,15 @@ Inspected read-only on the build host, in the LineageOS 24 Settings sources
 `ic_settings_system_dashboard_filled.xml`.
 
 - 24dp drawable, 960 x 960 viewport (Material Symbols geometry).
-- 80-unit stroke weight = **2dp** at 24dp, with rounded caps/joins.
+- Filled glyphs, plus 80-unit (2dp) strokes where a frame or ring is needed.
 - One colour only: `@android:color/white` plus
   `android:tint="?android:attr/colorControlNormal"`, so the icon follows the
   theme and can be tinted by a QS tile.
 
 These drafts reuse only that *style* (viewport, weight, corners, tint). All
-geometry is original; no LineageOS/AOSP/Retroid path data was copied. Lighting
-variant A deliberately evolves the existing AshFall `ic_led` /
-`ic_tile_lighting` metaphor (three bars under a rail) with new geometry, rather
-than inventing a new one.
+geometry is original; no LineageOS/AOSP/Retroid/Material path data was copied.
+The Fan blades are generated parametrically as broad filled shapes, in the
+spirit of the classic QS fan glyph. Lighting B is the user-chosen RGB ring.
 
 ## Variants
 
@@ -544,10 +530,9 @@ directory.
 The same 24dp drawable is intended for the Settings row, the page header and
 the QS tile. A QS tile may apply its own tint on top of `colorControlNormal`.
 
-Note that the existing AshFallParts glyphs are filled 24-viewport icons, while
-these drafts use the 960-viewport / 80-unit stroke language of Settings. If a
-page must match its current filled glyphs instead, the same geometry can be
-filled/expanded at promotion; the previews here show the Settings look.
+The Fan glyphs are filled, matching Settings' filled row icons; the Lighting
+ring uses the 960-viewport / 80-unit stroke language. If the app's existing
+glyphs need a different weight, the same geometry can be adjusted at promotion.
 
 1. Copy `vectors/<slug>.xml` to
    `aosp/vendor/ashfall/apps/AshFallParts/res/drawable/` under its final name.
