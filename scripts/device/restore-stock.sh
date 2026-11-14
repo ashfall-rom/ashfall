@@ -19,8 +19,17 @@
 # flash-gsi.sh. This script deliberately refuses fastbootd instead of rebooting
 # the device on its own.
 #
-# Userdata erase is fast on this device (0.09 s observed 2026-11-13); the
-# guide's older ~351 s figure does not apply here.
+# ONE fastboot session for the whole restore (issue #54): this ABL wedges when a
+# new fastboot process opens between transfers or after a getvar burst (two
+# restores hung on `Sending ...` on 2026-11-13). All flashes, the optional
+# erase and set-active are therefore a single `fastboot` command line, started
+# detached on the build host with a log + exit file. Partition sizes come from
+# the stock capture (docs/stock/device-live/README.md) instead of asking the
+# bootloader `partition-size:*`; the only getvars are the three preflight reads
+# (mode/product/unlocked), before the batch.
+#
+# Userdata erase is 351 s after a super flash and ~0.09 s when super was not
+# rewritten (issue #54, observed 2026-11-13). The batch timeout covers both.
 #
 # Usage:
 #   scripts/device/restore-stock.sh [options]
@@ -34,7 +43,7 @@
 #   --no-super          skip the 12 GiB super image (keeps current system)
 #   --no-splash         skip splash
 #   --wipe              erase userdata + metadata (needed if /data is unusable;
-#                       userdata erase is seconds on this device)
+#                       ~351 s after the super flash, seconds otherwise)
 #   --set-active a|b    mark this slot active (default: leave as is)
 #   --reboot            reboot to Android when done (default: stay in fastboot)
 #   --skip-size-check   do not verify image sizes against partition sizes
@@ -55,6 +64,25 @@ load_config
 . "$HERE/lib/device.sh"
 
 NEVER_FLASH_RE='^(persist|modemst[12]|fsg|fsc|mdm1m9kefs[0-9a-z]*|devinfo|frp|keystore|secdata|ssd|storsec|cdt|ddr|mdmddr|nvdata[12]|nvram|qpdata[0-9a-z]*|rawdump|reserve[0-9a-z]*|ssign|apdp|msadp|spunvm|uefivarstore|vm-data|vm-keystore|.*_gpt_header|.*_last_parti|metadata|userdata|misc)$'
+
+# Physical partition sizes on the RP5, identical for slots a and b, from the
+# stock bootloader capture (docs/stock/device-live/README.md, guide §8.2).
+# Checking images against this table avoids `partition-size:*` getvars in the
+# bootloader, which is exactly what wedged the two 2026-11-13 restore attempts
+# (issue #54). Override/complete it only from a fresh snapshot, never blind.
+declare -A PART_SIZE=(
+  [boot]=0x6000000
+  [init_boot]=0x800000
+  [vendor_boot]=0x6000000
+  [dtbo]=0x1800000
+  [recovery]=0x6400000
+  [vbmeta]=0x10000
+  [vbmeta_system]=0x10000
+  [vm-linux]=0x2000000
+  [vm-system]=0x8000000
+  [splash]=0x2000000
+  [super]=0x300000000
+)
 
 IMAGES=""
 SLOTS="auto"
@@ -97,7 +125,6 @@ done
 if ((NO_DEVICE)) && ((!DRY_RUN)); then
   die_usage "--no-device only makes sense with --dry-run"
 fi
-if ((NO_DEVICE)) && ((!DRY_RUN)); then die_usage "--no-device only makes sense with --dry-run"; fi
 if [[ -z $IMAGES ]]; then
   if [[ $(host_sh "test -d $(_dq "$REMOTE_FIRMWARE/img") && echo yes || echo no") == yes ]]; then
     IMAGES="$REMOTE_FIRMWARE/img"
@@ -113,7 +140,6 @@ LOG="$LOG_DIR/restore-stock.log"
 exec > >(tee -a "$LOG") 2>&1
 
 # --- helpers -----------------------------------------------------------------
-fb() { dev_sh "$(_cmd timeout 3600 fastboot -s "$DEV_SERIAL" "$@")"; }
 host_file_exists() { [[ $(host_sh "test -f $(_dq "$1") && echo yes || echo no") == yes ]]; }
 host_size() { host_sh "stat -c %s $(_dq "$1")"; }
 human() { numfmt --to=iec-i --suffix=B "$1" 2>/dev/null || printf '%s bytes' "$1"; }
@@ -141,6 +167,8 @@ find_image() {
 }
 
 # Read-only preflight: device must be in the bootloader's fastboot.
+# These are the ONLY getvars this script performs (mode/product/unlocked) and
+# they all happen before the single write batch (issue #54).
 preflight() {
   local mode
   if ((NO_DEVICE)); then
@@ -236,43 +264,62 @@ resolve_plan() {
   ((${#PLAN[@]})) || die "nothing to flash found in $IMAGES"
 }
 
+# build_batch: turn PLAN + wipe/set-active/reboot into the ONE fastboot command
+# line. No per-step fastboot process may be inserted here (issue #54).
+build_batch() {
+  local entry part img size
+  BATCH_ARGS=()
+  for entry in "${PLAN[@]}"; do
+    IFS='|' read -r part img size <<<"$entry"
+    BATCH_ARGS+=(flash "$part" "$img")
+  done
+  if ((WIPE)); then BATCH_ARGS+=(erase userdata erase metadata); fi
+  [[ -n $SET_ACTIVE ]] && BATCH_ARGS+=(set_active "$SET_ACTIVE")
+  ((REBOOT)) && BATCH_ARGS+=(reboot)
+  return 0
+}
+
 print_plan() {
-  local entry part img size partsize
+  local entry part img size partsize base
   printf '\n================ PLAN ================\n'
   printf 'images dir:  %s\n' "$IMAGES"
   printf 'device:      %s (fastboot/bootloader)\n' "${DEV_SERIAL:-unknown}"
   printf 'slots:       %s (requested: %s)\n' "$SLOTS" "$SLOTS_REQ"
   printf 'wipe:        %s   set-active: %s   reboot: %s\n' "$((WIPE))" "${SET_ACTIVE:-no}" "$((REBOOT))"
-  printf '\nflashes:\n'
+  printf '\nflashes (sizes checked against the documented stock table, no getvars):\n'
   for entry in "${PLAN[@]}"; do
     IFS='|' read -r part img size <<<"$entry"
-    partsize=''
-    if [[ -n ${DEV_SERIAL:-} ]]; then
-      case $part in
-        super|splash) partsize=$(dev_fb_value "partition-size:$part") ;;
-        *) partsize=$(dev_fb_value "partition-size:$part") ;;
-      esac
-    fi
+    base=${part%_a}
+    base=${base%_b}
+    partsize=${PART_SIZE[$base]:-}
     printf '  %-18s <- %s (%s)' "$part" "$img" "$(human "$size")"
-    [[ -n $partsize ]] && printf '  [partition %s]' "$partsize"
+    if [[ -n $partsize ]]; then
+      partsize=$((partsize))
+      printf '  [partition %s]' "$(human "$partsize")"
+    fi
     printf '\n'
-    if [[ $SIZE_CHECK == 1 && $partsize =~ ^0x[0-9a-fA-F]+$ ]]; then
+    if [[ $SIZE_CHECK == 1 && -n $partsize ]]; then
       if ((size > partsize)); then
-        die "image for $part is larger than the partition ($(human "$size") > $partsize); refusing (--skip-size-check to override)"
+        die "image for $part is larger than the partition ($(human "$size") > $(human "$partsize")); refusing (--skip-size-check to override)"
       fi
+    elif [[ $SIZE_CHECK == 1 ]]; then
+      warn "no documented partition size for '$part'; skipping the size check"
     fi
   done
+  printf '\none fastboot process for the whole restore (detached, log + exit file):\n'
+  printf '  + fastboot -s %s' "${DEV_SERIAL:-<serial>}"
+  printf ' %q' "${BATCH_ARGS[@]}"
+  printf '\n'
   if ((WIPE)); then
-    printf '\n  erase userdata (observed 0.09 s on 2026-11-13) + erase metadata\n'
+    printf '\n  erase userdata: ~351 s after the super flash, ~0.09 s otherwise\n'
   fi
-  [[ -n $SET_ACTIVE ]] && printf '  set-active %s\n' "$SET_ACTIVE"
-  ((REBOOT)) && printf '  reboot\n'
   printf '======================================\n'
 }
 
 # --- main --------------------------------------------------------------------
 preflight
 resolve_plan
+build_batch
 print_plan
 
 if ((DRY_RUN)); then
@@ -285,44 +332,32 @@ if ((!ASSUME_YES)); then
   [[ $answer == restore ]] || { log "aborted"; exit 1; }
 fi
 
-fails=0
+# Every partition name is checked before the single batch starts; a refusal
+# must happen here, never between fastboot transfers.
 for entry in "${PLAN[@]}"; do
   IFS='|' read -r part img size <<<"$entry"
   assert_flashable "${part%_a}"
   assert_flashable "${part%_b}"
-  printf '\n==> flash %s <- %s (%s)\n' "$part" "$img" "$(human "$size")"
-  printf '    + fastboot flash %s %s\n' "$part" "$img"
-  if fb flash "$part" "$img"; then
-    ok "$part"
-  else
-    warn "$part FAILED (continuing)"
-    fails=$((fails + 1))
-  fi
 done
 
-if ((WIPE)); then
-  printf '\n==> erase userdata (seconds on this device)\n    + fastboot erase userdata\n'
-  fb erase userdata || { warn "erase userdata failed"; fails=$((fails + 1)); }
-  printf '\n==> erase metadata\n    + fastboot erase metadata\n'
-  fb erase metadata || { warn "erase metadata failed"; fails=$((fails + 1)); }
-fi
-
-if [[ -n $SET_ACTIVE ]]; then
-  printf '\n==> set-active %s\n    + fastboot set-active %s\n' "$SET_ACTIVE" "$SET_ACTIVE"
-  fb set-active "$SET_ACTIVE" || { warn "set-active failed"; fails=$((fails + 1)); }
-fi
-
-if ((REBOOT)); then
-  printf '\n==> reboot\n    + fastboot reboot\n'
-  fb reboot || warn "reboot failed"
+printf '\n==> one fastboot process: %s operations (flashes, wipe, active slot)\n' "${#BATCH_ARGS[@]}"
+printf '    logs stay on %s; do not start another fastboot while this runs\n' "$BUILD_HOST"
+if dev_fastboot_batch "restore-stock-$TS" "${BATCH_ARGS[@]}"; then
+  rc=0
+  ok "restore batch finished"
+else
+  rc=$?
+  warn "restore batch failed (exit $rc)"
 fi
 
 printf '\n================ DONE ================\n'
-printf 'flashes failed: %s\n' "$fails"
+printf 'batch exit: %s\n' "$rc"
 printf 'log: %s\n' "$LOG"
-if ((fails)); then
+if ((rc != 0)); then
   printf '\nbail-out advice:\n'
-  printf '  * re-check USB + that the device is still in fastboot (guide §6)\n'
+  printf '  * do NOT open another fastboot process between transfers (issue #54)\n'
+  printf '  * if the ABL is wedged: hold Power 15 s, then Vol Down + Power, re-enter fastboot (guide §6)\n'
+  printf '  * check the batch log on %s for the last successful/FAILED step\n' "$BUILD_HOST"
   printf '  * re-run with --skip-size-check ONLY if the image/partition mismatch is understood\n'
   printf '  * EDL path for anything fastboot refuses: guide §9/§12\n'
   printf '======================================\n'
