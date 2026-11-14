@@ -20,6 +20,7 @@ Current content:
 | Path | Purpose |
 |---|---|
 | `no-rro/packages/apps/SetupWizard/app/src/main/res/layout/setup_navigation.xml` | #63: default the "hide gesture hint" switch to on, so setup writes `navigation_bar_hint=0` instead of 1 on a fresh install |
+| `no-rro/frameworks/base/core/res/res/drawable-*/default_wallpaper.png` | #81: AshFall near-black default wallpaper in every density bucket LineageOS ships, so a fresh `/data` never shows the stock wallpaper in HOME, Recents or the first transition |
 
 Add new overlays under the same root, e.g.
 `no-rro/packages/apps/Settings/res/values/strings.xml`.

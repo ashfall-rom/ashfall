@@ -17,16 +17,21 @@
 package org.ashfall.launcher;
 
 import android.app.Activity;
+import android.app.Dialog;
 import android.content.Context;
 import android.graphics.Color;
 import android.graphics.Insets;
+import android.graphics.drawable.ColorDrawable;
 import android.graphics.drawable.GradientDrawable;
 import android.graphics.drawable.StateListDrawable;
+import android.util.TypedValue;
 import android.view.Gravity;
 import android.view.View;
+import android.view.ViewGroup;
 import android.view.Window;
 import android.view.WindowInsets;
 import android.view.WindowInsetsController;
+import android.view.WindowManager;
 import android.widget.TextView;
 
 /** Small view/drawable helpers shared by the launcher and its settings. */
@@ -78,6 +83,52 @@ final class Ui {
             return windowInsets;
         });
         content.requestApplyInsets();
+    }
+
+    /**
+     * Resolves a theme attribute to a colour. Used by the dialogs so their
+     * surface follows the system theme (DeviceDefault dark grey, or black with
+     * LineageOS' pure-black theme) instead of a hardcoded value.
+     */
+    static int themeColor(Context context, int attribute, int fallback) {
+        TypedValue value = new TypedValue();
+        if (!context.getTheme().resolveAttribute(attribute, value, true)) {
+            return fallback;
+        }
+        if (value.resourceId != 0) {
+            return context.getColor(value.resourceId);
+        }
+        if (value.type >= TypedValue.TYPE_FIRST_COLOR_INT
+                && value.type <= TypedValue.TYPE_LAST_COLOR_INT) {
+            return value.data;
+        }
+        return fallback;
+    }
+
+    static int dialogBackgroundColor(Context context) {
+        return themeColor(context, android.R.attr.colorBackgroundFloating,
+                themeColor(context, android.R.attr.colorBackground, 0xFF202124));
+    }
+
+    /**
+     * Makes a dialog fill the display and block every touch/key that the HOME
+     * screen or the settings list would otherwise receive behind it (#81).
+     * The panel itself is centred by the dialog's content layout.
+     */
+    static void makeDialogModal(Dialog dialog, float dimAmount) {
+        Window window = dialog.getWindow();
+        if (window == null) {
+            return;
+        }
+        WindowManager.LayoutParams params = window.getAttributes();
+        params.width = ViewGroup.LayoutParams.MATCH_PARENT;
+        params.height = ViewGroup.LayoutParams.MATCH_PARENT;
+        params.gravity = Gravity.TOP | Gravity.START;
+        params.dimAmount = dimAmount;
+        window.addFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND
+                | WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN);
+        window.setAttributes(params);
+        window.setBackgroundDrawable(new ColorDrawable(Color.TRANSPARENT));
     }
 
     static void applyTileBackground(View view, int accent) {

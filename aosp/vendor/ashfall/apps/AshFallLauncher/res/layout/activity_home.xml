@@ -1,15 +1,16 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- Copyright (C) 2026 The AshFall Project. Apache-2.0. -->
+<!--
+  The HOME window is transparent and shows the system wallpaper (#81): solid,
+  gradient and image backgrounds are installed through WallpaperManager, the
+  animated gradient through AshFallWallpaperService, so Recents and the
+  app-to-home transition show the same background. See docs/launcher.md.
+-->
 <FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:id="@+id/root"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="@color/background">
-
-    <org.ashfall.launcher.LauncherBackgroundView
-        android:id="@+id/background"
-        android:layout_width="match_parent"
-        android:layout_height="match_parent" />
+    android:background="@android:color/transparent">
 
     <LinearLayout
         android:id="@+id/content"

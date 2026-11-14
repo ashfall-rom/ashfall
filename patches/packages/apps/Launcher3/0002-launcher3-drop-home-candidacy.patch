@@ -1,0 +1,141 @@
+From 23e4ab1cfde7dc136762331985cfc69a69e0b6a2 Mon Sep 17 00:00:00 2001
+From: AshFall UI <ui@ashfall.local>
+Date: Sat, 14 Nov 2026 10:54:59 +0000
+Subject: [PATCH] Launcher3: drop HOME candidacy, keep recents
+
+AshFall's own launcher is the home app on the RP5. Launcher3QuickStep stays
+installed because it provides the recents/quickstep surface, but it must not be
+a second HOME app: it showed up in the home-app chooser (Settings > Default
+apps > Home app) and could be picked again after a no-wipe flash.
+
+Remove CATEGORY_HOME from the Launcher activity. It was never an app-drawer
+entry, so this only drops the home candidacy.
+
+Two places resolve the package's own HOME intent and would break without a HOME
+filter:
+
+- OverviewComponentObserver resolves it in the constructor and dereferences the
+  (now null) ResolveInfo. Fall back to the Launcher activity component directly
+  for the container-interface bookkeeping and the configChanges map. Its
+  "home and overview are the same" branch also treats an empty home role
+  (defaultHome == null) as "we are home"; gate that on the package actually
+  having a HOME activity so the fallback RecentsActivity is always used.
+- The widget picker returns to the home screen with a package-scoped
+  CATEGORY_HOME intent. Start the Launcher activity explicitly instead.
+
+Fixes #81
+---
+ AndroidManifest.xml                           | 10 ++++-
+ .../quickstep/OverviewComponentObserver.java  | 37 +++++++++++++++++--
+ .../WidgetPickerComposeWrapperImpl.kt         |  6 ++-
+ 3 files changed, 46 insertions(+), 7 deletions(-)
+
+diff --git a/AndroidManifest.xml b/AndroidManifest.xml
+index 8918567..2bffaee 100644
+--- a/AndroidManifest.xml
++++ b/AndroidManifest.xml
+@@ -71,7 +71,15 @@
+                 <action android:name="android.intent.action.MAIN" />
+                 <action android:name="android.intent.action.SHOW_WORK_APPS" />
+                 <action android:name="android.intent.action.ALL_APPS" />
+-                <category android:name="android.intent.category.HOME" />
++                <!--
++                  AshFall: no HOME candidacy. The AshFall launcher is the product
++                  home app; Launcher3QuickStep stays installed as the recents /
++                  quickstep provider. Without the HOME category it no longer
++                  appears in the home-app chooser (Settings > Default apps), and
++                  it never was an app-drawer entry (no LAUNCHER category).
++                  OverviewComponentObserver is adjusted for the unresolved
++                  home intent in the same change.
++                -->
+                 <category android:name="android.intent.category.DEFAULT" />
+                 <category android:name="android.intent.category.MONKEY"/>
+                 <category android:name="android.intent.category.LAUNCHER_APP" />
+diff --git a/quickstep/src/com/android/quickstep/OverviewComponentObserver.java b/quickstep/src/com/android/quickstep/OverviewComponentObserver.java
+index de98fe6..0b77831 100644
+--- a/quickstep/src/com/android/quickstep/OverviewComponentObserver.java
++++ b/quickstep/src/com/android/quickstep/OverviewComponentObserver.java
+@@ -90,6 +90,8 @@ public final class OverviewComponentObserver {
+     private final Intent mCurrentPrimaryHomeIntent;
+     private final Intent mMyPrimaryHomeIntent;
+     private final Intent mFallbackIntent;
++    /** AshFall: false when this package declares no HOME activity (recents only). */
++    private final boolean mIsHomeApp;
+     private final SparseIntArray mConfigChangesMap = new SparseIntArray();
+     private final String mSetupWizardPkg;
+ 
+@@ -125,11 +127,25 @@ public final class OverviewComponentObserver {
+         mMyPrimaryHomeIntent = new Intent(mCurrentPrimaryHomeIntent).setPackage(
+                 context.getPackageName());
+         ResolveInfo info = context.getPackageManager().resolveActivity(mMyPrimaryHomeIntent, 0);
+-        ComponentName myHomeComponent =
+-                new ComponentName(context.getPackageName(), info.activityInfo.name);
++        // AshFall: Launcher3 is not a HOME app any more (the AshFall launcher is
++        // the only home candidacy), so resolving our own HOME intent returns
++        // null. The rest of this class only needs a component for the container
++        // interface and its configChanges, so use the Launcher activity that is
++        // still installed as the recents provider.
++        final ComponentName myHomeComponent;
++        final int myHomeConfigChanges;
++        mIsHomeApp = info != null;
++        if (info != null) {
++            myHomeComponent =
++                    new ComponentName(context.getPackageName(), info.activityInfo.name);
++            myHomeConfigChanges = info.activityInfo.configChanges;
++        } else {
++            myHomeComponent = new ComponentName(context, Launcher.class);
++            myHomeConfigChanges = getActivityConfigChanges(context, myHomeComponent);
++        }
+         mMyPrimaryHomeIntent.setComponent(myHomeComponent);
+ 
+-        mConfigChangesMap.append(myHomeComponent.hashCode(), info.activityInfo.configChanges);
++        mConfigChangesMap.append(myHomeComponent.hashCode(), myHomeConfigChanges);
+         mSetupWizardPkg = context.getString(R.string.setup_wizard_pkg);
+ 
+         ComponentName fallbackComponent = new ComponentName(context, RecentsActivity.class);
+@@ -232,7 +248,11 @@ public final class OverviewComponentObserver {
+                 + ", isDefaultHomeNull=" + (defaultHome == null)
+                 + ", mIsDefaultHome=" + mIsDefaultHome);
+ 
+-        if (!mIsHomeDisabled && (defaultHome == null || mIsDefaultHome)) {
++        // AshFall: when this package has no HOME activity it can never be "home
++        // and overview at the same time". Without the extra check, an empty home
++        // role (defaultHome == null) would expose the Launcher3 workspace as the
++        // overview target instead of the fallback RecentsActivity.
++        if (mIsHomeApp && !mIsHomeDisabled && (defaultHome == null || mIsDefaultHome)) {
+             // User default home is same as our home app. Use Overview integrated in Launcher.
+             if (enableLauncherOverviewInWindow.isTrue()) {
+                 RecentsWindowManager recentsWindowManager = mRecentsWindowManagerRepository.get(
+@@ -454,6 +474,15 @@ public final class OverviewComponentObserver {
+         void onOverviewTargetChange(boolean isHomeAndOverviewSame);
+     }
+ 
++    /** AshFall: configChanges of a component that is not resolved as a HOME app. */
++    private static int getActivityConfigChanges(Context context, ComponentName component) {
++        try {
++            return context.getPackageManager().getActivityInfo(component, 0).configChanges;
++        } catch (PackageManager.NameNotFoundException e) {
++            return 0;
++        }
++    }
++
+     private static Intent createHomeIntent() {
+         return new Intent(Intent.ACTION_MAIN)
+                 .addCategory(Intent.CATEGORY_HOME)
+diff --git a/src/com/android/launcher3/widgetpicker/WidgetPickerComposeWrapperImpl.kt b/src/com/android/launcher3/widgetpicker/WidgetPickerComposeWrapperImpl.kt
+index af0251f..f791de4 100644
+--- a/src/com/android/launcher3/widgetpicker/WidgetPickerComposeWrapperImpl.kt
++++ b/src/com/android/launcher3/widgetpicker/WidgetPickerComposeWrapperImpl.kt
+@@ -423,8 +423,10 @@ constructor(
+             )
+             startActivity(
+                 /*intent=*/ Intent(Intent.ACTION_MAIN)
+-                    .addCategory(Intent.CATEGORY_HOME)
+-                    .setPackage(packageName)
++                    // AshFall: Launcher3 is not a HOME app any more, so a
++                    // package-scoped CATEGORY_HOME intent resolves to nothing.
++                    // Return to the Launcher activity explicitly.
++                    .setClass(this, Launcher::class.java)
+                     .setFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+                 /*options=*/ apiWrapper.createFadeOutAnimOptions().toBundle(),
+             )

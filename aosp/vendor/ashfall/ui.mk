@@ -14,6 +14,12 @@
 #       completing setup writes navigation_bar_hint=0 instead of overwriting the
 #       provider default with 1 on every fresh install.
 #
+#   overlay/no-rro/frameworks/base/core/res/res/drawable-*/default_wallpaper.png
+#       #81: replace LineageOS' default wallpaper with an AshFall near-black
+#       gradient. This is the wallpaper the system shows on a fresh /data
+#       before the launcher has written the user's appearance, so the first
+#       boot, Recents and the app-to-home transition are never stock.
+#
 # Future UI-only overlays (strings, dimens) go under the same root, mirroring
 # the package's resource dir, e.g.
 # overlay/no-rro/packages/apps/Settings/res/values/strings.xml.
@@ -51,6 +57,12 @@ PRODUCT_PACKAGE_OVERLAYS += vendor/ashfall/overlay/no-rro
 #       display (port 130) uses its taskbar as its navigation bar. Only the
 #       primary display follows the product default 0; an external display stays
 #       enabled (docs/ui.md 2.1).
+#
+#   patches/packages/apps/Launcher3/0002-launcher3-drop-home-candidacy.patch
+#       #81: Launcher3QuickStep keeps providing recents/quickstep but is no
+#       longer a HOME app, so the home-app chooser only offers AshFall. The
+#       manifest loses CATEGORY_HOME and OverviewComponentObserver handles the
+#       now-unresolved own home intent (docs/ui.md 7).
 #
 #   patches/frameworks/base/0003-settingsprovider-keep-settings-version.patch
 #       Keeps the AOSP SETTINGS_VERSION at 237 after removing the old #51

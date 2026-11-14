@@ -26,7 +26,6 @@
 
     <!-- Launcher settings -->
     <string name="launcher_settings">Launcher settings</string>
-    <string name="settings_intro">Tune the home screen to your liking. Changes apply as soon as you go back.</string>
     <string name="background">Background</string>
     <string name="background_solid">Solid color</string>
     <string name="background_gradient">Gradient</string>
@@ -47,6 +46,7 @@
     <string name="color_picker_title">Custom color</string>
     <string name="apply">Apply</string>
     <string name="cancel">Cancel</string>
+    <string name="wallpaper_description">AshFall animated background</string>
     <string name="controller">Controller</string>
     <string name="controller_hints_body">A  Open / select\nB  Back / close\nD-pad / left stick  Move focus\nL1 / R1  Previous / next page\nStart  App options\nHold Start  Launcher settings\nSelect  Launcher settings</string>
     <string name="done">Done</string>

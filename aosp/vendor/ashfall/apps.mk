@@ -9,7 +9,11 @@
 # stock firmware's rp3launcher + Launcher3QuickStepEX pair. AshFall is made the
 # home app through RoleManager's fallback holder, which picks the HOME activity
 # with the highest intent-filter priority; the launcher manifest declares
-# priority 1000 (Launcher3 declares none). See docs/launcher.md.
+# priority 1000 (Launcher3 declares none). A Launcher3 patch removes its HOME
+# category, so it is not a second home app in the chooser (#81). The launcher
+# also owns the background: solid/gradient/image are installed through
+# WallpaperManager and the animated gradient is a live wallpaper in this
+# package (docs/launcher.md, docs/ui.md 7).
 # ---------------------------------------------------------------------------
 PRODUCT_PACKAGES += \
     AshFallLauncher
