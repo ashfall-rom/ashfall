@@ -541,6 +541,144 @@ static void test_led_apply(void)
     CHECK_EQ(read_int("/sys/class/sn3112l/led/enable"), 0);
 }
 
+/* --- #109: screen-on debounce and the bounded wake re-apply window ------- */
+
+static void test_led_wake_state(void)
+{
+    led_screen screen;
+    bool woke;
+
+    /* Boot with the screen on: no wake window, no re-apply. */
+    led_screen_init(&screen, true, 0);
+    CHECK(led_screen_on(&screen));
+    CHECK_EQ(led_screen_next_ms(&screen), 0);
+    CHECK(!led_screen_reapply_due(&screen, 5000));
+
+    /* A screen-off edge must be stable for the debounce time. */
+    woke = true;
+    CHECK(!led_screen_update(&screen, false, 1000, &woke));
+    CHECK(!woke);
+    CHECK(led_screen_on(&screen));
+    CHECK_EQ(led_screen_next_ms(&screen), 1000 + LED_WAKE_DEBOUNCE_MS);
+    CHECK(!led_screen_update(&screen, false,
+                             1000 + LED_WAKE_DEBOUNCE_MS - 1, &woke));
+    CHECK(led_screen_update(&screen, false,
+                            1000 + LED_WAKE_DEBOUNCE_MS, &woke));
+    CHECK(!woke); /* off edge */
+    CHECK(!led_screen_on(&screen));
+    CHECK_EQ(led_screen_next_ms(&screen), 0);
+    CHECK(!led_screen_reapply_due(&screen, 10000));
+
+    /* A short on/off flicker while the screen is off is not a wake. */
+    CHECK(!led_screen_update(&screen, true, 2000, &woke));
+    CHECK(!led_screen_update(&screen, false, 2100, &woke));
+    CHECK(!led_screen_update(&screen, false, 2200, &woke));
+    CHECK(!woke);
+    CHECK(!led_screen_on(&screen));
+    CHECK_EQ(led_screen_next_ms(&screen), 0);
+
+    /* A real wake also has to be stable, then the window opens. */
+    CHECK(!led_screen_update(&screen, true, 3000, &woke));
+    CHECK_EQ(led_screen_next_ms(&screen), 3000 + LED_WAKE_DEBOUNCE_MS);
+    CHECK(!led_screen_update(&screen, true, 3249, &woke));
+    CHECK(led_screen_update(&screen, true, 3250, &woke));
+    CHECK(woke);
+    CHECK(led_screen_on(&screen));
+    CHECK_EQ(led_screen_next_ms(&screen), 3250);
+
+    /* Exactly three rewrites: at the edge, +0.5 s and +1.5 s. */
+    CHECK(led_screen_reapply_due(&screen, 3250));
+    CHECK_EQ(led_screen_next_ms(&screen), 3250 + 500);
+    CHECK(!led_screen_reapply_due(&screen, 3250 + 499));
+    /* A late loop tick does not shift the remaining schedule. */
+    CHECK(led_screen_reapply_due(&screen, 3250 + 542));
+    CHECK_EQ(led_screen_next_ms(&screen), 3250 + 1500);
+    CHECK(!led_screen_reapply_due(&screen, 3250 + 1499));
+    CHECK(led_screen_reapply_due(&screen, 3250 + 1500));
+    CHECK_EQ(led_screen_next_ms(&screen), 0);
+    CHECK(!led_screen_reapply_due(&screen, 3250 + 5000));
+    CHECK(!led_screen_reapply_due(&screen, 3250 + 100000));
+
+    /* A new wake.  An off flicker shorter than the debounce must not cancel
+     * the pending rewrite, a committed screen-off must. */
+    CHECK(!led_screen_update(&screen, false, 5000, &woke));
+    CHECK(led_screen_update(&screen, false, 5250, &woke));
+    CHECK(!led_screen_update(&screen, true, 6000, &woke));
+    CHECK(led_screen_update(&screen, true, 6250, &woke));
+    CHECK(woke);
+    CHECK(led_screen_reapply_due(&screen, 6250));
+    CHECK_EQ(led_screen_next_ms(&screen), 6250 + 500);
+
+    CHECK(!led_screen_update(&screen, false, 6500, &woke));
+    CHECK(!led_screen_update(&screen, true, 6600, &woke)); /* flicker only */
+    CHECK_EQ(led_screen_next_ms(&screen), 6250 + 500);
+    CHECK(led_screen_reapply_due(&screen, 6250 + 500));
+    CHECK_EQ(led_screen_next_ms(&screen), 6250 + 1500);
+
+    CHECK(!led_screen_update(&screen, false, 7000, &woke));
+    CHECK(led_screen_update(&screen, false, 7250, &woke));
+    CHECK(!woke);
+    CHECK_EQ(led_screen_next_ms(&screen), 0);
+    CHECK(!led_screen_reapply_due(&screen, 6250 + 1500));
+    CHECK(!led_screen_reapply_due(&screen, 9000));
+}
+
+/* The wake path invalidates the cache before every rewrite, so both
+ * attributes are written again even when the previous write "succeeded". */
+static void test_led_wake_rewrite(void)
+{
+    led_state led;
+    rgb_t frame[2] = {{9, 8, 7}, {6, 5, 4}};
+    char buf[64];
+    char path[PATH_MAX + 64];
+
+    led_state_init(&led, 0);
+    CHECK(led_apply(&led, frame, true));
+    CHECK(!read_file("/sys/class/sn3112l/led/brightness", buf, sizeof(buf)));
+    CHECK(!strcmp(buf, "1-9:8:7"));
+
+    /* The controller lost the latched state (or ignored the transfers) while
+     * the daemon's cache still says "written". */
+    write_file("/sys/class/sn3112l/led/brightness", "0-0:0:0\n");
+    write_file("/sys/class/sn3112l/led/enable", "0\n");
+    write_file("/sys/class/sn3112r/led/brightness", "0-0:0:0\n");
+    write_file("/sys/class/sn3112r/led/enable", "0\n");
+
+    /* Without invalidation led_apply() is a no-op - this is issue #109. */
+    CHECK(led_apply(&led, frame, true));
+    CHECK(!read_file("/sys/class/sn3112l/led/brightness", buf, sizeof(buf)));
+    CHECK(!strcmp(buf, "0-0:0:0"));
+    CHECK_EQ(read_int("/sys/class/sn3112l/led/enable"), 0);
+
+    /* The wake path invalidates first: both attributes are rewritten. */
+    led_invalidate(&led);
+    CHECK(led_apply(&led, frame, true));
+    CHECK(!read_file("/sys/class/sn3112l/led/brightness", buf, sizeof(buf)));
+    CHECK(!strcmp(buf, "1-9:8:7"));
+    CHECK_EQ(read_int("/sys/class/sn3112l/led/enable"), 1);
+    CHECK(!read_file("/sys/class/sn3112r/led/brightness", buf, sizeof(buf)));
+    CHECK(!strcmp(buf, "1-6:5:4"));
+    CHECK_EQ(read_int("/sys/class/sn3112r/led/enable"), 1);
+
+    /* A real write failure during a wake rewrite still leaves applied=false
+     * so the caller's LED_RETRY_MS path runs; the retry then completes. */
+    snprintf(path, sizeof(path), "%s/sys/class/sn3112l/led/brightness", g_root);
+    unlink(path);
+    if (mkdir(path, 0777) != 0) {
+        fprintf(stderr, "cannot create %s\n", path);
+        exit(2);
+    }
+    led_invalidate(&led);
+    CHECK(!led_apply(&led, frame, true));
+    CHECK(!led.applied);
+    remove_rel("/sys/class/sn3112l/led/brightness");
+    write_file("/sys/class/sn3112l/led/brightness", "0-0:0:0\n");
+    CHECK(led_apply(&led, frame, true));
+    CHECK(led.applied);
+    CHECK(!read_file("/sys/class/sn3112l/led/brightness", buf, sizeof(buf)));
+    CHECK(!strcmp(buf, "1-9:8:7"));
+}
+
 /* --- thermal ------------------------------------------------------------- */
 
 static void test_thermal(void)
@@ -905,6 +1043,8 @@ int main(void)
     test_led_colour();
     test_led_effects();
     test_led_apply();
+    test_led_wake_state();
+    test_led_wake_rewrite();
     test_off_writes_state();
     test_sensor_fault();
     test_rpm_while_off();

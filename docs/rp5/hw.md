@@ -209,10 +209,64 @@ to a real screen off only (pre-existing `screen_is_on()` behaviour).
 **Screen-off policy (phase 5 v2):** LEDs are **always off while the screen is
 off**; `persist.ashfall.led.screen_off` was removed.  On screen-on the daemon
 re-applies the lighting, rewriting both `brightness` and `enable` from scratch
-(the cached values are invalidated and the class devices are re-probed), so a
-ring that did not come back after a screen cycle is rewritten rather than
-skipped as "unchanged".  A failed off/on write is retried every 500 ms.  No
-animation wakeups happen while the screen is off.
+(the cached values are invalidated), so a ring that did not come back after a
+screen cycle is rewritten rather than skipped as "unchanged".  A failed off/on
+write is retried every 500 ms.  No animation wakeups happen while the screen is
+off.
+
+### Screen-on wake re-apply (issue #109)
+
+`debug.tracing.screen_state` is not stable across the power/keyguard
+transition, and the HTR3212 controllers can accept the first
+`brightness`/`enable` transfers after the panel rail comes back **without
+latching them**.  The attributes are write-only, so a successful `write()` is
+not proof of a lit ring.  The old one-shot re-apply therefore treated an
+ignored first transfer as success (`applied=true`) and never retried, which
+left one ring (usually the right) or both dark until the next screen cycle or
+a settings change.  The two controllers are independent I2C devices, so the
+two sides can fail separately - matching the both/one/none symptom.
+
+The daemon now:
+
+* **debounces** the screen decision: a raw change must hold for
+  `LED_WAKE_DEBOUNCE_MS` (250 ms) before it becomes the screen state used by
+  the fan and lighting, so a short off/on flicker during doze/keyguard changes
+  nothing;
+* on a debounced off->on edge, invalidates the cached attributes and rewrites
+  both `brightness` and `enable` for both sides at the edge, **+500 ms** and
+  **+1.5 s** (`LED_WAKE_REAPPLY_COUNT` / `LED_WAKE_REAPPLY_OFFSET_MS`),
+  regardless of `led.applied`;
+* **cancels** the remaining rewrites as soon as a screen-off edge is
+  committed, so the window is bounded and nothing retries while the screen is
+  off;
+* keeps the 500 ms `LED_RETRY_MS` path for writes that really fail.
+
+The write order stays `brightness` then `enable`; every wake rewrite repeats
+the **full pair**, so an ignored first transfer is corrected even if the
+controller needs a different sequence to latch.
+
+One `ashfall-hwd` line is logged per debounced transition
+(`screen on: re-applying LED/fan settings` / `screen off: holding fan and
+LEDs`); the wake rewrites add no log lines unless a write fails.
+
+**Verification (human eye required - the nodes are write-only).** With a
+visible static colour and the screen on:
+
+```sh
+adb shell logcat -c
+adb shell 'i=0; while [ $i -lt 20 ]; do
+  input keyevent KEYCODE_POWER; sleep 2
+  input keyevent KEYCODE_POWER; sleep 0.4; wm dismiss-keyguard; sleep 3
+  i=$((i+1)); done'
+adb shell 'logcat -d -s ashfall-hwd | grep screen'
+```
+
+Both rings must be lit after every unlock, with the configured colour and
+brightness.  The log must show one line per transition (no per-retry lines),
+`getprop debug.tracing.screen_state` must be `2` after the last wake, and the
+daemon must stay idle while the screen is off (no animation wakeups).
+Repeat after a cold boot and with each mode (`static`, `breathing`, `rainbow`,
+`duo`).  A short off/on flicker (<250 ms) must not produce a transition line.
 
 **Effects (phase 5 v2):**
 
@@ -368,6 +422,8 @@ Run on a build that contains `ashfall-hwd` (a manually pushed binary runs as
 5. Screen: `screen_off=off` -> the fan stops with the screen and resumes with
    the kick on screen-on; `run` -> keeps running.  LEDs always go dark with the
    screen and come back on screen-on (also after toggling modes while off).
+   Run the 20-cycle wake test from §4 (both rings after every unlock, one log
+   line per transition).
 6. Safety: heat above 90 °C -> 100 % and `ashfall.status.fan.safety=1`; it
    releases at 80 °C, also with the screen off.
 7. Lighting: `static` with `color_left=FF0000` lights the left ring red,
@@ -640,3 +696,6 @@ builds `integ/phase5` and hands the RP5 over serially).  The checks to run:
    property exists any more) and come back on screen-on after toggling
    modes; `rainbow` is 3x slower; `breathing` is smooth at speed 5;
    `ashfall.ui.led_override=FF0000:0000FF` shows exactly red:blue.
+6. Wake re-apply (#109): the 20-cycle power-button test in §4 -> both rings
+   lit after every unlock, one `ashfall-hwd` line per transition, no write
+   errors and no retries while the screen is off.
