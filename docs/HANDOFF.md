@@ -224,3 +224,31 @@ hand to d61fd80), #48, #54.
    calibration wizard, deadzones).
 3. QS tiles: Fan preset dialog, Lighting dialog (target/colour/brightness/effect).
 4. Recents, Back, gestures still fine.
+
+## 10. Phase 5 closed (2026-11-14, final)
+
+**State:** Phase 5 is accepted by the user. `main` is `cd3063c` (the tested `integ/v2` tree) and the
+RP5 runs build `20261114-150832-ashfall_gsi_arm64-userdebug-cd3063cb4fb9`, flashed without wipe.
+Fan mode on the device: `smart` (`persist.ashfall.fan.mode=smart`, preset `builtin.smart`).
+
+**Merged PRs / closed issues:** #87 tester, #88 Settings follow-ups, #89 launcher wallpaper +
+hue picker, #90 native v2 (all merged from the verified integration). Issues #81-#84, #91-#93,
+#95-#105 and the umbrella follow-ups are closed; duplicates #99/#100 and #91/#93 were closed with
+cross-references.
+
+**Remaining open issues (genuine backlog, not Phase 5 acceptance):**
+- #94 `ashfall.ui.*` overrides can stay latched after an app crash/kill (daemon owner/liveness).
+- #66 `patches.sh` does not reset a project after its last patch is removed.
+- #54 `restore-stock.sh` still invokes fastboot per step; the one-session recipe is in the issue.
+- #48 `flash-gsi.sh` serial detection still counts stale wireless/offline adb entries; use `--serial`.
+- #80 is closed by #90 (input calibration works; built-in defaults match this unit).
+
+**Tester layout:** geometry lives in
+`aosp/vendor/ashfall/apps/AshFallParts/res/raw/tester_layout.json` (schema v1). The temporary
+editor is `tools/tester-layout-editor/`; it writes that file and was used for the final layout
+(D-pad cell 0.128 at y 0.314459, four inward-pointing pentagons, Select/Start top, Home/Back
+bottom). A save needs a normal rebuild + flash; the app reads the JSON when the tester view is
+created.
+
+**Next:** Phase 6 scope with the user (overclock/kernel work, gamepad fusion, battery indicators,
+sidebar, later our own recents). Use `main` as the base for new worktree branches.
