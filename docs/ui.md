@@ -600,6 +600,10 @@ chooser only offers AshFall.
 - Small fixes in the same test: the white focus ring of a colour swatch is now
   drawn inside the view (it used to be clipped by the next swatch), and the
   "Tune the home screen..." intro line is gone with its vertical space kept.
+- The #95 follow-up removed the platform's square focus highlight from the
+  swatches (`setDefaultFocusHighlightEnabled(false)` + no background) so only
+  the circular white/accent rings are visible, and replaced the RGB dialog
+  with a hue picker (section 7.5).
 
 ### 7.4 Test checklist (#81)
 
@@ -618,3 +622,31 @@ chooser only offers AshFall.
    the LineageOS black theme).
 5. The focused colour swatch's white ring is complete on all four sides; the
    settings header has no intro text but the same vertical spacing.
+
+### 7.5 #95 follow-up: swatch focus highlight and hue picker
+
+- `ColorSwatchView` draws the circular focus ring itself; the platform default
+  rectangular focus highlight was still drawn around it (a faint grey square
+  in the 20261114-111954 test). It is now disabled
+  (`setDefaultFocusHighlightEnabled(false)`) and the view has no background,
+  so a focused swatch shows only the white circular ring (and the accent
+  selected ring when selected).
+- The custom colour dialog is a hue picker instead of RGB sliders:
+  `ColorPickerView` is a saturation/value area (x = saturation, y = value;
+  D-pad moves it in 2 % steps, touch drags the crosshair) and `HueBarView` is a
+  rainbow hue track 0-360 degrees (touch drag, D-pad left/right, and L1/R1 from
+  anywhere in the dialog). Both report every change immediately to the caller:
+  the settings preview and the stored colour update live, and the dialog has
+  its own preview swatch and hex value. There is no "Set"/"Apply" step; `Done`
+  (or B/Back/Start) only closes the dialog. Both views disable the platform
+  focus highlight as well, drawing their own focus indicator. The colour area
+  releases D-pad down at the bottom edge so focus reaches the hue bar and
+  `Done`; on a zero-brightness colour (e.g. the default black) the hue alone
+  cannot change the RGB, so the colour area must be raised first.
+- Dialog surface/modality is unchanged: system `Theme.DeviceDefault.Dialog`
+  colours, full-screen modal window, tap outside dismisses.
+- Test: open `Custom color…` on solid/gradient start/end/accent; drag the
+  colour area and hue bar (and use D-pad/L1/R1) - the preview and the settings
+  background update live; there are no R/G/B sliders and no Set button; the
+  hue value reads 0-359 degrees; closing keeps the last colour. The accent
+  swatch focus has no grey square, only the white circular ring.
