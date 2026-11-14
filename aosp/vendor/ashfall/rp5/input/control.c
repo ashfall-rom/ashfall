@@ -32,6 +32,7 @@ struct control {
     int listen_fd;
     struct client clients[CONTROL_MAX_CLIENTS];
     int client_count;
+    int grab_client; /* client index owning GRAB ON, -1 = none */
 };
 
 #define SOCKET_PATH "/dev/socket/ashfall_input"
@@ -105,6 +106,7 @@ struct control *control_create(struct input_ctx *ctx)
     if (!control)
         return NULL;
     control->ctx = ctx;
+    control->grab_client = -1;
     control->listen_fd = socket_from_env();
     if (control->listen_fd == -2) {
         control->listen_fd = socket_create_fallback();
@@ -180,10 +182,22 @@ static void drop_client(struct control *control, int index)
 {
     if (index < 0 || index >= control->client_count)
         return;
+    if (control->grab_client == index) {
+        /* A dangling GRAB ON must never outlive its client. */
+        control->grab_client = -1;
+        ah_logf(AH_LOG_INFO, "control: grab client disconnected; released");
+    } else if (control->grab_client > index) {
+        control->grab_client--;
+    }
     close(control->clients[index].fd);
     for (int i = index; i + 1 < control->client_count; i++)
         control->clients[i] = control->clients[i + 1];
     control->client_count--;
+}
+
+bool control_grabbed(const struct control *control)
+{
+    return control && control->grab_client >= 0;
 }
 
 static int client_index(const struct control *control, int fd)
@@ -225,6 +239,7 @@ static void handle_set_cal(struct control *control, int fd, char **tokens,
     }
     control->ctx->cal = cal;
     control->ctx->cal_source = CAL_SOURCE_USER;
+    input_publish_cal_source(control->ctx);
     if (control->ctx->on_calibration_changed)
         control->ctx->on_calibration_changed(control->ctx);
     reply(fd, "OK\n");
@@ -279,6 +294,27 @@ static void handle_command(struct control *control, int fd, char *line)
             control->clients[index].last_raw_ms = 0;
         }
         reply(fd, "OK\n");
+    } else if (!strcmp(tokens[0], "GRAB") && count == 2 &&
+               (!strcmp(tokens[1], "ON") || !strcmp(tokens[1], "OFF"))) {
+        int index = client_index(control, fd);
+
+        if (index < 0) {
+            reply(fd, "ERR no client\n");
+        } else if (!strcmp(tokens[1], "ON")) {
+            if (control->grab_client >= 0 && control->grab_client != index) {
+                reply(fd, "ERR busy\n");
+            } else {
+                control->grab_client = index;
+                ah_logf(AH_LOG_INFO, "control: GRAB ON");
+                reply(fd, "OK\n");
+            }
+        } else {
+            if (control->grab_client == index) {
+                control->grab_client = -1;
+                ah_logf(AH_LOG_INFO, "control: GRAB OFF");
+            }
+            reply(fd, "OK\n");
+        }
     } else {
         reply(fd, "ERR unknown command\n");
     }

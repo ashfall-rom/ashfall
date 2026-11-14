@@ -29,4 +29,8 @@ int prop_get_int(const char *name, int fallback);
  * out-of-range values use the documented default (docs/phase5.md §2). */
 int prop_get_int_range(const char *name, int fallback, int lo, int hi);
 
+/* Publish a status property (ashfall.status.*); reports and keeps running
+ * when the write fails (a host build just logs). */
+void prop_set_str(const char *name, const char *value);
+
 #endif /* ASHFALL_INPUT_PLAT_H */

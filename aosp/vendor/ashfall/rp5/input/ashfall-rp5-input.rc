@@ -4,8 +4,9 @@ service ashfall-rp5-input /system/bin/ashfall-rp5-input
     group system input uhid
     seclabel u:r:ashfall_rp5_input:s0
     socket ashfall_input seqpacket 0660 system system
-    # The calibration source line at startup is needed to verify the factory
-    # copy on a fresh boot; logd may not be reachable yet at class core.
+    # Best effort only: stdio_to_kmsg needs /dev/kmsg_debug (ro.debuggable=1),
+    # which the release device does not have.  The calibration source is
+    # therefore also published as ashfall.status.pad.cal_source (#80).
     stdio_to_kmsg
 
 # Calibration (phase 5): the stock factory file lives on /mnt/vendor/persist,

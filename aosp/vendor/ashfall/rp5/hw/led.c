@@ -15,6 +15,11 @@
 #define SN3112_ENABLE_FMT "%s/enable"
 
 #define AH_PI 3.14159265358979323846
+/* Breathing is interpolated in perceptual brightness: the raw PWM value is
+ * gamma-encoded so the fade looks even and has no visible steps at speed 5
+ * (docs/phase5.md §6.1). */
+#define LED_BREATH_GAMMA 2.2
+#define LED_BREATH_MIN 0.02
 
 static const char *const side_dirs[2] = {
     "/sys/class/sn3112l/led",
@@ -30,7 +35,6 @@ void led_settings_default(led_settings *out)
     out->sync = true;
     out->brightness = 60;
     out->speed = 5;
-    out->screen_off_keep = false;
 }
 
 static const struct {
@@ -130,6 +134,8 @@ void led_state_init(led_state *state, int64_t now_ms)
 
 bool led_is_animated(const led_state *state)
 {
+    if (state->settings.override_valid)
+        return false;
     switch (state->settings.mode) {
     case LED_MODE_BREATHING:
     case LED_MODE_RAINBOW:
@@ -137,6 +143,14 @@ bool led_is_animated(const led_state *state)
         return true;
     default:
         return false;
+    }
+}
+
+void led_invalidate(led_state *state)
+{
+    for (int i = 0; i < 2; i++) {
+        state->shown_valid[i] = false;
+        state->en_state[i] = -1;
     }
 }
 
@@ -209,6 +223,13 @@ void led_frame(const led_state *state, int64_t now_ms, rgb_t out[2])
     if (set->sync)
         right = left;
 
+    /* Gamepad tester override: final colours, no brightness/mode processing. */
+    if (set->override_valid) {
+        out[0] = set->override[0];
+        out[1] = set->override[1];
+        return;
+    }
+
     switch (set->mode) {
     case LED_MODE_OFF:
         out[0] = out[1] = (rgb_t){0, 0, 0};
@@ -218,8 +239,10 @@ void led_frame(const led_state *state, int64_t now_ms, rgb_t out[2])
     case LED_MODE_BREATHING: {
         double period = 4000.0 / speed;
         double phase = fmod(elapsed, period) / period;
+        double perceptual = 0.5 - 0.5 * cos(2.0 * AH_PI * phase);
 
-        level = 0.05 + 0.95 * (0.5 - 0.5 * cos(2.0 * AH_PI * phase));
+        level = LED_BREATH_MIN +
+                (1.0 - LED_BREATH_MIN) * pow(perceptual, LED_BREATH_GAMMA);
         break;
     }
     case LED_MODE_DUO: {
@@ -232,7 +255,9 @@ void led_frame(const led_state *state, int64_t now_ms, rgb_t out[2])
         break;
     }
     case LED_MODE_RAINBOW: {
-        double period = 6000.0 / speed;
+        /* Base speed is one third of the phase 5 v1 value: a full hue turn
+         * takes 18 000 / speed ms (was 6 000 / speed). */
+        double period = 18000.0 / speed;
         double hue = fmod(elapsed, period) / period;
 
         left = hsv_to_rgb(hue, 1.0, 1.0);

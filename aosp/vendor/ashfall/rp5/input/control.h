@@ -6,6 +6,11 @@
  *   SET CAL k=v ...           -> OK | ERR <reason>
  *   RESET CAL                 -> OK
  *   RAW ON | RAW OFF          -> OK   (<= 100 Hz raw samples to that client)
+ *   GRAB ON | GRAB OFF        -> OK | ERR busy
+ *     GRAB ON releases every held input and stops all uinput injection for as
+ *     long as that client stays connected (auto GRAB OFF on disconnect); the
+ *     RAW stream keeps carrying every button, including Home/Back/Select/
+ *     Start/B (see docs/rp5/input.md for the bit layout).
  *
  * The socket itself is created by init (`socket ashfall_input seqpacket 0660
  * system system`) and inherited as $ANDROID_SOCKET_ashfall_input.  For
@@ -44,5 +49,8 @@ int control_poll(struct control *control, int timeout_ms);
 /* Stream a raw sample to every subscribed client (100 Hz cap per client). */
 void control_stream_raw(struct control *control, int64_t now_ms,
                         const struct raw_sample *sample);
+
+/* True while a client owns GRAB ON: the daemon must not inject into uinput. */
+bool control_grabbed(const struct control *control);
 
 #endif /* ASHFALL_CONTROL_H */

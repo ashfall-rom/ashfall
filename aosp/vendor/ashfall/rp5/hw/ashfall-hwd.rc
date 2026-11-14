@@ -1,13 +1,14 @@
 service ashfall-hwd /system/bin/ashfall-hwd
     class core
-    user system
-    group system
+    # The thermal trip attributes (/sys/class/thermal/thermal_zone*/trip_point_*
+    # _temp) are root-owned 0644; the performance override (issue #82,
+    # docs/phase5.md §6.1) needs to raise them.  The ashfall_hwd SELinux domain
+    # is still limited to the fan/LED/thermal types, so root here is only a DAC
+    # requirement.
+    user root
+    group root system
     seclabel u:r:ashfall_hwd:s0
     # class core starts before logd is reachable, so the startup lines (LED
     # backend, thermal watch set, first fan decision) would be lost.  Mirror
     # them into the kernel log instead of losing them.
     stdio_to_kmsg
-
-# The daemon is the only writer of the fan (gpio5_pwm2) and stick LED
-# (sn3112) nodes.  It applies persist.ashfall.* at boot and at runtime and
-# publishes ashfall.status.*.  init restarts it with the usual crash backoff.

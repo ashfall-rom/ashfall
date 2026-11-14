@@ -1,6 +1,9 @@
-# AshFall RP5 property contexts (docs/phase5.md §2).
+# AshFall RP5 property contexts (docs/phase5.md §2 and §6.1).
 #
-# The AshFall Parts app is the only writer of persist.ashfall.*; ashfall_hwd is
-# the only writer of ashfall.status.*.
-persist.ashfall.          u:object_r:ashfall_prop:s0
-ashfall.status.           u:object_r:ashfall_status_prop:s0
+# Longest-prefix match wins, so persist.ashfall.perf.* gets the perf type while
+# the rest of persist.ashfall.* stays the settings type.
+persist.ashfall.perf.    u:object_r:ashfall_perf_prop:s0
+persist.ashfall.         u:object_r:ashfall_prop:s0
+ashfall.ui.              u:object_r:ashfall_ui_prop:s0
+ashfall.perf.            u:object_r:ashfall_perf_prop:s0
+ashfall.status.          u:object_r:ashfall_status_prop:s0

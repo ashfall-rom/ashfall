@@ -42,9 +42,23 @@
 #define FAN_SAMPLE_MS 2000
 #define FAN_EMA_ALPHA 0.35
 #define FAN_HYSTERESIS_C 3
-/* A 4 000 ns start from rest was reliable in the measurement (3/3 at ~35 C);
- * the short kick is kept as insurance for a cold unit.  Set to 0 to disable. */
-#define FAN_MIN_KICK_MS 500
+/*
+ * Spin-up kick (docs/phase5.md §6.1): after the fan was off (mode off, or the
+ * screen-off hold) it starts at persist.ashfall.fan.kick_pct instead of 100 %
+ * for a short moment, then drops to the requested speed.  A 4 000 ns start
+ * from rest was reliable in the measurement, so the kick is insurance for a
+ * cold unit; persist.ashfall.fan.kick=0 disables it.
+ */
+#define FAN_KICK_MS 500
+#define FAN_KICK_DEFAULT_PCT 30
+#define FAN_KICK_MIN_PCT 10
+#define FAN_KICK_MAX_PCT 60
+
+/* Fixed, undocumented last-resort rule (persist.ashfall.fan.safety_c was
+ * removed in phase 5 v2).  It is deliberately not a setting: 100 % at or
+ * above 90 C, released at 80 C, in every mode and also with the screen off. */
+#define FAN_SAFETY_ON_C 90
+#define FAN_SAFETY_OFF_C 80
 
 #define FAN_MAX_POINTS 8
 #define FAN_CURVE_MAX_LEN 92 /* persist.* property value limit */
@@ -72,11 +86,19 @@ typedef struct {
     fan_mode mode;
     int manual_pct; /* 0..100 */
     fan_curve curve;
-    int safety_c; /* 70..95 */
+    bool kick;      /* spin-up kick enabled */
+    int kick_pct;   /* 10..60, the kick level (never 100 %) */
+    bool off_when_screen_off; /* fan off while the screen is off */
 } fan_settings;
 
 typedef struct {
     fan_settings settings;
+
+    /* ashfall.ui.fan_preview_curve: while valid and the active mode is
+     * `smart`, this curve is used instead of settings.curve (live editing in
+     * the app). */
+    fan_curve preview;
+    bool preview_valid;
 
     /* last applied output (0..100, -1 = unknown) */
     int out_pct;
@@ -111,10 +133,12 @@ int fan_duty_to_pct(int duty_ns);
 
 void fan_state_init(fan_state *state);
 
-/* One control tick (every FAN_SAMPLE_MS): applies the mode, the smart curve
- * and the always-on safety override.  Returns the output percentage that was
- * applied. */
-int fan_control_tick(fan_state *state, int temp_tenths, int64_t now_ms);
+/* One control tick (every FAN_SAMPLE_MS): applies the mode, the smart curve,
+ * the screen-off hold and the always-on safety override.  `screen_on` false
+ * holds the fan at 0 % when settings.off_when_screen_off is set; the safety
+ * override still runs.  Returns the output percentage that was applied. */
+int fan_control_tick(fan_state *state, int temp_tenths, int64_t now_ms,
+                     bool screen_on);
 
 /* Apply a percentage now (state/duty + spin-up kick).  Returns the output
  * percentage as actually commanded (100 during a kick). */

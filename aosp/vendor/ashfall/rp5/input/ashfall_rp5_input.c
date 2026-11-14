@@ -368,6 +368,34 @@ static void release_all(int uinput_fd, uint16_t *prev_keys, int *prev_axes)
 }
 
 /*
+ * Apply a GRAB ON/OFF transition.  GRAB ON releases everything Android still
+ * thinks is held and then suppresses all uinput output; GRAB OFF arms a full
+ * re-report (keys 0, every axis dirty) so the next MCU frame restores the
+ * current physical state.  Auto-release on client disconnect goes through the
+ * same path.
+ */
+static bool sync_grab(struct control *control, int uinput_fd,
+                      uint16_t *prev_keys, int *prev_axes, bool *grabbed)
+{
+    bool now_grabbed = control_grabbed(control);
+
+    if (now_grabbed == *grabbed)
+        return now_grabbed;
+    if (now_grabbed) {
+        if (uinput_fd >= 0)
+            release_all(uinput_fd, prev_keys, prev_axes);
+        ah_logf(AH_LOG_INFO, "GRAB ON: uinput output suppressed");
+    } else {
+        *prev_keys = 0;
+        for (int i = 0; i < AXIS_COUNT; i++)
+            prev_axes[i] = INT_MIN;
+        ah_logf(AH_LOG_INFO, "GRAB OFF: uinput output resumed");
+    }
+    *grabbed = now_grabbed;
+    return now_grabbed;
+}
+
+/*
  * Service the control socket while the daemon is not in an MCU session
  * (uinput retry, MCU reconnect wait, MCU quiet).  Without this a client
  * connects to /dev/socket/ashfall_input but GET/SET CAL never get a reply,
@@ -383,10 +411,34 @@ static void control_wait(struct control *control, int timeout_ms)
         ah_logf(AH_LOG_WARN, "control poll: %s", strerror(errno));
 }
 
+/*
+ * #80: class core can start before init's `copy` of the factory calibration
+ * (and a failed copy is only visible later), so a daemon that read nothing at
+ * startup would keep the built-in defaults forever.  While the active source
+ * is `default`, retry the load order every 2 s for the first minute.  Called
+ * from every wait path, not only the MCU session loop.
+ */
+static void retry_calibration(struct input_ctx *ctx, int *tries,
+                              int64_t *last_ms)
+{
+    int64_t now = ah_now_ms();
+
+    if (ctx->cal_source != CAL_SOURCE_DEFAULT) {
+        *tries = 0;
+        return;
+    }
+    if (*tries >= 30 || now - *last_ms < 2000)
+        return;
+    *last_ms = now;
+    (*tries)++;
+    input_reload_calibration(ctx);
+}
+
 static void handle_status(const uint8_t *data, size_t len, int uinput_fd,
                           const struct input_ctx *ctx, uint16_t *prev_keys,
                           int *prev_axes, int *good_frames,
-                          struct control *control, int64_t now_ms)
+                          struct control *control, int64_t now_ms,
+                          bool grabbed)
 {
     struct raw_sample raw;
     int axes[AXIS_COUNT] = {0};
@@ -398,6 +450,21 @@ static void handle_status(const uint8_t *data, size_t len, int uinput_fd,
 
     decode_status(data, len, ctx, &raw, axes, &keys);
     control_stream_raw(control, now_ms, &raw);
+
+    if (grabbed) {
+        /*
+         * GRAB ON: every button (including Home, Back, Select, Start and B) is
+         * only visible in the RAW stream; nothing is injected into uinput and
+         * the "last reported" state is left alone so GRAB OFF re-reports
+         * everything from scratch.
+         */
+        if ((*good_frames)++ == 0)
+            ah_logf(AH_LOG_INFO,
+                    "first grabbed MCU status frame: keys=0x%04x "
+                    "l2=%d r2=%d lx=%d ly=%d rx=%d ry=%d",
+                    keys, raw.l2, raw.r2, raw.lx, raw.ly, raw.rx, raw.ry);
+        return;
+    }
 
     if (keys != *prev_keys) {
         uint16_t key_changes = (uint16_t)(keys ^ *prev_keys);
@@ -491,9 +558,12 @@ int main(void)
     int good_frames = 0;
     int mcu_fd = -1;
     int uinput_fd = -1;
+    int cal_retries = 0;
     int64_t last_init_ms = 0;
     int64_t last_status_ms = 0;
     int64_t last_props_ms = 0;
+    int64_t last_cal_retry_ms = 0;
+    bool grabbed = false;
     struct sigaction sa;
     struct input_ctx ctx;
     struct control *control;
@@ -520,8 +590,10 @@ int main(void)
        happen to race ueventd; init's crash backoff could be minutes. */
     while (g_running && uinput_fd < 0) {
         uinput_fd = create_uinput();
-        if (uinput_fd < 0)
+        if (uinput_fd < 0) {
+            retry_calibration(&ctx, &cal_retries, &last_cal_retry_ms);
             control_wait(control, 1000);
+        }
     }
     if (uinput_fd < 0)
         return 1;
@@ -537,6 +609,7 @@ int main(void)
 
         mcu_fd = mcu_open();
         if (mcu_fd < 0) {
+            retry_calibration(&ctx, &cal_retries, &last_cal_retry_ms);
             control_wait(control, 1000); /* CAL must answer without the MCU */
             continue;
         }
@@ -553,6 +626,7 @@ int main(void)
         mcu_send_init(mcu_fd);
         last_init_ms = ah_now_ms();
         ah_logf(AH_LOG_INFO, "waiting for MCU status frames");
+        grabbed = control_grabbed(control);
 
         while (g_running) {
             struct pollfd fds[1 + CONTROL_MAX_CLIENTS];
@@ -579,10 +653,16 @@ int main(void)
             if (now - last_props_ms >= PROP_REFRESH_MS) {
                 deadzones_read(&ctx.dz);
                 last_props_ms = now;
+                retry_calibration(&ctx, &cal_retries, &last_cal_retry_ms);
             }
 
-            if (rc > 0 && control)
+            if (rc > 0 && control) {
                 control_dispatch(control, fds + 1, nfds - 1);
+                /* GRAB ON/OFF (or a grabber disconnect) takes effect before
+                 * the next status frame is injected. */
+                sync_grab(control, uinput_fd, &prev_keys, prev_axes,
+                          &grabbed);
+            }
 
             if (rc == 0) {
                 if (!good_frames || now - last_status_ms > 2000) {
@@ -668,7 +748,8 @@ int main(void)
 
                                 handle_status(payload, payload_len, uinput_fd,
                                               &ctx, &prev_keys, prev_axes,
-                                              &good_frames, control, frame_now);
+                                              &good_frames, control, frame_now,
+                                              grabbed);
                                 last_status_ms = frame_now;
                             } else if (cmd == 0x01 && payload_len >= 1 &&
                                        payload[0] == 0x01) {

@@ -25,12 +25,12 @@ merged into the contexts the image build and libselinux use.  The old
 
 | file | contents |
 |---|---|
-| `ashfall_hwd.te` | `ashfall_hwd` domain, sysfs types for fan/LED attributes, thermal read access |
+| `ashfall_hwd.te` | `ashfall_hwd` domain, sysfs types for fan/LED attributes, thermal read + trip write for the performance override |
 | `ashfall_rp5_input.te` | `ashfall_rp5_input` domain, `/data/misc/ashfall`, control socket |
-| `ashfall_props.te` | `ashfall_prop` (`persist.ashfall.`) and `ashfall_status_prop` (`ashfall.status.`) |
+| `ashfall_props.te` | `ashfall_prop` (`persist.ashfall.`), `ashfall_status_prop` (`ashfall.status.`), `ashfall_ui_prop` (`ashfall.ui.`) and `ashfall_perf_prop` (`ashfall.perf.`, `persist.ashfall.perf.`) |
 | `file_contexts` | binaries, `/dev/socket/ashfall_input`, `/data/misc/ashfall` |
 | `genfs_contexts` | sysfs types for `gpio5_pwm2` and the `sn3112` LED classes |
-| `property_contexts` | the two property prefixes |
+| `property_contexts` | the four property prefixes (the `persist.ashfall.perf.` entry is more specific than `persist.ashfall.`) |
 
 ## Notes
 

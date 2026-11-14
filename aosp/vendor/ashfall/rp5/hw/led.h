@@ -19,7 +19,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#define LED_FPS 30
+#define LED_FPS 50
 #define LED_FRAME_MS (1000 / LED_FPS)
 
 typedef struct {
@@ -41,7 +41,10 @@ typedef struct {
     bool sync;       /* right follows the left colour */
     int brightness;  /* 0..100 */
     int speed;       /* 1..10, breathing/rainbow/duo */
-    bool screen_off_keep; /* keep the LEDs on while the screen is off */
+    /* ashfall.ui.led_override: final colours (intensity already applied),
+     * left/right; overrides the mode/colour/brightness while valid. */
+    bool override_valid;
+    rgb_t override[2];
 } led_settings;
 
 typedef enum {
@@ -74,8 +77,14 @@ void led_state_init(led_state *state, int64_t now_ms);
  * an existence check only and the first writes retry until they succeed. */
 bool led_probe(led_state *state);
 
-/* True while the current mode needs a per-frame animation timer. */
+/* True while the current mode needs a per-frame animation timer.  The
+ * ashfall.ui.led_override path is driven by property changes, not a timer. */
 bool led_is_animated(const led_state *state);
+
+/* Forget what was last written (both attributes are rewritten on the next
+ * led_apply()).  Used on screen-on, where the rings were deliberately off and
+ * the driver may have been re-initialised. */
+void led_invalidate(led_state *state);
 
 /* Colour of both sticks at time now_ms (brightness already applied). */
 void led_frame(const led_state *state, int64_t now_ms, rgb_t out[2]);

@@ -1,23 +1,43 @@
-# AshFall property types (docs/phase5.md §2).
+# AshFall property types (docs/phase5.md §2 and §6.1).
 #
 # persist.ashfall.*  settings written by the AshFall Parts app (system_app,
 #                    sharedUserId android.uid.system) and read by both daemons.
-# ashfall.status.*   status published by ashfall_hwd and read by the app.
+# ashfall.status.*   status published by the daemons and read by the app.
+# ashfall.ui.*       non-persistent UI liveness/preview values (fan live,
+#                    live curve preview, gamepad-tester LED override): the
+#                    app writes them, ashfall_hwd reads them.
+# ashfall.perf.*     non-persistent performance override request, plus the
+#                    persistent *_permanent switch (persist.ashfall.perf.*,
+#                    matched by the more specific prefix in
+#                    property_contexts).
 #
 # The property_contexts file in this directory maps the prefixes:
-#   persist.ashfall.  -> ashfall_prop
-#   ashfall.status.   -> ashfall_status_prop
+#   persist.ashfall.perf.  -> ashfall_perf_prop
+#   persist.ashfall.       -> ashfall_prop
+#   ashfall.ui.            -> ashfall_ui_prop
+#   ashfall.perf.          -> ashfall_perf_prop
+#   ashfall.status.        -> ashfall_status_prop
 
 system_internal_prop(ashfall_prop)
 system_internal_prop(ashfall_status_prop)
+system_internal_prop(ashfall_ui_prop)
+system_internal_prop(ashfall_perf_prop)
 
 # The UI is the only writer of the settings.
 set_prop(system_app, ashfall_prop)
+set_prop(system_app, ashfall_ui_prop)
+set_prop(system_app, ashfall_perf_prop)
 
 # Both daemons read the settings ...
 get_prop(ashfall_hwd, ashfall_prop)
 get_prop(ashfall_rp5_input, ashfall_prop)
 
-# ... and only ashfall_hwd writes the status values.
+# ... ashfall_hwd reads the UI liveness/preview values and the override ...
+get_prop(ashfall_hwd, ashfall_ui_prop)
+get_prop(ashfall_hwd, ashfall_perf_prop)
+
+# ... and the daemons write the status values (ashfall_hwd: fan/perf;
+# ashfall_rp5_input: ashfall.status.pad.cal_source, issue #80).
 set_prop(ashfall_hwd, ashfall_status_prop)
+set_prop(ashfall_rp5_input, ashfall_status_prop)
 get_prop(system_app, ashfall_status_prop)

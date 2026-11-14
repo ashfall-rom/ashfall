@@ -11,6 +11,7 @@ cc_binary {
         "led.c",
         "plat.c",
         "thermal.c",
+        "throttle.c",
     ],
     cflags: [
         "-Wall",
