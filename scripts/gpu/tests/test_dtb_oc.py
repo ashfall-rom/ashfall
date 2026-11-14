@@ -234,6 +234,41 @@ class DtsTransformTest(unittest.TestCase):
         with self.assertRaises(dtb_oc.DtbError):
             dtb_oc.transform_dts(fixture_dts(partial_oc=True))
 
+    def test_debug_extra_and_drop_step(self):
+        steps = ((940 * 1_000_000, 0x180),)
+        output, report = dtb_oc.transform_dts(
+            fixture_dts(), steps=steps, drop_hz=(400 * 1_000_000,))
+        self.assertTrue(report.custom)
+        self.assertTrue(report.changed)
+        lines = output.split("\n")
+        expected = [940 * 1_000_000, 670 * 1_000_000, 587 * 1_000_000,
+                    525 * 1_000_000, 490 * 1_000_000, 441_600_000,
+                    305 * 1_000_000, 0]
+        for suffix, throttle in (("0", 0), ("1", 1), ("3", 1), ("4", 1)):
+            entries = _entries(lines, f"qcom,gpu-pwrlevels-{suffix}")
+            self.assertEqual([entry.freq for entry in entries], expected)
+            self.assertEqual([entry.reg for entry in entries], list(range(8)))
+            self.assertEqual(entries[0].value("qcom,level"), 0x180)
+            self.assertEqual(entries[0].value("qcom,acd-level"), 0x802B5FFD)
+            header = _block(lines, f"qcom,gpu-pwrlevels-{suffix}")
+            self.assertEqual(dtb_oc.get_cell(header, "qcom,initial-pwrlevel"), 6)
+            self.assertEqual(dtb_oc.get_cell(header, "qcom,throttle-pwrlevel"), throttle)
+        # The 525 MHz table and the legacy node stay untouched.
+        pre = fixture_dts().split("\n")
+        for name in ("qcom,gpu-pwrlevels-2", "qcom,gpu-pwrlevels"):
+            self.assertEqual(_block(pre, name), _block(lines, name), name)
+
+        twice, second = dtb_oc.transform_dts(output, steps=steps,
+                                             drop_hz=(400 * 1_000_000,))
+        self.assertEqual(output, twice)
+        self.assertFalse(second.changed)
+
+    def test_debug_rejects_required_drops(self):
+        for hz in (305 * 1_000_000, 0):
+            with self.assertRaises(dtb_oc.DtbError):
+                dtb_oc.transform_dts(fixture_dts(), steps=((940 * 1_000_000, 0x180),),
+                                     drop_hz=(hz,))
+
 
 @unittest.skipUnless(DTC, "dtc not available on PATH")
 class FdtSpliceTest(unittest.TestCase):
@@ -251,7 +286,7 @@ class FdtSpliceTest(unittest.TestCase):
                        check=True, capture_output=True)
         return out
 
-    def _pipeline(self, blob: bytes) -> bytes:
+    def _pipeline(self, blob: bytes, steps=None, drop=()) -> bytes:
         stock_parts = dtb_oc.split_blob(blob)
         result = []
         for index, part in enumerate(stock_parts):
@@ -259,7 +294,11 @@ class FdtSpliceTest(unittest.TestCase):
             stock_fdt.write_bytes(part)
             dts = subprocess.run([DTC, "-I", "dtb", "-O", "dts", str(stock_fdt)],
                                  check=True, capture_output=True, text=True).stdout
-            transformed, _ = dtb_oc.transform_dts(dts)
+            if steps is None and not drop:
+                transformed, _ = dtb_oc.transform_dts(dts)
+            else:
+                transformed, _ = dtb_oc.transform_dts(
+                    dts, steps=steps or (), drop_hz=drop)
             if transformed == dts:
                 result.append(part)
                 continue
@@ -309,6 +348,23 @@ class FdtSpliceTest(unittest.TestCase):
         self.assertEqual(dtb_oc.masked_signature(fdt.root, mask=False),
                          dtb_oc.masked_signature(again.root, mask=False))
         self.assertEqual(fdt.memreserve, again.memreserve)
+
+    def test_debug_pipeline_verifies(self):
+        steps = ((940 * 1_000_000, 0x180),)
+        drop = (400 * 1_000_000,)
+        stock = self._compile(fixture_dts(), "stock").read_bytes()
+        out = self._pipeline(stock, steps=steps, drop=drop)
+        report = dtb_oc.verify_blob(stock, out, steps=steps, drop_hz=drop)
+        self.assertEqual(len(report), 1)
+        self.assertEqual(report[0].bins_oc, 4)
+        self.assertEqual(report[0].bins_slow, 1)
+        # A wrong expected level is rejected.
+        with self.assertRaises(dtb_oc.DtbError):
+            dtb_oc.verify_blob(stock, out, steps=((940 * 1_000_000, 0x1A0),),
+                               drop_hz=drop)
+        # Dropping nothing means the same table is no longer valid.
+        with self.assertRaises(dtb_oc.DtbError):
+            dtb_oc.verify_blob(stock, out, steps=steps)
 
 
 if __name__ == "__main__":

@@ -1,10 +1,16 @@
 #!/usr/bin/env bash
 # AshFall: flash a vendor_boot image (phase 6 GPU OC) or restore the stock one.
 #
-# vendor_boot is a *physical* partition, so this runs in the bootloader's
-# fastboot (not fastbootd), writes only `vendor_boot_<active slot>` (and the
-# stock `vbmeta` with verification disabled), never wipes, and never touches
-# the other slot.
+# vendor_boot is a *physical, non-slotted* partition on the RP5: this script
+# runs in the bootloader's fastboot (not fastbootd), flashes the plain
+# `vendor_boot` partition (never `--slot`, which fastboot rejects/warns about
+# and ignores) and optionally the stock `vbmeta` with verification disabled.
+# It never wipes and never touches the other slot.
+#
+# Debug OC iterations: a failed variant is normally left in place and the next
+# variant is flashed over it.  `--stock` is for last-resort recovery only
+# (device unreachable and the bootloader cannot be entered), not a required
+# step between variants.
 #
 # The phase-6 OC image is not AVB-signed.  The stock vendor_boot is padded to
 # its partition and carries an AVB hash footer; repacking the DTB invalidates
@@ -18,8 +24,11 @@
 #
 # Options:
 #   --stock            restore the stock image for the active slot
-#                      ($REMOTE_FIRMWARE/img/lun4_vendor_boot_<slot>.bin)
-#   --slot a|b         target slot; only the device's active slot is allowed
+#                      ($REMOTE_FIRMWARE/img/lun4_vendor_boot_<slot>.bin);
+#                      last-resort recovery only - do not use it between debug
+#                      variants, flash the next variant over the failed one
+#   --slot a|b         target active slot for the guard/vbmeta; vendor_boot
+#                      itself is non-slotted and is flashed without --slot
 #                      (default: the active slot reported by the device)
 #   --serial SERIAL    device serial (default: the only one connected)
 #   --vbmeta PATH      stock vbmeta img (default:
@@ -59,6 +68,10 @@ DRY_RUN=0
 NO_DEVICE=0
 ASSUME_YES=0
 STOCK_VENDOR_BOOT_SIZE=100663296
+# The RP5 vendor_boot partition is not A/B-slotted (fastboot prints "vendor_boot
+# does not support slots" and ignores --slot).  Keep this 0 for this device; the
+# active-slot guard still applies to vbmeta and the system slot.
+VENDOR_BOOT_SLOTTED=0
 
 usage() { awk 'NR==1{next} /^set -euo/{exit} {sub(/^# ?/,""); print}' "$0"; }
 die_usage() { printf 'err %s\n' "$*" >&2; printf 'try --help\n' >&2; exit 2; }
@@ -107,7 +120,7 @@ step() {
 host_file_exists() { [[ $(host_sh "test -f $(_dq "$1") && echo yes || echo no") == yes ]]; }
 host_size() { host_sh "stat -c %s $(_dq "$1")"; }
 host_sha() { host_sh "sha256sum $(_dq "$1") | cut -d' ' -f1"; }
-host_magic() { host_sh "head -c 8 $(_dq "$1")"; }
+host_magic() { host_sh "head -c ${2:-8} $(_dq "$1")"; }
 
 human() {
   local n=$1
@@ -278,7 +291,8 @@ print_plan() {
   printf 'active slot:   %s (only this slot is touched)\n' "${CUR_SLOT:-unknown}"
   printf 'image:         %s (%s)\n' "$IMG_HOST" "$(human "$IMG_SIZE")"
   printf 'image sha256:  %s\n' "$IMG_SHA"
-  printf 'stock restore: %s%s\n' "$STOCK_IMG" "${STOCK_SHA:+ (sha256 $STOCK_SHA)}"
+  printf 'stock recovery: %s%s\n' "$STOCK_IMG" "${STOCK_SHA:+ (sha256 $STOCK_SHA)}"
+  printf 'vendor_boot:    non-slotted (flashed as plain vendor_boot, no --slot)\n'
   if ((NO_VBMETA)); then
     printf 'vbmeta:        untouched (--no-vbmeta%s)\n' "$( ((STOCK)) && printf ' / --stock')"
   else
@@ -288,7 +302,7 @@ print_plan() {
   printf '  - reach the bootloader (adb reboot bootloader; fastbootd: fastboot reboot bootloader)\n'
   printf '  - re-read product/unlocked/current-slot and refuse on any change\n'
   ((NO_VBMETA)) || printf '  - fastboot --slot %s --disable-verity --disable-verification flash vbmeta %s\n' "$SLOT" "$VB"
-  printf '  - fastboot --slot %s flash vendor_boot %s\n' "$SLOT" "$IMG_HOST"
+  printf '  - fastboot flash vendor_boot %s\n' "$IMG_HOST"
   printf '  - fastboot reboot\n'
   printf '======================================\n'
 }
@@ -332,17 +346,23 @@ fi
 ok "image fits vendor_boot: $(human "$IMG_SIZE") <= $(human "$LIMIT")"
 
 if ((!NO_VBMETA)); then
-  [[ $(host_magic "$VB") == AVB0 ]] || die "not an AVB vbmeta image (magic != AVB0): $VB"
+  vb_magic=$(host_magic "$VB" 4)
+  [[ $vb_magic == AVB0 ]] || die "not an AVB vbmeta image (magic '$vb_magic' != AVB0): $VB"
   step "flash vbmeta (verity + verification disabled)" \
     --slot "$SLOT" --disable-verity --disable-verification flash vbmeta "$VB"
   ok "vbmeta flashed (AVB verification disabled, as for the GSI flash)"
 fi
 
 Flash() {
-  printf '\n==> flash vendor_boot -> vendor_boot_%s\n' "$SLOT"
-  printf '    + fastboot --slot %s flash vendor_boot %s\n' "$SLOT" "$IMG_HOST"
+  printf '\n==> flash vendor_boot -> vendor_boot_%s (non-slotted)\n' "$SLOT"
   local out rc
-  out=$(fb --slot "$SLOT" flash vendor_boot "$IMG_HOST" 2>&1) && rc=0 || rc=$?
+  if ((VENDOR_BOOT_SLOTTED)); then
+    printf '    + fastboot --slot %s flash vendor_boot %s\n' "$SLOT" "$IMG_HOST"
+    out=$(fb --slot "$SLOT" flash vendor_boot "$IMG_HOST" 2>&1) && rc=0 || rc=$?
+  else
+    printf '    + fastboot flash vendor_boot %s\n' "$IMG_HOST"
+    out=$(fb flash vendor_boot "$IMG_HOST" 2>&1) && rc=0 || rc=$?
+  fi
   printf '%s\n' "$out"
   return $rc
 }
@@ -360,5 +380,6 @@ printf 'log:         %s\n' "$LOG"
 printf '\nnext (after boot):\n'
 printf '  adb shell cat /sys/class/kgsl/kgsl-3d0/gpu_available_frequencies\n'
 printf '  adb shell getprop ashfall.status.perf.gpu_oc\n'
-printf '  scripts/device/flash-vendor-boot.sh --stock   # restore the stock DTB\n'
+printf '  # failed variant: flash the next variant over it; do NOT --stock between attempts\n'
+printf '  # scripts/device/flash-vendor-boot.sh --stock   # last-resort recovery only\n'
 printf '======================================\n'

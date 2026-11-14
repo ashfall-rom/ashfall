@@ -120,6 +120,35 @@ The resulting active table (all 7 stock steps + 4 OC steps) is:
 `gpu_available_frequencies` lists exactly that, and `max_gpuclk`/the devfreq
 top become 1000 MHz.  The default **cap** stays 670 MHz (see §4).
 
+### 2.1 Debug variants (issue #116)
+
+The full 12-entry table made `msm_kgsl` fail in `a6xx_build_rpmh_tables` with
+`-ERANGE` (`"Defined more GPU DCVS levels than RPMh can support"`) before the
+GPU probed.  Stock has 8 entries (7 steps + `0 MHz`), and the RPMh `gfx.lvl`
+table must cover `num_pwrlevels + 1`; an added step must therefore **replace**
+a stock step, not grow the table, until the real limit is measured at runtime.
+
+`build-vendor-boot.sh` has debug-only options for that probe (default build is
+unchanged):
+
+```bash
+scripts/gpu/build-vendor-boot.sh --extra-step 940:384 --drop-step 400
+```
+
+This adds **940 MHz at `qcom,level` 384 (TURBO)** and drops the stock 400 MHz
+step, keeping the table at 8 entries:
+
+```
+940 670 587 525 490 441.6 305 0 MHz
+```
+
+The artifact id becomes `vendor-boot-dbg-<stock sha8>-...`, so it never
+overwrites the full OC image; the manifest records `debug.extra_steps` /
+`debug.drop_steps`.  `dtb_oc.py apply|verify` accept the same
+`--extra-step MHz:LEVEL` / `--drop-step MHz` options.  On failure, flash the
+next debug variant directly over the broken one (no `--stock` between
+attempts).
+
 ## 3. Repack pipeline
 
 `scripts/gpu/build-vendor-boot.sh` is host-side (no Android build).  It rsyncs
@@ -276,16 +305,24 @@ logs the fallback.  The `adb shell` examples below may keep the class path:
 
 ## 5. Flashing and recovery
 
-`scripts/device/flash-vendor-boot.sh` writes the **active slot only**:
+`scripts/device/flash-vendor-boot.sh` writes the **active slot only**.  The
+`vendor_boot` partition is **non-slotted** on the RP5: the script flashes plain
+`vendor_boot` (never `--slot`, which fastboot warns about and ignores), while
+the active-slot guard still governs `vbmeta` and the system slot.
 
 ```bash
 # OC image (host path or local path; a local file is uploaded first)
 scripts/device/flash-vendor-boot.sh out/gpu/vendor-boot-oc-c6e49741/vendor_boot.img --dry-run
 scripts/device/flash-vendor-boot.sh /var/home/epickitrolaz/ashfall/artifacts/gpu/<id>/vendor_boot.img --yes
 
-# restore the stock DTB
+# last-resort recovery only (device unreachable, bootloader cannot be entered)
 scripts/device/flash-vendor-boot.sh --stock --yes
 ```
+
+During the #116 debug cycles, do **not** restore stock between variants: leave
+a failed/bootlooping image in place and flash the next variant over it.  The
+stock image is only for the case where the device cannot reach fastboot/adb
+and the user cannot enter the bootloader.
 
 Sequence: preflight (`product` must be `kona`, bootloader unlocked, read the
 active slot, require the stock image for that slot to exist as the restore
@@ -293,13 +330,15 @@ path) → `adb reboot bootloader` (or `fastboot reboot bootloader` from
 fastbootd) → re-read `product`/`unlocked`/`current-slot` and refuse on any
 change → flash the stock `vbmeta` with `--disable-verity
 --disable-verification` (AVB is off, exactly as for the GSI system flash) →
-`fastboot --slot <slot> flash vendor_boot <image>` → `fastboot reboot`.
+`fastboot flash vendor_boot <image>` → `fastboot reboot`.
 
 Safety: the script refuses the inactive slot, refuses a locked bootloader and a
 different product, never wipes, never erases anything, and validates the image
 magic/header version and that it fits `partition-size:vendor_boot`.  `--stock`
 does not touch vbmeta (the stock image is signed the same way as before; the
-current vbmeta already has verification disabled).
+current vbmeta already has verification disabled).  The default `--vbmeta`
+check reads the 4-byte `AVB0` magic (not 8 bytes, which included the version
+field and rejected the valid stock image).
 
 The image is not AVB-signed.  If the device is ever returned to stock vbmeta
 with verification enabled, the OC image will not boot; run `--stock` first.
@@ -384,5 +423,7 @@ fails, the bootloader still has the other slot's stock vendor_boot and
 | `avc: denied ... vendor_sysfs_kgsl ... lnk_file` for `ashfall-hwd` | the daemon is following a class symlink (stale binary?); it must open the resolved paths (§4.2) |
 | `avc: denied ... ashfall_gpu_sysfs` (file) | the exact-path file_contexts entry lost; `ls -Z` the three resolved nodes, rebuild system.img |
 | `fastboot: error: Failed to write` / `unknown partition` | bootloader mode required (not fastbootd); re-run `ensure_bootloader` by starting from Android |
-| device bootloops after the flash | boot recovery, run `scripts/device/logs.sh`, then `scripts/device/flash-vendor-boot.sh --stock` |
+| `msm_kgsl` probe fails with `a6xx_gmu_bind ... -34` / `-ERANGE`, no `/sys/class/kgsl` | the DT table exceeds the RPMh `gfx.lvl` count (see §2.1); use a debug variant with fewer added steps, e.g. `--extra-step 940:384 --drop-step 400` |
+| device bootloops after the flash | leave it and flash the next variant directly over it; `scripts/device/flash-vendor-boot.sh --stock` is last-resort recovery only (device unreachable, bootloader not enterable) |
+| `flash-vendor-boot.sh` rejects the stock vbmeta (`magic != AVB0`) | fixed: the check reads 4 bytes; update the checkout (the old 8-byte read included the AVB version field) |
 | 1000 MHz resets the GPU (fault/hang) | use 940 MHz (`persist.ashfall.perf.gpu_max_mhz=940`); document the unit's limit |

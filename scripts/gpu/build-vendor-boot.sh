@@ -22,11 +22,20 @@
 #                       stock image size; the stock file is padded to it)
 #   --active-dtb N      FDT index used for the review DTS (default: auto-match
 #                       the RP5 board: msm-id 0x164/0x20001, pmic-id 1e 20 1f 21)
+#   --extra-step MHZ:LEVEL
+#                       DEBUG ONLY: add exactly these steps instead of the full
+#                       OC table (repeatable), e.g. --extra-step 940:384
+#   --drop-step MHZ     DEBUG ONLY: drop these stock steps to stay within the
+#                       RPMh/KGSL level limit (repeatable), e.g. --drop-step 400
 #   --dtc PATH          dtc binary (default: AOSP prebuilt)
 #   --mkbootimg DIR     AOSP system/tools/mkbootimg directory
 #   --keep-work         keep the remote work directory (decompiled DTS, logs)
 #   --no-reproducible   skip the second build pass that proves determinism
 #   -h, --help          this help
+#
+# Debug variants use their own artifact id (vendor-boot-dbg-<stock sha8>-...)
+# so they never overwrite the full OC image.  Document them as debug-only in
+# the PR; the default build (no --extra-step/--drop-step) is unchanged.
 #
 # The real work happens on the build host ($BUILD_HOST); the outer invocation
 # rsyncs this checkout to $REMOTE_WS/<branch>, re-execs there with
@@ -58,11 +67,15 @@ DTC=${GPU_DTC:-$REMOTE_SRC/prebuilts/kernel-build-tools/linux-x86/bin/dtc}
 MKBOOTIMG_DIR=${GPU_MKBOOTIMG_DIR:-$REMOTE_SRC/system/tools/mkbootimg}
 KEEP_WORK=0
 REPRODUCIBLE=1
+EXTRA_STEPS=()
+DROP_STEPS=()
 REMOTE_ARGS=("$@")
 
 usage() { awk 'NR==1{next} /^set -euo/{exit} {sub(/^# ?/,""); print}' "$0"; }
 
 die_usage() { printf 'err %s\n' "$*" >&2; printf 'try --help\n' >&2; exit 2; }
+
+tag() { printf '%s' "$1" | sed 's/[^A-Za-z0-9.-]/-/g'; }
 
 while (($#)); do
   case $1 in
@@ -70,6 +83,8 @@ while (($#)); do
     --id) ID=${2:?--id needs a value}; shift 2 ;;
     --partition-size) PARTITION_SIZE=${2:?--partition-size needs a value}; shift 2 ;;
     --active-dtb) ACTIVE_DTB=${2:?--active-dtb needs an index}; shift 2 ;;
+    --extra-step) EXTRA_STEPS+=("${2:?--extra-step needs MHz:LEVEL}"); shift 2 ;;
+    --drop-step) DROP_STEPS+=("${2:?--drop-step needs MHz}"); shift 2 ;;
     --dtc) DTC=${2:?--dtc needs a path}; shift 2 ;;
     --mkbootimg) MKBOOTIMG_DIR=${2:?--mkbootimg needs a directory}; shift 2 ;;
     --keep-work) KEEP_WORK=1; shift ;;
@@ -82,6 +97,12 @@ done
 remote_phase() {
   local stock=$STOCK id=$ID partition=$PARTITION_SIZE active=$ACTIVE_DTB
   local dtc=$DTC mkbootimg_dir=$MKBOOTIMG_DIR keep_work=$KEEP_WORK reproducible=$REPRODUCIBLE
+  local debug_args=() spec debug_tags=""
+
+  for spec in "${EXTRA_STEPS[@]}"; do debug_args+=(--extra-step "$spec"); done
+  for spec in "${DROP_STEPS[@]}"; do debug_args+=(--drop-step "$spec"); done
+  for spec in "${EXTRA_STEPS[@]}"; do debug_tags+="-$(tag "$spec")"; done
+  for spec in "${DROP_STEPS[@]}"; do debug_tags+="-drop$(tag "$spec")"; done
 
   need python3 sha256sum
   [[ -f $stock ]] || die "stock vendor_boot not found: $stock"
@@ -97,6 +118,9 @@ remote_phase() {
     warn "--partition-size $partition is smaller than the stock image ($stock_size)"
 
   [[ -n $id ]] || id="vendor-boot-oc-${stock_sha:0:8}"
+  if ((${#EXTRA_STEPS[@]} || ${#DROP_STEPS[@]})); then
+    [[ -n $ID ]] || id="vendor-boot-dbg-${stock_sha:0:8}${debug_tags}"
+  fi
   local art=$REMOTE_ARTIFACTS/gpu/$id
   local work=$REMOTE_ROOT/work/gpu/$id
   rm -rf "$work" "$art"
@@ -130,6 +154,7 @@ remote_phase() {
       "$dtc" -I dtb -O dts -o "$root/dts/$name.stock.dts" "$f" 2>"$root/dts/$name.decompile.log"
       if python3 "$HERE/dtb_oc.py" apply --in "$root/dts/$name.stock.dts" \
           --out "$root/dts/$name.oc.dts" --summary "$root/dts/$name.json" \
+          ${debug_args[@]+"${debug_args[@]}"} \
           | grep -q '"changed": true'; then
         "$dtc" -I dts -O dtb -o "$root/$name.oc.dtb" "$root/dts/$name.oc.dts" \
           2>"$root/dts/$name.recompile.log"
@@ -147,7 +172,8 @@ remote_phase() {
     python3 "$HERE/dtb_oc.py" join-blob --indir "$root/final" \
       --out "$root/dtb-oc.bin" --count "$fdt_count" >/dev/null
     python3 "$HERE/dtb_oc.py" verify --stock "$work/unpack/dtb" \
-      --oc "$root/dtb-oc.bin" --json "$root/dtb-verify.json" >/dev/null
+      --oc "$root/dtb-oc.bin" --json "$root/dtb-verify.json" \
+      ${debug_args[@]+"${debug_args[@]}"} >/dev/null
   }
 
   build_dtb_payload "$work/pass1" "$work/fdt"
@@ -246,21 +272,25 @@ PY
 
   # --- manifest -------------------------------------------------------------
   local out_sha out_size dtb_sha dtb_stock_sha dtb_stock_size dtb_size
+  local debug_extra debug_drop
   out_sha=$(sha256sum "$work/vendor_boot.img" | awk '{print $1}')
   out_size=$(stat -c %s "$work/vendor_boot.img")
   dtb_stock_sha=$(sha256sum "$work/unpack/dtb" | awk '{print $1}')
   dtb_stock_size=$(stat -c %s "$work/unpack/dtb")
   dtb_sha=$(sha256sum "$work/pass1/dtb-oc.bin" | awk '{print $1}')
   dtb_size=$(stat -c %s "$work/pass1/dtb-oc.bin")
+  debug_extra=$(IFS=,; printf '%s' "${EXTRA_STEPS[*]}")
+  debug_drop=$(IFS=,; printf '%s' "${DROP_STEPS[*]}")
 
   python3 - "$work" "$art" "$stock" "$stock_sha" "$stock_size" \
       "$id" "$partition" "$out_sha" "$out_size" \
       "$dtb_stock_sha" "$dtb_stock_size" "$dtb_sha" "$dtb_size" \
-      "$repro" "$active" "$dtc" "$mkbootimg_dir" "$fdt_count" <<'PY'
+      "$repro" "$active" "$dtc" "$mkbootimg_dir" "$fdt_count" \
+      "$debug_extra" "$debug_drop" <<'PY'
 import json, sys
 (work, art, stock, stock_sha, stock_size, artifact_id, partition, out_sha,
  out_size, dtb_stock_sha, dtb_stock_size, dtb_sha, dtb_size, repro, active,
- dtc, mkbootimg_dir, fdt_count) = sys.argv[1:19]
+ dtc, mkbootimg_dir, fdt_count, debug_extra, debug_drop) = sys.argv[1:21]
 
 
 def load(name, default=None):
@@ -270,9 +300,17 @@ def load(name, default=None):
         return default
 
 
+debug = {
+    "debug_only": bool(debug_extra or debug_drop),
+    "extra_steps": [item for item in debug_extra.split(",") if item],
+    "drop_steps": [item for item in debug_drop.split(",") if item],
+    "max_pwrlevels_hint": 10,
+}
+
 manifest = {
     "id": artifact_id,
     "contract": "docs/phase6.md",
+    "debug": debug,
     "stock": {"path": stock, "size": int(stock_size), "sha256": stock_sha},
     "output": {"file": "vendor_boot.img", "size": int(out_size),
                "sha256": out_sha, "partition_size": int(partition)},
@@ -306,6 +344,10 @@ PY
     printf 'size:          %s bytes (partition %s)\n' "$out_size" "$partition"
     printf 'stock sha256:  %s\n' "$stock_sha"
     printf 'dtb sha256:    %s (%s -> %s bytes)\n' "$dtb_sha" "$dtb_stock_size" "$dtb_size"
+    if [[ -n $debug_extra || -n $debug_drop ]]; then
+      printf 'debug only:    extra=[%s] drop=[%s] (max KGSL pwrlevels hint 10)\n' \
+        "$debug_extra" "$debug_drop"
+    fi
     printf 'active FDT:    %s (%s)\n' "$active" "$active_name"
     printf 'reproducible:  %s\n' "$repro"
     printf 'ARTIFACT_DIR=%s\n' "$art"
