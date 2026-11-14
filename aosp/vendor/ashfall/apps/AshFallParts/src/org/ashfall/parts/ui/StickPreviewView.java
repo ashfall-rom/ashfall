@@ -120,8 +120,9 @@ public class StickPreviewView extends View {
         float nx = 0;
         float ny = 0;
         if (mRaw != null) {
-            nx = normalise(xAxis, left ? mRaw.leftX : mRaw.rightX);
-            ny = -normalise(yAxis, left ? mRaw.leftY : mRaw.rightY);
+            // Same direction as the daemon: Android value = centre - raw.
+            nx = axis(xAxis, left ? mRaw.leftX : mRaw.rightX);
+            ny = axis(yAxis, left ? mRaw.leftY : mRaw.rightY);
         }
         canvas.drawCircle(cx + clamp(nx) * radius * 0.9f, cy + clamp(ny) * radius * 0.9f,
                 8 * mDensity, mDot);
@@ -134,7 +135,7 @@ public class StickPreviewView extends View {
         final float height = 10 * mDensity;
         mRect.set(cx - width / 2, cy - height / 2, cx + width / 2, cy + height / 2);
         canvas.drawRoundRect(mRect, height / 2, height / 2, mRing);
-        final float fraction = clamp01(normalise(axis, value));
+        final float fraction = clamp01(trigger(axis, value));
         mRect.set(cx - width / 2, cy - height / 2,
                 cx - width / 2 + width * fraction, cy + height / 2);
         canvas.drawRoundRect(mRect, height / 2, height / 2, mFill);
@@ -142,25 +143,53 @@ public class StickPreviewView extends View {
                 cy + mText.getTextSize() / 3, mText);
     }
 
-    private float normalise(String axis, float value) {
+    /** Stick axis in Android units: the MCU's ADC direction is inverted. */
+    private float axis(String axis, float value) {
         if (mCalibration != null && mCalibration.isComplete()) {
             final float min = mCalibration.get(axis + "_min", -32768f);
             final float center = mCalibration.get(axis + "_center", 0f);
             final float max = mCalibration.get(axis + "_max", 32767f);
-            if (value >= center) {
-                return (value - center) / Math.max(1f, max - center);
+            if (value <= center) {
+                return (center - value) / Math.max(1f, center - min);
             }
-            return (value - center) / Math.max(1f, center - min);
+            return -(value - center) / Math.max(1f, max - center);
         }
-        return value / 32767f;
+        return -value / 32767f;
+    }
+
+    /** Triggers rest at max and are pulled down towards min. */
+    private float trigger(String axis, float value) {
+        if (mCalibration != null && mCalibration.isComplete()) {
+            final float min = mCalibration.get(axis + "_min", 0f);
+            final float max = mCalibration.get(axis + "_max", 65535f);
+            return (max - value) / Math.max(1f, max - min);
+        }
+        return 1f - value / 65535f;
     }
 
     private int themeColor(int attr, int fallback) {
         final android.util.TypedValue value = new android.util.TypedValue();
-        if (getContext().getTheme().resolveAttribute(attr, value, true)) {
+        if (getContext() == null
+                || !getContext().getTheme().resolveAttribute(attr, value, true)) {
+            return fallback;
+        }
+        if (value.type >= android.util.TypedValue.TYPE_FIRST_COLOR_INT
+                && value.type <= android.util.TypedValue.TYPE_LAST_COLOR_INT) {
             return value.data;
         }
-        return fallback;
+        if (value.resourceId != 0) {
+            try {
+                return getContext().getColorStateList(value.resourceId).getDefaultColor();
+            } catch (RuntimeException ignored) {
+                try {
+                    return getContext().getResources().getColor(value.resourceId,
+                            getContext().getTheme());
+                } catch (RuntimeException alsoIgnored) {
+                    // Fall through.
+                }
+            }
+        }
+        return value.data != 0 ? value.data : fallback;
     }
 
     private static float clamp(float value) {

@@ -66,7 +66,7 @@ public class ControllerActivity extends PartsActivity {
             final Preference tester = new Preference(requireContext());
             tester.setKey("controller_tester");
             tester.setTitle(R.string.controller_tester_title);
-            tester.setSummary(R.string.controller_tester_summary);
+            tester.setSummary(R.string.controller_tester_summary_v2);
             tester.setIcon(R.drawable.ic_gamepad);
             tester.setOnPreferenceClickListener(preference -> {
                 startActivity(new Intent(requireContext(), TesterActivity.class));
@@ -146,7 +146,7 @@ public class ControllerActivity extends PartsActivity {
             final Preference footer = new Preference(requireContext());
             footer.setKey("controller_footer");
             footer.setSelectable(false);
-            footer.setSummary(R.string.footer_controller);
+            footer.setSummary(R.string.controller_footer_v2);
             screen.addPreference(footer);
 
             setPreferenceScreen(screen);

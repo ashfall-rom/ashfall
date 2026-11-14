@@ -241,17 +241,22 @@ The UI target selector maps onto the daemon's `led.sync`:
 * **Reset to factory calibration** confirms, then sends `RESET CAL`; the
   factory file is never touched.
 * **Tester** (`TesterActivity`) draws a landscape RP5 outline: sticks with the
-  configured inner/outer deadzone rings, D-pad, A/B/X/Y, L1/R1, analog
-  L2/R2 bars, Start/Select and L3/R3.  It consumes the activity's
-  `dispatchKeyEvent`/`dispatchGenericMotionEvent`, so gamepad input works
-  without focus wandering.  The second data path is the `RAW ON` stream:
-  raw values and the button mask are drawn next to the calibrated values.
-  Select toggles the raw overlay, B/Back exits.
+  configured inner/outer deadzone rings, D-pad, A/B/X/Y, L1/R1, exact analog
+  L2/R2 bars, Start/Select, Home/Back and L3/R3.  Since the 2026-11-14 follow-up
+  (issue #84) it sends `GRAB ON` on the raw-stream socket, so nothing is
+  injected into uinput and every button is drawn from the `RAW` mask - including
+  Home, Back and Select, which the system would otherwise consume.  It shows
+  the raw MCU values and the recalibrated values side by side.  Leave by holding
+  Start + Select for 2 s or tapping Close; the key-event path remains only as a
+  fallback when the daemon is unreachable (B/Back then exits).  Details and the
+  button-layout note: [parts-controller.md](parts-controller.md).
 * **Calibration wizard** (`CalibrationActivity`) opens a socket and requests
-  `RAW ON`, then runs four steps:
-  1. release the sticks (2 s, centre = average of the raw samples),
-  2. roll both sticks around the edge (8 s, min/max per axis),
-  3. pull both triggers fully (4 s, min/max of `l2`/`r2`),
+  `RAW ON`, then runs four steps; each capture step now waits for the user to
+  press **Start** instead of running on a timer (issue #84):
+  1. release the sticks (centre = average of the raw samples),
+  2. roll both sticks around the edge (min/max per axis, a quarter of the
+     factory travel is required),
+  3. pull both triggers fully (min/max of `l2`/`r2`, same travel check),
   4. review (min/centre/max per axis, trigger ranges).
   Only **Save** sends `SET CAL` with all 16 keys (`left/right_x/y_min`,
   `_center`, `_max`, `l2_min/max`, `r2_min/max`, values in raw units); Cancel
@@ -316,7 +321,7 @@ Everything is reachable with the RP5 pad and the D-pad/left stick:
 | B / Back | dismisses dialogs and leaves the page (toolbar back button for touch) |
 | D-pad left/right on a slider | adjust the value (the SeekBar is the focus stop) |
 | Curve editor | L1/R1 select a point, left/right temperature, up/down output, A add, X delete; up/down at 0 %/100 % moves focus to the controls below the graph |
-| Tester | all input is displayed; Select toggles raw, B exits |
+| Tester | all input is displayed (grabbed, so no key leaves the tester); hold Start + Select 2 s or tap Close |
 | Wizard | D-pad moves between Cancel/Save, A activates; B cancels |
 
 ### 4.1 Why the app does not translate A/B itself
@@ -350,8 +355,9 @@ would therefore be redundant and would double-handle the keys in the views
 that deliberately consume them.  The only deliberate consumers are:
 
 * `ui/CurveEditorView`: A (and D-pad center) adds a point, X deletes one.
-* `TesterActivity`: B exits, Select toggles the raw overlay; every other
-  button is displayed by the tester.
+* `TesterActivity`: while grabbed it consumes no keys at all (there are none);
+  the Start + Select chord and the Close button leave, and B/Back still exits in
+  the no-daemon fallback.
 * `CalibrationActivity`: B cancels the wizard.
 
 Everywhere else A/B are not consumed, so the platform fallback performs the

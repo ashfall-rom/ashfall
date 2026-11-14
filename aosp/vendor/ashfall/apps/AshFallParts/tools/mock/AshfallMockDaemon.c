@@ -18,9 +18,9 @@
  * Test-only stand-in for ashfall-rp5-input.
  *
  * Serves /dev/socket/ashfall_input (SOCK_SEQPACKET) with the protocol from
- * docs/phase5.md §2.3, and animates the RAW stream so the controller tester and
- * the calibration wizard can be exercised on the emulator.  Development
- * tooling: this binary is never installed into the image.
+ * docs/phase5.md §2.3 and §6.2 (GRAB ON/OFF), and animates the RAW stream so the
+ * controller tester and the calibration wizard can be exercised on the emulator.
+ * Development tooling: this binary is never installed into the image.
  *
  *   tools/mock/build.sh --run
  */
@@ -68,17 +68,37 @@ static void send_raw(int fd, double start) {
     const int ly = (int)(cos(t * 0.9) * 28000.0);
     const int rx = (int)(sin(t * 0.4) * 20000.0);
     const int ry = (int)(cos(t * 0.7) * 20000.0);
-    const int l2 = (int)((sin(t * 1.4) + 1.0) * 16383.0);
-    const int r2 = (int)((cos(t * 1.1) + 1.0) * 16383.0);
+    /* Raw trigger counts fall from max (released) to min (fully pulled), as on
+     * the RP5; the values cover a partial pull as well as both ends. */
+    const int l2 = (int)(32767.0 - (sin(t * 0.8) + 1.0) * 20000.0);
+    const int r2 = (int)(32767.0 - (cos(t * 0.5) + 1.0) * 20000.0);
+    /* Cycle through button groups so every bit of the documented mask is shown:
+     * phase 0 = X/A/L1/Start/D-pad up, phase 1 = Y/B/R1/Select/Home/Back,
+     * phase 2 = L3/R3/D-pad left. */
+    const int phase = ((int)(t / 2.0)) % 3;
+    int buttons = 0;
+    if (phase == 0) {
+        buttons = (1 << 12) | (1 << 14) | (1 << 0) | (1 << 3) | (1 << 8);
+    } else if (phase == 1) {
+        buttons = (1 << 13) | (1 << 15) | (1 << 1) | (1 << 2) | (1 << 6) | (1 << 7);
+    } else {
+        buttons = (1 << 4) | (1 << 5) | (1 << 10);
+    }
+    /* Test hook: while this file exists the mock reports Start+Select held, so
+     * the tester's two-second exit chord can be exercised without a pad. */
+    if (access("/data/local/tmp/ashfall-mock-hold", F_OK) == 0) {
+        buttons = (1 << 3) | (1 << 2);
+    }
     char line[160];
-    const int len = snprintf(line, sizeof(line), "RAW %d %d %d %d %d %d 0",
-                             lx, ly, rx, ry, l2, r2);
+    const int len = snprintf(line, sizeof(line), "RAW %d %d %d %d %d %d 0x%04X",
+                             lx, ly, rx, ry, l2, r2, buttons);
     send(fd, line, (size_t)len, 0);
 }
 
 static void handle_client(int fd) {
     char buffer[PACKET];
     int raw = 0;
+    int grab = 0;
     const double start = now_seconds();
 
     for (;;) {
@@ -119,9 +139,23 @@ static void handle_client(int fd) {
         } else if (strcmp(buffer, "RAW OFF") == 0) {
             raw = 0;
             reply(fd, "OK raw off");
+        } else if (strcmp(buffer, "GRAB ON") == 0) {
+            grab = 1;
+            fprintf(stderr, "GRAB ON\n");
+            fflush(stderr);
+            reply(fd, "OK grab on");
+        } else if (strcmp(buffer, "GRAB OFF") == 0) {
+            grab = 0;
+            fprintf(stderr, "GRAB OFF\n");
+            fflush(stderr);
+            reply(fd, "OK grab off");
         } else {
             reply(fd, "ERR unknown command");
         }
+    }
+    if (grab) {
+        fprintf(stderr, "client left while grabbed -> GRAB OFF\n");
+        fflush(stderr);
     }
     close(fd);
 }
