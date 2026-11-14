@@ -232,13 +232,23 @@ graph draws a focus ring when it owns the focus.
 
 **Stress test** (bottom of the curve page): CPU and GPU load sliders, 0–100 %.
 CPU load is one worker per (up to eight) core running a busy loop with the
-requested duty cycle.  GPU load is an offscreen 512×512 EGL/GLES2 pbuffer that
-renders a deliberately expensive fragment shader with `glFinish()` and the same
-duty cycle.  A zero slider means no load; the engine starts on the first
-non-zero value, auto-stops after **ten minutes**, and the page calls
-`Stress.stop()` in `onPause`, so leaving the editor always ends the load.  A
-fresh visit starts at 0/0 and never silently resumes.  The load is ordinary app
-work: it touches neither the daemons nor any property.
+requested duty cycle.  GPU load is an offscreen **1920×1080** EGL/GLES2
+pbuffer (clamped to the config's `EGL_MAX_PBUFFER_WIDTH`/`HEIGHT`, halved once
+if the surface cannot be created) that queues **four full-screen passes** of a
+128-iteration dependent sin/cos fragment shader and then waits once with
+`glFinish()`, with the same duty cycle.  Batching the passes before the wait
+keeps the GPU queue full across submissions, which is what lets
+`msm-adreno-tz` see a sustained load and ramp to the selected cap (#118); a
+single 512×512 draw left the GPU ~18 % idle between submissions.  The GL thread
+runs at `THREAD_PRIORITY_DISPLAY` so a 100 % CPU slider cannot starve the
+submission path; the CPU workers keep the default app priority.  A zero slider
+means no load; the engine starts on the first non-zero value, auto-stops after
+**ten minutes**, and the page calls `Stress.stop()` in `onPause`, so leaving the
+editor always ends the load.  A fresh visit starts at 0/0 and never silently
+resumes.  The load is ordinary app work: it touches neither the daemons nor any
+property.  The GPU worker logs its render size, pass count, shader iterations
+and renderer at start, and its `ms/frame` split into `submit`/`gpu` every five
+seconds (`logcat -s AshFallParts`), so the device test can confirm the load.
 
 ### 2.3 Lighting
 
@@ -739,6 +749,48 @@ native daemon and DTB are out of scope for this change.
   available table step (305/400/441/490/525/587/670/765/850/940/1000) and to
   670 while the override is active, matching `docs/phase6.md` §3.
 
+### 6.8 GPU stress saturation (#118)
+
+The 940 MHz cap was applied correctly; the workload was not.  `GpuWorker`
+rendered one 512×512 triangle with a 64-iteration shader and a `glFinish()` per
+loop, so the GPU finished each draw faster than the CPU/EGL driver could submit
+the next (~82 % busy).  The governor's ramp threshold was never reached:
+`cur_freq` stayed at 587 MHz and `devfreq/trans_stat` showed only 305→587 since
+boot.  `GpuWorker` now renders **1920×1080** (clamped to the EGL config limit;
+one retry at half size, never below 640×360) with **four queued full-screen
+passes** and a **128-iteration dependent sin/cos shader** per submission.
+`glFinish()`, the `busy * (100 - pct) / pct` duty cycle, the ten-minute
+auto-stop, the `onPause` stop and the CPU workers are unchanged; only the GL
+thread is raised to `THREAD_PRIORITY_DISPLAY` so a 100 % CPU slider cannot
+delay submission.
+
+Emulator preview (`Poco_X6_Pro` AVD, API 36, SwiftShader; built with
+`preview/prepare.sh && gradle :app:assembleDebug`): at GPU 100 % `logcat -s
+AshFallParts` reported `GPU stress: 1920x1080 pbuffer, 4 passes, 128 shader
+iterations, renderer …SwiftShader` and frames of 2.6–3.7 s with `submit
+0.02–0.03 ms`, i.e. submission is ~0.001 % of the frame and the GPU is the
+bottleneck (SwiftShader is software, so the absolute time says nothing about
+the RP5).  50 % kept the same per-frame time with an equal duty sleep; 0 % and
+leaving the page stopped every `ashfall-stress-*` thread; CPU 100 % + GPU 100 %
+ran together, and the GPU kept rendering with CPU back at 0.  No shader/EGL
+warnings, no crash, and the preview APK was uninstalled afterwards.  The real
+saturation check is the RP5 run below (checklist item 8).
+
+**RP5 procedure** (after the orchestrator flashes the image with the 940 cap):
+
+1. `logcat -s AshFallParts` in one shell, GPU slider 100 %, CPU 0.  Expect one
+   `GPU stress: 1920x1080 …` line per start and a `ms/frame` line every 5 s
+   whose `submit` is tens of microseconds and whose `gpu` is the frame time.
+2. `cat /sys/class/kgsl/kgsl-3d0/gpu_busy_percentage` → 95–100 % (was 71–85 %).
+3. `cat /sys/class/kgsl/kgsl-3d0/devfreq/cur_freq` → `940000000`;
+   `devfreq/trans_stat` shows 670/765/850/940 and `gpu_clock_stats` gains time
+   at those steps (previously only 305/587).
+4. GPU 50 % → busy roughly halves.  CPU 100 % on top → the GPU figures do not
+   drop (the GL thread is above the CPU workers).
+5. Both to 0, then Back out of the page → `gpu_busy_percentage` returns to
+   idle and `cur_freq` to 305 MHz; the same happens through the ten-minute
+   auto-stop.
+
 ## 7. Build integration
 
 `aosp/vendor/ashfall/apps.mk` gets a separate block (kept apart from the
@@ -792,9 +844,15 @@ trampoline and the two `TileService`s.
    and confirm the confirmation text; enable **Override throttling** and verify
    the row switches to the stock-clamp summary and `gpu_oc=0`, then turn the
    override off.  Also check `gpu_oc=-1` (unavailable) reads as a clear message.
-8. Stress test: on the curve page set CPU 50 % / GPU 50 % and watch the
-   temperature rise; set both to 0, leave the page and confirm the load stops
-   (`top`/GPU idle) and the countdown/stop after 10 minutes works.
+8. Stress test: on the curve page set GPU 100 % / CPU 0 and confirm
+   `gpu_busy_percentage` (kgsl-3d0) is 95–100 %, `devfreq/cur_freq` reaches the
+   selected cap (940 MHz on the RP5) and `devfreq/trans_stat` /
+   `gpu_clock_stats` gain 940 time; the `AshFallParts` log line shows
+   `1920x1080 … 4 passes` with `submit` ≪ `gpu` ms.  Set GPU 50 % and confirm
+   roughly half the load, add CPU 100 % and confirm the GPU stays saturated,
+   then set both to 0 and confirm the clocks drop back; leave the page and
+   confirm the load stops (`top`/GPU idle) and the countdown/stop after 10
+   minutes works.
 9. Lighting: switch on/off, change target (Both/Left/Right), pick a preset and
    a custom colour (it applies as you drag the hue/square, no Set), brightness,
    each effect and speed; check the rings live and that Both uses the same
@@ -895,11 +953,14 @@ trampoline and the two `TileService`s.
   consuming the gamepad keys in the app.
 * **Stress test scope.**  It is intentional load, not a benchmark: the CPU
   side uses a duty cycle per core and the GPU side renders an offscreen shader
-  with `glFinish()`, so the reported percentage is approximate.  It runs at
-  normal app priority (no `Process.setThreadPriority`), so it can be preempted
-  like any other app; that keeps it safe and is enough to heat the SoC for
-  curve tuning.  A device without a working EGL pbuffer simply produces no GPU
-  load and logs a warning.
+  with `glFinish()`, so the reported percentage is approximate.  The CPU
+  workers run at normal app priority (no `Process.setThreadPriority`), so they
+  can be preempted like any other app work; only the GL submission thread is
+  raised to `THREAD_PRIORITY_DISPLAY`, and only so that a 100 % CPU load cannot
+  starve it (#118) — it blocks in `glFinish()` between frames and is still
+  preemptible.  That keeps it safe and is enough to heat the SoC for curve
+  tuning.  A device without a working EGL pbuffer simply produces no GPU load
+  and logs a warning.
 * **Throttling override is two switches.**  The visible switch writes the
   non-persistent `ashfall.perf.throttle_override`; the hidden one writes
   `persist.ashfall.perf.throttle_override_permanent` and also enables the
