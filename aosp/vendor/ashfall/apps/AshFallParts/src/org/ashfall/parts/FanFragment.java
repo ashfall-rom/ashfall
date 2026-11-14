@@ -79,6 +79,9 @@ public class FanFragment extends PreferenceFragmentCompat {
             Fan.refreshLive();
             updateStatus();
             updateLiveSummaries();
+            // The daemon publishes ashfall.status.perf.throttle after boot and
+            // when the override changes; keep the switch in step (#99).
+            refreshToggles();
             mHandler.postDelayed(this, LIVE_TICK_MS);
         }
     };
@@ -345,12 +348,19 @@ public class FanFragment extends PreferenceFragmentCompat {
         }
         mKick.setChecked(Fan.kick());
         mScreenOff.setChecked(Fan.offWhileScreenOff());
-        mThrottle.setChecked(Perf.overrideActive());
-        mThrottle.setSummaryText(Perf.permanent()
-                ? getString(R.string.fan_throttle_summary_permanent)
-                : getString(Perf.overrideActive()
-                        ? R.string.fan_throttle_summary_on
-                        : R.string.fan_throttle_summary_off));
+        final boolean throttleActive = Perf.overrideActive();
+        mThrottle.setChecked(throttleActive);
+        final int throttleSummary;
+        if (!Perf.overrideSupported()) {
+            throttleSummary = R.string.fan_throttle_summary_unsupported;
+        } else if (throttleActive) {
+            throttleSummary = Perf.permanent()
+                    ? R.string.fan_throttle_summary_permanent
+                    : R.string.fan_throttle_summary_on;
+        } else {
+            throttleSummary = R.string.fan_throttle_summary_off;
+        }
+        mThrottle.setSummaryText(getString(throttleSummary));
         if (mPermanent != null) {
             mPermanent.setChecked(Perf.permanent());
         }
@@ -380,6 +390,12 @@ public class FanFragment extends PreferenceFragmentCompat {
         }
         mAdvancedCategory = new PreferenceCategory(requireContext());
         mAdvancedCategory.setTitle(R.string.fan_advanced_category);
+        // Attach the category to the screen *before* adding children: a
+        // detached PreferenceGroup has no PreferenceManager, and
+        // PreferenceGroup.addPreference() -> getNextId() dereferences it
+        // (P0 regression #96).  This also keeps the category just above the
+        // version row, because it is added before the version/footer rows.
+        mScreen.addPreference(mAdvancedCategory);
         mPermanent = new TogglePreference(requireContext());
         mPermanent.setKey("fan_throttle_permanent");
         mPermanent.setTitle(R.string.fan_advanced_permanent_title);
@@ -394,7 +410,6 @@ public class FanFragment extends PreferenceFragmentCompat {
             refreshToggles();
         });
         mAdvancedCategory.addPreference(mPermanent);
-        mScreen.addPreference(mAdvancedCategory);
         refreshToggles();
     }
 

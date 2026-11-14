@@ -34,13 +34,41 @@ public final class Perf {
     public static final String THROTTLE_OVERRIDE = "ashfall.perf.throttle_override";
     public static final String THROTTLE_OVERRIDE_PERMANENT =
             "persist.ashfall.perf.throttle_override_permanent";
+    /** Daemon state: 1 active, 0 restored, -1 unsupported/partial. */
+    public static final String STATUS_THROTTLE = "ashfall.status.perf.throttle";
 
     private Perf() {
     }
 
-    /** Whether the runtime override is currently active. */
+    /**
+     * Whether the override is currently active.
+     *
+     * <p>A value the UI just wrote wins (the daemon follows within a second, so
+     * the switch must not bounce back while it catches up).  After a reboot
+     * the non-persistent property is empty; then the daemon's published state
+     * {@link #STATUS_THROTTLE} is authoritative, and a permanent override is
+     * the fallback until the daemon has published anything (#99).
+     */
     public static boolean overrideActive() {
-        return Props.getBoolean(THROTTLE_OVERRIDE, false);
+        final String requested = Props.get(THROTTLE_OVERRIDE, "");
+        if (!requested.isEmpty()) {
+            return "1".equals(requested);
+        }
+        final int status = status();
+        if (status != Integer.MIN_VALUE) {
+            return status == 1;
+        }
+        return permanent();
+    }
+
+    /** Daemon state, or {@link Integer#MIN_VALUE} before the first publish. */
+    public static int status() {
+        return Props.getInt(STATUS_THROTTLE, Integer.MIN_VALUE);
+    }
+
+    /** False when the daemon reports the override as unsupported/partial. */
+    public static boolean overrideSupported() {
+        return status() != -1;
     }
 
     public static void setOverride(boolean active) {

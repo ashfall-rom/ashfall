@@ -102,6 +102,7 @@
     <string name="fan_throttle_summary_on">Software clock throttling is disabled until reboot</string>
     <string name="fan_throttle_summary_off">Keep the kernel\'s thermal clock limits</string>
     <string name="fan_throttle_summary_permanent">Applied at every boot</string>
+    <string name="fan_throttle_summary_unsupported">This kernel does not expose a throttling override</string>
     <string name="fan_throttle_confirm_title">Override throttling?</string>
     <string name="fan_throttle_confirm_body">This disables the kernel\'s software clock throttling (thermal cooling devices) so the CPU and GPU stay at full clock while the handheld heats up. Hardware limits stay in place, but sustained heavy use can make the device dangerously hot, drain the battery and shorten its life. The override is forgotten at the next reboot.</string>
     <string name="fan_throttle_confirm_enable">Enable</string>

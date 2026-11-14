@@ -16,10 +16,10 @@
 
 package org.ashfall.parts;
 
+import android.app.AlertDialog;
 import android.os.Bundle;
 
 import androidx.fragment.app.Fragment;
-import androidx.preference.ListPreference;
 import androidx.preference.Preference;
 import androidx.preference.PreferenceCategory;
 import androidx.preference.PreferenceFragmentCompat;
@@ -52,10 +52,10 @@ public class LightingActivity extends PartsActivity {
         };
 
         private MainSwitchPreference mSwitch;
-        private ListPreference mTarget;
+        private Preference mTarget;
         private ColorPreference mColour;
         private SliderPreference mBrightness;
-        private ListPreference mEffect;
+        private Preference mEffect;
         private SliderPreference mSpeed;
 
         @Override
@@ -73,21 +73,11 @@ public class LightingActivity extends PartsActivity {
             appearance.setTitle(R.string.lighting_title);
             screen.addPreference(appearance);
 
-            mTarget = new ListPreference(requireContext());
+            mTarget = new Preference(requireContext());
             mTarget.setKey("lighting_target");
-            mTarget.setPersistent(false);
             mTarget.setTitle(R.string.lighting_target_title);
-            mTarget.setEntries(new CharSequence[] {
-                    getString(R.string.lighting_target_both),
-                    getString(R.string.lighting_target_left),
-                    getString(R.string.lighting_target_right),
-            });
-            mTarget.setEntryValues(new CharSequence[] {"0", "1", "2"});
-            mTarget.setValue(Integer.toString(Prefs.ledTarget(requireContext())));
-            mTarget.setOnPreferenceChangeListener((preference, newValue) -> {
-                final int target = Integer.parseInt((String) newValue);
-                Prefs.setLedTarget(requireContext(), target);
-                refresh();
+            mTarget.setOnPreferenceClickListener(preference -> {
+                showTargetDialog();
                 return true;
             });
             appearance.addPreference(mTarget);
@@ -125,23 +115,11 @@ public class LightingActivity extends PartsActivity {
             effectCategory.setTitle(R.string.lighting_effect_title);
             screen.addPreference(effectCategory);
 
-            mEffect = new ListPreference(requireContext());
+            mEffect = new Preference(requireContext());
             mEffect.setKey("lighting_effect");
-            mEffect.setPersistent(false);
             mEffect.setTitle(R.string.lighting_effect_title);
-            mEffect.setEntries(new CharSequence[] {
-                    getString(R.string.lighting_effect_static),
-                    getString(R.string.lighting_effect_breathing),
-                    getString(R.string.lighting_effect_rainbow),
-                    getString(R.string.lighting_effect_duo),
-            });
-            mEffect.setEntryValues(EFFECT_VALUES);
-            mEffect.setValue(Led.isOn() ? Led.mode() : Prefs.lastLedMode(requireContext()));
-            mEffect.setOnPreferenceChangeListener((preference, newValue) -> {
-                final String mode = (String) newValue;
-                Prefs.setLastLedMode(requireContext(), mode);
-                Led.setMode(mode);
-                refresh();
+            mEffect.setOnPreferenceClickListener(preference -> {
+                showEffectDialog();
                 return true;
             });
             effectCategory.addPreference(mEffect);
@@ -185,6 +163,54 @@ public class LightingActivity extends PartsActivity {
             refresh();
         }
 
+        /** Platform single-choice dialog (Settings' dialog theme, pure black aware). */
+        private void showTargetDialog() {
+            final CharSequence[] labels = {
+                    getString(R.string.lighting_target_both),
+                    getString(R.string.lighting_target_left),
+                    getString(R.string.lighting_target_right),
+            };
+            new AlertDialog.Builder(requireContext())
+                    .setTitle(R.string.lighting_target_title)
+                    .setSingleChoiceItems(labels, Prefs.ledTarget(requireContext()),
+                            (dialog, which) -> {
+                                Prefs.setLedTarget(requireContext(), which);
+                                dialog.dismiss();
+                                refresh();
+                            })
+                    .setNegativeButton(R.string.cancel, null)
+                    .show();
+        }
+
+        /** Platform single-choice dialog for the effect (no AppCompat dialog). */
+        private void showEffectDialog() {
+            final CharSequence[] labels = {
+                    getString(R.string.lighting_effect_static),
+                    getString(R.string.lighting_effect_breathing),
+                    getString(R.string.lighting_effect_rainbow),
+                    getString(R.string.lighting_effect_duo),
+            };
+            final String current = Led.isOn() ? Led.mode()
+                    : Prefs.lastLedMode(requireContext());
+            int checked = 0;
+            for (int i = 0; i < EFFECT_VALUES.length; i++) {
+                if (EFFECT_VALUES[i].equals(current)) {
+                    checked = i;
+                }
+            }
+            new AlertDialog.Builder(requireContext())
+                    .setTitle(R.string.lighting_effect_title)
+                    .setSingleChoiceItems(labels, checked, (dialog, which) -> {
+                        final String mode = EFFECT_VALUES[which];
+                        Prefs.setLastLedMode(requireContext(), mode);
+                        Led.setMode(mode);
+                        dialog.dismiss();
+                        refresh();
+                    })
+                    .setNegativeButton(R.string.cancel, null)
+                    .show();
+        }
+
         private void refresh() {
             if (mSwitch == null) {
                 return;
@@ -197,7 +223,6 @@ public class LightingActivity extends PartsActivity {
                     : getString(R.string.lighting_switch_summary_off));
 
             final int target = Prefs.ledTarget(requireContext());
-            mTarget.setValue(Integer.toString(target));
             final String targetName = target == Led.TARGET_RIGHT
                     ? getString(R.string.lighting_target_right)
                     : target == Led.TARGET_LEFT
@@ -213,12 +238,14 @@ public class LightingActivity extends PartsActivity {
             mBrightness.setValue(Led.brightness());
 
             final String effect = on ? Led.mode() : Prefs.lastLedMode(requireContext());
-            mEffect.setValue(effect);
             mEffect.setSummary(Ui.ledModeName(requireContext(), effect));
 
             mSpeed.setValue(Led.speed());
+            // The daemon animates duo with led.speed too (5000/speed), so it
+            // gets the speed slider just like breathing and rainbow (#100).
             final boolean animated = Led.MODE_BREATHING.equals(effect)
-                    || Led.MODE_RAINBOW.equals(effect);
+                    || Led.MODE_RAINBOW.equals(effect)
+                    || Led.MODE_DUO.equals(effect);
             mSpeed.setEnabled(animated);
         }
     }

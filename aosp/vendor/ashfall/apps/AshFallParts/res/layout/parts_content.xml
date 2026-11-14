@@ -5,7 +5,7 @@
     android:id="@+id/parts_content"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="?android:attr/colorBackground"
+    android:background="@color/settingslib_materialColorSurfaceContainer"
     android:clipToPadding="false"
     android:clipChildren="false">
 

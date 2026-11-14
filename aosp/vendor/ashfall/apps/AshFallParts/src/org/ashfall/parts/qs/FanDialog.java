@@ -71,13 +71,6 @@ public class FanDialog extends Dialog {
         super.onCreate(savedInstanceState);
         requestWindowFeature(Window.FEATURE_NO_TITLE);
         setContentView(R.layout.dialog_fan);
-        final Window window = getWindow();
-        if (window != null) {
-            window.addFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND);
-            window.clearFlags(WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE);
-            Ui.fitDialog(window, findViewById(R.id.qs_fan_root),
-                    findViewById(R.id.qs_fan_scroll), 440);
-        }
 
         mList = findViewById(R.id.qs_fan_list);
         mSubtitle = findViewById(R.id.qs_fan_subtitle);
@@ -92,6 +85,16 @@ public class FanDialog extends Dialog {
 
         rebuild();
         updateSubtitle();
+
+        // Size only after the (runtime-built) preset rows exist, otherwise the
+        // window is measured with an empty list and stays tiny (#98).
+        final Window window = getWindow();
+        if (window != null) {
+            window.addFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND);
+            window.clearFlags(WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE);
+            Ui.fitDialog(window, findViewById(R.id.qs_fan_root),
+                    findViewById(R.id.qs_fan_scroll), 440, 0.60f);
+        }
     }
 
     @Override

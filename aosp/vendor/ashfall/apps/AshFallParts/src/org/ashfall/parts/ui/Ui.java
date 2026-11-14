@@ -167,32 +167,38 @@ public final class Ui {
     /**
      * Sizes a floating dialog so its footer always stays on screen.
      *
-     * <p>The root is measured with the requested width and at most 86 % of the
-     * display height.  If the natural height exceeds that, only the given
-     * {@code scroll} view is shrunk to the space left over by the header and
-     * footer, so the Done button can never be clipped into a corner.  Without
-     * this a {@code ScrollView} would grow to its full content height (it has
-     * no {@code maxHeight}) and push the footer out of the window.
+     * <p>The root is measured with the requested width and at most 85 % of the
+     * display height.  The final height is the natural content height clamped
+     * to [{@code minFraction} of the screen, 85 %], and the given {@code
+     * scroll} view is given whatever the header and footer leave over.  That
+     * keeps the Done/OK footer pinned and visible without scrolling (a plain
+     * {@code ScrollView} would otherwise grow to its full content height and
+     * push the footer out of the window), while a dialog with little content
+     * (e.g. the Fan QS preset list) still looks like a full dialog.
      */
     public static void fitDialog(@NonNull Window window, @NonNull View root,
-            @Nullable View scroll, int widthDp) {
-        final int width = dp(root.getContext(), widthDp);
+            @Nullable View scroll, int widthDp, float minFraction) {
+        final Context context = root.getContext();
+        final int width = dp(context, widthDp);
         final int screen = root.getResources().getDisplayMetrics().heightPixels;
-        final int maxHeight = Math.max(dp(root.getContext(), 160),
-                Math.round(screen * 0.86f));
+        final int minHeight = Math.max(dp(context, 160),
+                Math.round(screen * Math.max(0f, minFraction)));
+        final int maxHeight = Math.max(minHeight, Math.round(screen * 0.85f));
+
         root.measure(View.MeasureSpec.makeMeasureSpec(width, View.MeasureSpec.EXACTLY),
                 View.MeasureSpec.makeMeasureSpec(maxHeight, View.MeasureSpec.AT_MOST));
-        int height = root.getMeasuredHeight();
-        if (height > maxHeight && scroll != null) {
-            final int chrome = Math.max(0, height - scroll.getMeasuredHeight());
-            final int scrollHeight = Math.max(dp(root.getContext(), 96), maxHeight - chrome);
+        final int natural = root.getMeasuredHeight();
+        int target = Math.min(Math.max(natural, minHeight), maxHeight);
+        if (scroll != null && target != natural) {
+            final int chrome = Math.max(0, natural - scroll.getMeasuredHeight());
+            final int scrollHeight = Math.max(dp(context, 96), target - chrome);
             final ViewGroup.LayoutParams params = scroll.getLayoutParams();
             params.height = scrollHeight;
             scroll.setLayoutParams(params);
             root.measure(View.MeasureSpec.makeMeasureSpec(width, View.MeasureSpec.EXACTLY),
                     View.MeasureSpec.makeMeasureSpec(maxHeight, View.MeasureSpec.AT_MOST));
-            height = Math.min(root.getMeasuredHeight(), maxHeight);
+            target = Math.min(Math.max(root.getMeasuredHeight(), minHeight), maxHeight);
         }
-        window.setLayout(width, Math.min(height, maxHeight));
+        window.setLayout(width, target);
     }
 }

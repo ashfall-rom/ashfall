@@ -67,13 +67,6 @@ public class ColorPickerDialog extends Dialog {
         super.onCreate(savedInstanceState);
         requestWindowFeature(Window.FEATURE_NO_TITLE);
         setContentView(R.layout.dialog_colour_picker);
-        final Window window = getWindow();
-        if (window != null) {
-            window.addFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND);
-            window.clearFlags(WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE);
-            Ui.fitDialog(window, findViewById(R.id.picker_root),
-                    findViewById(R.id.picker_scroll), 480);
-        }
 
         mPicker = findViewById(R.id.picker_square);
         mHue = findViewById(R.id.picker_hue);
@@ -130,6 +123,16 @@ public class ColorPickerDialog extends Dialog {
         updateHueLabel();
 
         findViewById(R.id.picker_done).setOnClickListener(view -> dismiss());
+
+        // Size after the swatch row exists: measuring before it is inflated
+        // under-estimates the dialog and clips the Done footer (#98).
+        final Window window = getWindow();
+        if (window != null) {
+            window.addFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND);
+            window.clearFlags(WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE);
+            Ui.fitDialog(window, findViewById(R.id.picker_root),
+                    findViewById(R.id.picker_scroll), 480, 0f);
+        }
         mPicker.requestFocus();
     }
 
