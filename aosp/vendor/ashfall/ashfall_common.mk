@@ -98,8 +98,10 @@ include vendor/ashfall/rp5/rp5.mk
 # HAL is AIDL v2; the HIDL QTI extension is not the A17 audio path). ASHA is a
 # separate LE audio path and is already on by platform default, so it is left
 # unset instead of being turned on here. The explicit `=false` lines document
-# intent and keep a later product overlay or upstream default change from
-# silently turning LE Audio on.
+# intent and pin the value in this image's system build.prop. They are a pin,
+# not a hard guarantee: init loads /product build properties after /system and
+# /vendor, so a product property can still override them (see the A2DP offload
+# precedence note in docs/rp5/bluetooth.md).
 #
 # A2DP offload stays at the vendor default. If a speaker connects but stays
 # silent, follow the offload diagnostic in docs/rp5/bluetooth.md instead of

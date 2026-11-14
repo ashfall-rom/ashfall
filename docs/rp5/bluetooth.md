@@ -111,15 +111,18 @@ device `/product` is a symlink to `/system/product`, and our `system.img`
 carries the product files, so the stock product partition is not in the path.
 The system location stays correct even if a flashing flow keeps the stock
 product partition (`docs/flashing.md`), and it is equally valid for the future
-device build. (For reference, the existing `ro.ashfall.*` product properties
-land in `/system/product/etc/build.prop` and do load, so both locations work
-today.)
+device build. Note that a product `build.prop` loads *after* `/system` and
+`/vendor`, so product properties win ties; the existing `ro.ashfall.*` product
+properties land in `/system/product/etc/build.prop` and do load, so both
+locations work today.
 
 The properties cannot be changed at runtime on this device: `property_contexts`
-labels them `bluetooth_config_prop` (`system_vendor_config_prop`), which only
-`vendor_init`/`init_dev_config` can set at runtime; the Bluetooth domain has
-`get_prop` only (`system/sepolicy/private/domain.te`,
-`private/vendor_init.te`). With `ro.debuggable=0` there is no root, so
+labels them `bluetooth_config_prop`. `system/sepolicy/public/property.te:136`
+declares it `system_vendor_config_prop` ("Properties which can be written only by
+vendor_init"), and `private/vendor_init.te:282` is the only runtime
+`set_prop(vendor_init, bluetooth_config_prop)` rule (`init_dev_config.te` has
+none). `init` sets the boot defaults and the Bluetooth domain has `get_prop`
+only (`private/domain.te:518`). With `ro.debuggable=0` there is no root, so
 `adb shell setprop` is not an option and a rebuild is needed to test them.
 
 ## Verification
@@ -173,10 +176,10 @@ persist.bluetooth.a2dp_offload.cap=sbc-aac-aptx-aptxhd-ldac
 persist.vendor.qcom.bluetooth.a2dp_offload_cap=sbc-aptx-aptxtws-aptxhd-aac-ldac-aptxadaptiver2
 ```
 
-`dumpsys bluetooth_manager` reports `A2dpOffloadEnabled: true`. Do **not**
-disable offload pre-emptively: it is the vendor's normal path and software
-decoding uses more CPU. If the speaker connects but stays silent, check in this
-order:
+`dumpsys bluetooth_manager` prints `A2dpOffloadEnabled: true` (the
+`mA2dpOffloadEnabled` field in `AdapterProperties.java`). Do **not** disable
+offload pre-emptively: it is the vendor's normal path and software decoding uses
+more CPU. If the speaker connects but stays silent, check in this order:
 
 1. `dumpsys bluetooth_manager | grep -A25 'Audio mode:'` then look at the
    `A2DP:` block - is the speaker the active device?
@@ -184,10 +187,33 @@ order:
    vendor session errors?
 3. Only then build a test image with
    `persist.bluetooth.a2dp_offload.disabled=true` in
-   `PRODUCT_SYSTEM_PROPERTIES`. The property is labelled
-   `bluetooth_a2dp_offload_prop` and shell cannot set it, so this is a build (or
-   privileged/root) change. If software decoding fixes it, the vendor offload
-   path is the culprit and the prop can be kept with a comment.
+   **`PRODUCT_PRODUCT_PROPERTIES`**, not `PRODUCT_SYSTEM_PROPERTIES`.
+
+   Property precedence matters here. A17 `init` loads build-time properties in
+   partition order and later files override earlier ones
+   (`system/core/init/property_service.cpp`, `PropertyLoadBootDefaults`):
+   `/system/build.prop`, `/system_ext`, `/vendor/default.prop`,
+   `/vendor/build.prop`, `/vendor_dlkm`, `/odm*`, then finally
+   `/product/etc/build.prop`. The stock RP5 `/vendor/build.prop` already sets
+   `persist.bluetooth.a2dp_offload.disabled=false`
+   (`docs/stock/props-vendor.txt:155`), so a system property would be shadowed
+   by the vendor file and the test would silently still use offload. The product
+   file loads after vendor, so it wins.
+
+   In this GSI `PRODUCT_PRODUCT_PROPERTIES` lands in
+   `/system/product/etc/build.prop`; `/product` is a symlink to
+   `/system/product`, and init's product pass still reads it last. On a device
+   build with a real product partition the same `PRODUCT_PRODUCT_PROPERTIES`
+   lands in `/product/etc/build.prop` and has the same precedence.
+
+   The property is labelled `bluetooth_a2dp_offload_prop` and shell cannot set
+   it, so this is a build change (or a privileged/root `setprop`). If software
+   decoding fixes the silence, the vendor offload path is the culprit and the
+   product property can be kept with a comment.
+
+This precedence issue does not affect the profile fix: the stock vendor sets no
+`bluetooth.profile.*` keys (before state: `getprop | grep -c bluetooth.profile`
+= 0), so there is nothing in `/vendor/build.prop` to shadow them.
 
 ## Build request
 
