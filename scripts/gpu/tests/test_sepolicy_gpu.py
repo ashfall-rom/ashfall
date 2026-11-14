@@ -12,6 +12,7 @@ SPDX-License-Identifier: Apache-2.0
 
 from __future__ import annotations
 
+import re
 import sys
 import unittest
 from pathlib import Path
@@ -87,6 +88,24 @@ class GpuSepolicyTest(unittest.TestCase):
             # genfscon paths are literal (no regex escaping).
             literal = spec.replace("\\", "")
             self.assertIn(f"genfscon sysfs {literal} u:object_r:ashfall_gpu_sysfs:s0", genfs)
+
+    def test_daemon_paths_match_policy(self):
+        # Regression guard for issue #115: the daemon must open the resolved
+        # device paths (never /sys/class/...), and every path it opens must be
+        # covered by both the file_contexts relabel and the genfscon fallback.
+        header = (REPO / "aosp/vendor/ashfall/rp5/hw/gpu.h").read_text()
+        paths = re.findall(r'"(/sys/devices/[^"]+)"', header)
+        self.assertGreaterEqual(len(paths), 3)
+        for path in paths:
+            self.assertNotIn("/sys/class/", path)
+        entries = {spec.replace("\\", ""): context
+                   for spec, context in context_entries().items()}
+        genfs = (SEPOLICY / "genfs_contexts").read_text()
+        for path in paths:
+            self.assertEqual(entries.get(path), "u:object_r:ashfall_gpu_sysfs:s0")
+            literal = path[len("/sys"):]
+            self.assertIn(f"genfscon sysfs {literal} u:object_r:ashfall_gpu_sysfs:s0",
+                          genfs)
 
     def test_domain_allow(self):
         te = (SEPOLICY / "ashfall_hwd.te").read_text()

@@ -11,10 +11,12 @@
  * DTB keeps 670 as the top, so a 1000 MHz request is a logged no-op there) and
  * to 670 MHz while the phase-5 thermal throttle override is active.
  *
- * The devfreq nodes are labelled vendor_sysfs_kgsl by the stock vendor policy;
- * our system_ext policy relabels exactly the three attributes we use with
- * ashfall_gpu_sysfs (file_contexts exact paths + genfscon), see
- * aosp/vendor/ashfall/sepolicy/ashfall_hwd.te.
+ * The daemon opens the **resolved device paths below, never the
+ * `/sys/class/kgsl/...` symlinks**: following a class symlink needs
+ * `lnk_file read` on the vendor-private `vendor_sysfs_kgsl` label, which a
+ * system_ext domain cannot be granted (issue #115).  These resolved paths are
+ * the ones relabelled `ashfall_gpu_sysfs` in file_contexts/genfs_contexts; the
+ * `/sys/devices/soc/...` variants are a fallback for older kona DT layouts.
  *
  * SPDX-License-Identifier: Apache-2.0
  */
@@ -23,9 +25,20 @@
 
 #include <stdbool.h>
 
-#define GPU_DEVFREQ_MAX "/sys/class/kgsl/kgsl-3d0/devfreq/max_freq"
-#define GPU_DEVFREQ_MIN "/sys/class/kgsl/kgsl-3d0/devfreq/min_freq"
-#define GPU_AVAILABLE_FREQS "/sys/class/kgsl/kgsl-3d0/gpu_available_frequencies"
+#define GPU_DEVFREQ_MAX \
+    "/sys/devices/platform/soc/3d00000.qcom,kgsl-3d0/devfreq/3d00000.qcom,kgsl-3d0/max_freq"
+#define GPU_DEVFREQ_MIN \
+    "/sys/devices/platform/soc/3d00000.qcom,kgsl-3d0/devfreq/3d00000.qcom,kgsl-3d0/min_freq"
+#define GPU_AVAILABLE_FREQS \
+    "/sys/devices/platform/soc/3d00000.qcom,kgsl-3d0/kgsl/kgsl-3d0/gpu_available_frequencies"
+
+/* Older kona DT layouts expose the same nodes without the /platform level. */
+#define GPU_DEVFREQ_MAX_LEGACY \
+    "/sys/devices/soc/3d00000.qcom,kgsl-3d0/devfreq/3d00000.qcom,kgsl-3d0/max_freq"
+#define GPU_DEVFREQ_MIN_LEGACY \
+    "/sys/devices/soc/3d00000.qcom,kgsl-3d0/devfreq/3d00000.qcom,kgsl-3d0/min_freq"
+#define GPU_AVAILABLE_FREQS_LEGACY \
+    "/sys/devices/soc/3d00000.qcom,kgsl-3d0/kgsl/kgsl-3d0/gpu_available_frequencies"
 
 #define GPU_MIN_MHZ 305
 #define GPU_STOCK_MHZ 670
@@ -42,6 +55,10 @@ typedef struct {
     int applied_mhz;  /* actual cap as read back, -1 = unknown */
     int request_mhz;  /* last evaluated request (for change logging) */
     bool clamped;     /* the throttle override forced <= 670 MHz */
+    /* Resolved sysfs paths (NULL until the nodes exist; picked once). */
+    const char *freqs_path;
+    const char *max_path;
+    const char *min_path;
 } gpu_state;
 
 /* Reset all state.  Safe before the sysfs nodes exist (early boot). */

@@ -9,6 +9,11 @@
  * enforces the GPU cooling-device trips, so the cap is a ceiling, not a
  * thermal bypass.
  *
+ * The nodes are opened through their resolved device paths, not through
+ * /sys/class/kgsl: those class symlinks are labelled vendor_sysfs_kgsl and
+ * following them needs a vendor-private `lnk_file read` allow that system_ext
+ * policy cannot add (issue #115).
+ *
  * SPDX-License-Identifier: Apache-2.0
  */
 #include "gpu.h"
@@ -28,6 +33,24 @@ static int mhz_from_hz(int hz)
     return (hz + HZ_PER_MHZ / 2) / HZ_PER_MHZ;
 }
 
+/* The resolved device path, with the older /devices/soc layout as fallback.
+ * A class symlink (vendor_sysfs_kgsl:lnk_file) must never be traversed. */
+static const char *pick_path(const char *primary, const char *legacy)
+{
+    static bool logged_legacy;
+
+    if (primary && sysfs_present(primary))
+        return primary;
+    if (legacy && sysfs_present(legacy)) {
+        if (!logged_legacy) {
+            logged_legacy = true;
+            ah_logf(AH_LOG_INFO, "gpu: using fallback DT path %s", legacy);
+        }
+        return legacy;
+    }
+    return NULL;
+}
+
 static void sort_descending(int *values, int count)
 {
     for (int i = 1; i < count; i++) {
@@ -42,7 +65,7 @@ static void sort_descending(int *values, int count)
     }
 }
 
-/* Read /sys/class/kgsl/kgsl-3d0/gpu_available_frequencies ("670000000 ..."). */
+/* Read the resolved gpu_available_frequencies ("670000000 ..."). */
 static void gpu_load_freqs(gpu_state *state)
 {
     static bool logged_missing;
@@ -54,7 +77,16 @@ static void gpu_load_freqs(gpu_state *state)
 
     state->count = 0;
     state->available = false;
-    len = sysfs_read_str(GPU_AVAILABLE_FREQS, buf, sizeof(buf));
+    state->freqs_path = pick_path(GPU_AVAILABLE_FREQS, GPU_AVAILABLE_FREQS_LEGACY);
+    if (!state->freqs_path) {
+        if (!logged_missing) {
+            logged_missing = true;
+            ah_logf(AH_LOG_WARN, "gpu: %s unavailable; GPU cap stays at the "
+                    "boot default", GPU_AVAILABLE_FREQS);
+        }
+        return;
+    }
+    len = sysfs_read_str(state->freqs_path, buf, sizeof(buf));
     if (len <= 0) {
         if (!logged_missing) {
             logged_missing = true;
@@ -124,6 +156,7 @@ int gpu_apply(gpu_state *state, int request_mhz, bool throttle_override)
     int target_hz;
     int actual_mhz;
     int readback_hz = 0;
+    static bool logged_missing_max;
     bool was_applied;
     bool was_clamped;
     int was_mhz;
@@ -147,6 +180,21 @@ int gpu_apply(gpu_state *state, int request_mhz, bool throttle_override)
     was_request = state->request_mhz;
     state->request_mhz = request_mhz;
 
+    if (!state->max_path) {
+        state->max_path = pick_path(GPU_DEVFREQ_MAX, GPU_DEVFREQ_MAX_LEGACY);
+        state->min_path = pick_path(GPU_DEVFREQ_MIN, GPU_DEVFREQ_MIN_LEGACY);
+    }
+    if (!state->max_path) {
+        if (!logged_missing_max) {
+            logged_missing_max = true;
+            ah_logf(AH_LOG_WARN, "gpu: %s unavailable; cap not applied",
+                    GPU_DEVFREQ_MAX);
+        }
+        state->applied = false;
+        state->applied_mhz = -1;
+        return -1;
+    }
+
     request = request_mhz;
     if (request < GPU_MIN_MHZ)
         request = GPU_MIN_MHZ;
@@ -162,19 +210,20 @@ int gpu_apply(gpu_state *state, int request_mhz, bool throttle_override)
         return -1;
 
     if (!state->applied || state->applied_hz != target_hz) {
-        if (sysfs_write_int(GPU_DEVFREQ_MAX, target_hz) != 0) {
+        if (sysfs_write_int(state->max_path, target_hz) != 0) {
             /* devfreq refuses a max_freq below min_freq; the governor may have
              * raised min_freq above the requested cap.  Lower min_freq first
              * (never raise it), then retry once. */
             int min_hz = 0;
 
-            if (sysfs_read_int(GPU_DEVFREQ_MIN, &min_hz) == 0 &&
+            if (state->min_path &&
+                sysfs_read_int(state->min_path, &min_hz) == 0 &&
                 min_hz > target_hz) {
                 ah_logf(AH_LOG_INFO,
                         "gpu: min_freq %d Hz > cap %d Hz; lowering min_freq",
                         min_hz, target_hz);
-                sysfs_write_int(GPU_DEVFREQ_MIN, target_hz);
-                if (sysfs_write_int(GPU_DEVFREQ_MAX, target_hz) != 0)
+                sysfs_write_int(state->min_path, target_hz);
+                if (sysfs_write_int(state->max_path, target_hz) != 0)
                     return -1;
             } else {
                 return -1;
@@ -185,7 +234,7 @@ int gpu_apply(gpu_state *state, int request_mhz, bool throttle_override)
     }
 
     actual_mhz = mhz_from_hz(target_hz);
-    if (sysfs_read_int(GPU_DEVFREQ_MAX, &readback_hz) == 0 && readback_hz > 0)
+    if (sysfs_read_int(state->max_path, &readback_hz) == 0 && readback_hz > 0)
         actual_mhz = mhz_from_hz(readback_hz);
 
     /* The kernel clamps to a DT step; report the step, not the request. */

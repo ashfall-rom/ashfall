@@ -26,8 +26,8 @@ change**, and nothing else here replaces or patches a kernel module.
 | kernel | 5.15.148 GKI, stock `msm_kgsl.ko` / `gpucc-sm8250.ko` / `clk-qcom.ko` |
 | stock steps | `305 / 400 / 441.6 / 490 / 525 / 587 / 670 MHz` |
 | stock top | 670 MHz (boot frequency 305 MHz) |
-| devfreq cap node | `/sys/class/kgsl/kgsl-3d0/devfreq/max_freq` (0660 root:root) |
-| frequency list | `/sys/class/kgsl/kgsl-3d0/gpu_available_frequencies` (0444) |
+| devfreq cap node | `/sys/class/kgsl/kgsl-3d0/devfreq/max_freq` (0660 root:root) — the daemon opens the **resolved** path, see §4.2 |
+| frequency list | `/sys/class/kgsl/kgsl-3d0/gpu_available_frequencies` (0444) — resolved path, §4.2 |
 | live clock | `/sys/class/kgsl/kgsl-3d0/gpuclk` (0444) |
 | vendor_boot | `/var/home/epickitrolaz/ashfall/firmware/img/lun4_vendor_boot_a.bin` |
 
@@ -208,6 +208,8 @@ Behaviour:
   `persist.` property).
 * A request above the DT top (e.g. 1000 on the stock DTB) is a logged no-op:
   the cap stays at the top step and `gpu_oc` stays 0.
+* The daemon opens the *resolved* sysfs device paths (see §4.2), never the
+  `/sys/class/kgsl` symlinks.
 * If `devfreq/max_freq` is missing (early boot, or an image without the OC
   steps) the daemon retries every 5 s and never crashes.
 * While the phase-5 throttle override is active (`ashfall.perf.throttle_override`
@@ -249,6 +251,28 @@ Only these three attributes change label; `gpuclk`, `gpu_model`, `gpubusy`,
 their access.  Directory traversal needs no new rule: the stock vendor policy
 grants `search` on `vendor_sysfs_kgsl:dir` to every domain except
 `isolated_app`.
+
+Do **not** relabel the class symlinks (`/sys/class/kgsl/kgsl-3d0`,
+`.../devfreq`): they stay `vendor_sysfs_kgsl` for vendor consumers such as
+`thermal-engine`, which have `lnk_file` access there.
+
+### 4.2 Daemon paths (issue #115)
+
+Following a `/sys/class/kgsl` symlink needs `lnk_file read` on the symlink's
+`vendor_sysfs_kgsl` label, and system_ext cannot grant that.  `ashfall-hwd`
+therefore opens the resolved device paths directly (the same paths that
+`file_contexts`/`genfs_contexts` relabel):
+
+```
+/sys/devices/platform/soc/3d00000.qcom,kgsl-3d0/kgsl/kgsl-3d0/gpu_available_frequencies
+/sys/devices/platform/soc/3d00000.qcom,kgsl-3d0/devfreq/3d00000.qcom,kgsl-3d0/max_freq
+/sys/devices/platform/soc/3d00000.qcom,kgsl-3d0/devfreq/3d00000.qcom,kgsl-3d0/min_freq
+```
+
+Older kona layouts without the `/platform` level are a fallback
+(`/sys/devices/soc/...`); the daemon picks the first existing variant once and
+logs the fallback.  The `adb shell` examples below may keep the class path:
+`shell` has vendor lnk_file access, `ashfall-hwd` does not.
 
 ## 5. Flashing and recovery
 
@@ -315,11 +339,14 @@ Runtime (after the orchestrator flashes the OC vendor_boot):
 
 ```bash
 S=scripts/device/run.sh
+# shell resolves the class symlinks; the daemon uses the real paths (§4.2)
 $S adb -s 2f184581 shell 'cat /sys/class/kgsl/kgsl-3d0/gpu_available_frequencies'
 # 1000000000 940000000 850000000 765000000 670000000 587000000 525000000 \
 # 490000000 441600000 400000000 305000000
-$S adb -s 2f184581 shell 'ls -Z /sys/class/kgsl/kgsl-3d0/devfreq/max_freq \
-  /sys/class/kgsl/kgsl-3d0/gpu_available_frequencies'      # ashfall_gpu_sysfs
+$S adb -s 2f184581 shell 'ls -Z /sys/devices/platform/soc/3d00000.qcom,kgsl-3d0/\
+devfreq/3d00000.qcom,kgsl-3d0/max_freq \
+/sys/devices/platform/soc/3d00000.qcom,kgsl-3d0/kgsl/kgsl-3d0/gpu_available_frequencies'
+# ashfall_gpu_sysfs
 $S adb -s 2f184581 shell getprop ashfall.status.perf.gpu_max_mhz   # 670 (default)
 $S adb -s 2f184581 shell getprop ashfall.status.perf.gpu_oc        # 0
 $S adb -s 2f184581 shell 'cat /sys/class/kgsl/kgsl-3d0/devfreq/max_freq'  # 670000000
@@ -354,7 +381,8 @@ fails, the bootloader still has the other slot's stock vendor_boot and
 | `gpu_available_frequencies` still ends at 670 | the stock vendor_boot is active (flash did not take) or the inactive slot booted; check `getprop ro.boot.slot_suffix` and re-run the flash |
 | 1000 MHz request, cap stays 670 | expected on the stock DTB; check `ashfall.status.perf.gpu_oc` (0 = no OC step) and the DT table |
 | `avc: denied ... ashfall_hwd ... ashfall_gpu_sysfs` | policy build did not pick up the files; rebuild system.img (orchestrator) and check the merged `system_ext_file_contexts`/`system_ext_sepolicy.cil` |
-| `avc: denied ... vendor_sysfs_kgsl` | the exact-path file_contexts entry lost; `ls -Z` the three nodes, rebuild system.img |
+| `avc: denied ... vendor_sysfs_kgsl ... lnk_file` for `ashfall-hwd` | the daemon is following a class symlink (stale binary?); it must open the resolved paths (§4.2) |
+| `avc: denied ... ashfall_gpu_sysfs` (file) | the exact-path file_contexts entry lost; `ls -Z` the three resolved nodes, rebuild system.img |
 | `fastboot: error: Failed to write` / `unknown partition` | bootloader mode required (not fastbootd); re-run `ensure_bootloader` by starting from Android |
 | device bootloops after the flash | boot recovery, run `scripts/device/logs.sh`, then `scripts/device/flash-vendor-boot.sh --stock` |
 | 1000 MHz resets the GPU (fault/hang) | use 940 MHz (`persist.ashfall.perf.gpu_max_mhz=940`); document the unit's limit |
