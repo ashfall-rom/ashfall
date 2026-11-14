@@ -1,0 +1,26 @@
+// AshFall RP5 hardware daemon (fan + stick lighting).
+//
+// One small, dependency-free daemon owns the fan and LED sysfs nodes; the
+// AshFall Parts app only writes persist.ashfall.* properties.  See
+// docs/phase5.md and docs/rp5/hw.md.
+cc_binary {
+    name: "ashfall-hwd",
+    srcs: [
+        "ashfall_hwd.c",
+        "fan.c",
+        "led.c",
+        "plat.c",
+        "thermal.c",
+    ],
+    cflags: [
+        "-Wall",
+        "-Wextra",
+        "-Wno-unused-parameter",
+    ],
+    shared_libs: [
+        "liblog",
+    ],
+    init_rc: ["ashfall-hwd.rc"],
+    compile_multilib: "64",
+    vendor: false,
+}

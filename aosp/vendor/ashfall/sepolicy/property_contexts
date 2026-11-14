@@ -1,0 +1,6 @@
+# AshFall RP5 property contexts (docs/phase5.md §2).
+#
+# The AshFall Parts app is the only writer of persist.ashfall.*; ashfall_hwd is
+# the only writer of ashfall.status.*.
+persist.ashfall.          u:object_r:ashfall_prop:s0
+ashfall.status.           u:object_r:ashfall_status_prop:s0

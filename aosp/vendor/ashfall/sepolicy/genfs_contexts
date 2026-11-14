@@ -1,0 +1,22 @@
+# AshFall RP5 sysfs types (docs/phase5.md §2.1/§2.2, docs/rp5/hw.md).
+#
+# The fan and LED drivers create plain sysfs class devices, so their attributes
+# are labelled `sysfs` (generic) by default.  A coredomain daemon may not touch
+# generic sysfs at all (private/coredomain.te:
+# neverallow { coredomain ... } sysfs:file no_rw_file_perms, which covers open,
+# read and write), so both trees get a dedicated type here.
+#
+# All paths below were verified on the RP5 (build 20261113-213314) with
+# `readlink -f` / the avc audit path; see docs/rp5/hw.md §5.
+
+# Fan controller (gpio5_pwm.ko).  The driver registers class-level attributes,
+# so the files live directly in the class directory - there is no device dir:
+#   /sys/class/gpio5_pwm2/{state,duty,speed,period,thermal,en_backlight,...}
+genfscon sysfs /class/gpio5_pwm2     u:object_r:ashfall_fan_sysfs:s0
+
+# Stick LED controllers (sn3112l / sn3112r).  Each class has one device named
+# "led"; `/sys/class/sn3112{l,r}/led` are symlinks to these device dirs, which
+# is where enable/brightness/breath actually live:
+#   readlink -f /sys/class/sn3112l/led -> /sys/devices/virtual/sn3112l/led
+genfscon sysfs /devices/virtual/sn3112l  u:object_r:ashfall_led_sysfs:s0
+genfscon sysfs /devices/virtual/sn3112r  u:object_r:ashfall_led_sysfs:s0
