@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- AshFall icon draft (issue #85). Clean-room, original design.
+     B - Three-blade: Three wider swept blades around the same hub. More open than A and a little lighter in a Settings row.
+     Preview only: not wired into the app. 24dp, single colour,
+     tintable. 960 viewport; 80 = 2dp where stroked. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="960"
+    android:viewportHeight="960"
+    android:tint="?android:attr/colorControlNormal">
+    <path
+        android:fillColor="@android:color/white"
+        android:pathData="M559.95,482.79C638.00,480.00 732.56,582.04 761.87,670.13Q675.01,792.08 527.32,816.69C571.39,731.09 580.48,608.60 522.39,547.84A80.00,80.00 0 0 0 559.95,482.79Z" />
+    <path
+        android:fillColor="@android:color/white"
+        android:pathData="M437.61,547.84C401.00,616.83 265.35,647.71 174.41,629.05Q112.22,492.84 164.76,352.63C216.86,433.60 318.39,502.71 400.05,482.79A80.00,80.00 0 0 0 437.61,547.84Z" />
+    <path
+        android:fillColor="@android:color/white"
+        android:pathData="M442.44,409.36C401.00,343.17 442.09,210.25 503.72,140.83Q652.77,155.08 747.92,270.68C651.75,275.31 541.14,328.68 517.56,409.36A80.00,80.00 0 0 0 442.44,409.36Z" />
+    <path
+        android:fillColor="@android:color/white"
+        android:pathData="M398.00,480.00C398.00,434.71 434.71,398.00 480.00,398.00C525.29,398.00 562.00,434.71 562.00,480.00C562.00,525.29 525.29,562.00 480.00,562.00C434.71,562.00 398.00,525.29 398.00,480.00Z" />
+</vector>

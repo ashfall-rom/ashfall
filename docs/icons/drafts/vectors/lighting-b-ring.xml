@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- AshFall icon draft (issue #85). Clean-room, original design.
+     B - Glow ring: One RGB stick ring with a sparkle. Chosen by the user; reads as a lit ring rather than generic brightness and echoes the RP5 hardware.
+     Preview only: not wired into the app. 24dp, single colour,
+     tintable. 960 viewport; 80 = 2dp where stroked. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="960"
+    android:viewportHeight="960"
+    android:tint="?android:attr/colorControlNormal">
+    <path
+        android:fillColor="@android:color/transparent"
+        android:strokeColor="@android:color/white"
+        android:strokeWidth="80"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:pathData="M212.00,512.00C212.00,386.08 314.08,284.00 440.00,284.00C565.92,284.00 668.00,386.08 668.00,512.00C668.00,637.92 565.92,740.00 440.00,740.00C314.08,740.00 212.00,637.92 212.00,512.00Z" />
+    <path
+        android:fillColor="@android:color/white"
+        android:pathData="M756.00,136.00Q767.88,232.12 864.00,244.00Q767.88,255.88 756.00,352.00Q744.12,255.88 648.00,244.00Q744.12,232.12 756.00,136.00Z" />
+</vector>
