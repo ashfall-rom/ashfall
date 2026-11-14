@@ -1,0 +1,58 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- AshFall icon draft (issue #85). Clean-room, original design.
+     C - Airflow: A fan with two airflow strokes. Best fit for the QS tile, where it reads as 'cooling active' at a glance.
+     Preview only: not wired into the app. 24dp, single colour,
+     tintable. Geometry matches the LineageOS 24 Settings weight
+     (960 viewport, 80 = 2dp stroke). -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="960"
+    android:viewportHeight="960"
+    android:tint="?android:attr/colorControlNormal">
+    <path
+        android:fillColor="@android:color/transparent"
+        android:strokeColor="@android:color/white"
+        android:strokeWidth="80"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:pathData="M170.00,480.00C170.00,364.02 264.02,270.00 380.00,270.00C495.98,270.00 590.00,364.02 590.00,480.00C590.00,595.98 495.98,690.00 380.00,690.00C264.02,690.00 170.00,595.98 170.00,480.00Z" />
+    <path
+        android:fillColor="@android:color/transparent"
+        android:strokeColor="@android:color/white"
+        android:strokeWidth="80"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:pathData="M380.00,390.00C394.19,357.32 472.11,343.95 523.35,379.62" />
+    <path
+        android:fillColor="@android:color/transparent"
+        android:strokeColor="@android:color/white"
+        android:strokeWidth="80"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:pathData="M457.94,525.00C479.15,553.63 451.77,627.80 395.25,654.33" />
+    <path
+        android:fillColor="@android:color/transparent"
+        android:strokeColor="@android:color/white"
+        android:strokeWidth="80"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:pathData="M302.06,525.00C266.66,529.05 216.12,468.25 221.40,406.04" />
+    <path
+        android:fillColor="@android:color/white"
+        android:pathData="M322.00,480.00C322.00,447.97 347.97,422.00 380.00,422.00C412.03,422.00 438.00,447.97 438.00,480.00C438.00,512.03 412.03,538.00 380.00,538.00C347.97,538.00 322.00,512.03 322.00,480.00Z" />
+    <path
+        android:fillColor="@android:color/transparent"
+        android:strokeColor="@android:color/white"
+        android:strokeWidth="80"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:pathData="M700,390C750,390 770,380 810,400" />
+    <path
+        android:fillColor="@android:color/transparent"
+        android:strokeColor="@android:color/white"
+        android:strokeWidth="80"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:pathData="M700,570C750,570 770,580 810,560" />
+</vector>

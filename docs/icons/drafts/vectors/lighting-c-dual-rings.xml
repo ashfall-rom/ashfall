@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- AshFall icon draft (issue #85). Clean-room, original design.
+     C - Left/right rings: Both stick rings plus a sparkle. The most product-specific option for the Settings row; still legible at 24dp.
+     Preview only: not wired into the app. 24dp, single colour,
+     tintable. Geometry matches the LineageOS 24 Settings weight
+     (960 viewport, 80 = 2dp stroke). -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="960"
+    android:viewportHeight="960"
+    android:tint="?android:attr/colorControlNormal">
+    <path
+        android:fillColor="@android:color/transparent"
+        android:strokeColor="@android:color/white"
+        android:strokeWidth="80"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:pathData="M128.00,566.00C128.00,493.10 187.10,434.00 260.00,434.00C332.90,434.00 392.00,493.10 392.00,566.00C392.00,638.90 332.90,698.00 260.00,698.00C187.10,698.00 128.00,638.90 128.00,566.00Z" />
+    <path
+        android:fillColor="@android:color/transparent"
+        android:strokeColor="@android:color/white"
+        android:strokeWidth="80"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:pathData="M568.00,566.00C568.00,493.10 627.10,434.00 700.00,434.00C772.90,434.00 832.00,493.10 832.00,566.00C832.00,638.90 772.90,698.00 700.00,698.00C627.10,698.00 568.00,638.90 568.00,566.00Z" />
+    <path
+        android:fillColor="@android:color/white"
+        android:pathData="M480.00,180.00Q489.90,260.10 570.00,270.00Q489.90,279.90 480.00,360.00Q470.10,279.90 390.00,270.00Q470.10,260.10 480.00,180.00Z" />
+</vector>
