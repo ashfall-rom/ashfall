@@ -135,10 +135,15 @@ public class PresetActivity extends PartsActivity {
                 });
                 mCategory.addPreference(row);
             }
+            // Same ordering caveat as the Fan page: these rows are reused, so
+            // reset their order before re-adding or they sort above the preset
+            // rows that were just created.
             if (mAddRow != null) {
+                mAddRow.setOrder(Preference.DEFAULT_ORDER);
                 mCategory.addPreference(mAddRow);
             }
             if (mResetRow != null) {
+                mResetRow.setOrder(Preference.DEFAULT_ORDER);
                 mCategory.addPreference(mResetRow);
             }
         }

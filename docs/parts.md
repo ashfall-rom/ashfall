@@ -441,6 +441,50 @@ Screenshots (all 1920×1080; light and dark):
   page and dialog was re-checked for AppCompat/Material widgets and only
   framework widgets remain in Settings-themed layouts.
 
+### 6.5 Real-device verification (RP5, A17 build 20261114-002243)
+
+Tested on the RP5 (serial `2f184581`, `ro.build.version.sdk=37`, no root) with
+`integ/phase5` = `4826f21` + `a3aef7c` + `3d9ee62` and the native daemons
+(#62).  Gamepad input was injected on the real evdev node
+(`/dev/input/event4`, “AshFall RP5 Gamepad”) with `sendevent`, never
+`input keyevent`; `am start` used `--display 0`.  All checks below passed
+except where noted.
+
+| Area | Result |
+|---|---|
+| Settings homepage | **Handheld — Fan, lighting, controller** row appears at the bottom of the homepage (after Accessibility) with the tinted icon; tapping opens `HandheldActivity` in the Settings task. |
+| All pages | Handheld, Fan, Lighting and Controller open on A17 without `InflateException` (the `SwitchCompat` crash is gone; the framework `Switch` renders). |
+| Fan live status | Temperature/output/RPM/safety update every 2 s (`43 °C`, `0 %`, `0 rpm` in Off). |
+| Fan presets | Built-ins render Off/Quiet/Balanced/Max/Smart. Activating Quiet wrote `mode=quiet, preset=builtin.quiet` and the daemon wrote `state=1, duty=4920` (spin-up kick). User preset `user.33d52efd` was created, renamed, duplicated, activated, and deleted; deleting the active preset remapped `persist.ashfall.fan.preset` to `builtin.smart`. |
+| Curve editor | Opened for the active user preset and for `builtin.smart`; real D-pad HAT events changed points, and the changes reached `persist.ashfall.fan.curve` (`46:1…` then `47:2…`). With an empty/derived active id this covers #76 on hardware. Reset restored the default curve. |
+| Lighting | Main switch off/on wrote `led.mode=off/static`; target Left wrote `sync=0` and `color_left=2979FF`; Both wrote `sync=1` with both colours; brightness 60/79 and breathing speed 8 applied. Restored to `static`, `FF2020` both, `sync=1`, `brightness=60`, `speed=5`, `screen_off=off`. |
+| Controller tester | Real stick and trigger input displayed (`Left 0.61 -0.31`, `R2 0.78`, pressed A); the daemon `RAW ON` values were shown (`raw lx 140 ly 25 …`) and Select toggled the raw overlay. |
+| Calibration | Wizard opens, captures the release/rotate/trigger phases and validates them against the **raw MCU** stream; injected uinput events do not move the raw sticks, so the review step was not reached. Cancelled at the retry step, which leaves the calibration untouched: the page still reports `Source: default` and no `SET CAL` was sent. |
+| Deadzones | Inner 15 % then 5 %, outer 10 % then 3 % reached `persist.ashfall.pad.*`; left at 5/3/3. |
+| QS tiles | Both tiles are in the panel (`Lighting`, active preset name). Dialogs open; the Fan header showed **Smart (default) · 59 °C** in the default state and **Off · 44 °C** after the final reset; long-press on the Fan tile opens the Fan page. |
+| Gamepad A/B/D-pad | A (304) selected the focused Quiet row on the Fan page and in the QS Fan dialog, and selected Right in the QS Lighting target group; B (305) left the Curve page, the tester and the QS dialogs; HAT events moved focus and edited curve points. This is the `Generic.kcm` fallback path, not `DPAD_CENTER`/`BACK`. |
+| Light/dark | Dark-mode Fan page opens and renders (device screenshot captured); night mode restored to off. |
+
+Found on hardware and fixed in `feat/parts-61` (not in the tested build):
+
+* **Preference order after a rebuild.** `FanFragment` and `PresetActivity`
+  reuse the Edit/Curve and New/Reset `Preference` objects.  After an
+  activation/create, `PreferenceCategory.addPreference()` kept their old order
+  values, so they sorted **above** the freshly added preset rows (observed:
+  “Reset presets” above “Off”; “Curve” above the preset list).  Both fragments
+  now reset those rows to `Preference.DEFAULT_ORDER` before re-adding them, so
+  the rows stay after the preset list.
+* **Curve editor initial focus.** On A17 the window/toolbar could take focus
+  during the first layout pass, so the first D-pad press moved focus instead of
+  a curve point until the graph was tapped.  `CurveActivity` now re-requests
+  focus with `mEditor.post()`.
+
+Final device state: `persist.ashfall.fan.mode=off`,
+`persist.ashfall.fan.preset=builtin.off`, default curve; LED `static`
+`FF2020`/`FF2020`, `sync=1`, `brightness=60`, `speed=5`, `screen_off=off`;
+deadzones 5/3/3; calibration source `default` (unchanged); both daemons
+running; fan hardware `state=0 duty=0`.
+
 ## 7. Build integration
 
 `aosp/vendor/ashfall/apps.mk` gets a separate block (kept apart from the

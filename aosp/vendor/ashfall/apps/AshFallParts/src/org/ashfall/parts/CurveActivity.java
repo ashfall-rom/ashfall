@@ -111,7 +111,11 @@ public class CurveActivity extends PartsActivity {
         reset.setOnClickListener(view -> mEditor.reset());
 
         updateLive(Fan.temperatureCelsius());
+        // The window/toolbar can take focus during the first layout pass on
+        // A17, which would make the first D-pad press move focus instead of a
+        // curve point.  Request again once the view is attached.
         mEditor.requestFocus();
+        mEditor.post(mEditor::requestFocus);
     }
 
     @Override

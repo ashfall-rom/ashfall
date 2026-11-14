@@ -229,6 +229,13 @@ public class FanFragment extends PreferenceFragmentCompat {
                 });
                 mPresetCategory.addPreference(preference);
             }
+            // The reuse of these rows across rebuilds keeps their old order,
+            // which would otherwise sort them above the freshly added preset
+            // rows (the category appends in order of addition).  Reset to
+            // DEFAULT_ORDER so addPreference assigns a new, higher order and
+            // they stay after the preset list, as designed.
+            mEditRow.setOrder(Preference.DEFAULT_ORDER);
+            mCurveRow.setOrder(Preference.DEFAULT_ORDER);
             mPresetCategory.addPreference(mEditRow);
             mPresetCategory.addPreference(mCurveRow);
         } finally {
