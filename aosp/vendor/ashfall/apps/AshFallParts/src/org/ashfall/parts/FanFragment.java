@@ -380,6 +380,12 @@ public class FanFragment extends PreferenceFragmentCompat {
         }
         mAdvancedCategory = new PreferenceCategory(requireContext());
         mAdvancedCategory.setTitle(R.string.fan_advanced_category);
+        // Attach the category to the screen *before* adding children: a
+        // detached PreferenceGroup has no PreferenceManager, and
+        // PreferenceGroup.addPreference() -> getNextId() dereferences it
+        // (P0 regression #96).  This also keeps the category just above the
+        // version row, because it is added before the version/footer rows.
+        mScreen.addPreference(mAdvancedCategory);
         mPermanent = new TogglePreference(requireContext());
         mPermanent.setKey("fan_throttle_permanent");
         mPermanent.setTitle(R.string.fan_advanced_permanent_title);
@@ -394,7 +400,6 @@ public class FanFragment extends PreferenceFragmentCompat {
             refreshToggles();
         });
         mAdvancedCategory.addPreference(mPermanent);
-        mScreen.addPreference(mAdvancedCategory);
         refreshToggles();
     }
 
