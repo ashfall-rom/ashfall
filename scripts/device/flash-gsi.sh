@@ -44,6 +44,13 @@
 # Notes
 #   * Never uses `fastboot getvar all` (can wedge the bootloader, guide §8.1);
 #     individual getvars are retried because this ABL is flaky under load.
+#   * Bootloader-side writes (--wipe's erase userdata/metadata and set-active)
+#     run as ONE detached fastboot process with a log + exit file, never as a
+#     new fastboot process per step: this ABL wedges when a session opens
+#     between transfers or after a getvar burst (issue #54).
+#   * `erase userdata` is ~351 s after a physical super flash, but this script
+#     only rewrites `system` inside super, so it stays in the seconds range
+#     (0.09 s observed 2026-11-13).
 #   * The RP5 ABL rejects `fastboot reboot fastboot` from the bootloader
 #     (`FAILED (remote: 'unknown command')`, 2026-11-13). fastbootd is reached
 #     via stock recovery instead: `fastboot reboot recovery` -> wait for adb
@@ -402,10 +409,10 @@ print_plan() {
     printf '  - fastboot --slot %s flash vbmeta %s (already flags=3)\n' "$SLOT" "$vb"
   fi
   if ((WIPE)); then
-    printf '  - fastboot erase userdata  (observed 0.09 s on 2026-11-13)\n'
+    printf '  - fastboot erase userdata  (0.09 s here; ~351 s only after a physical super flash)\n'
     printf '  - fastboot erase metadata\n'
   fi
-  printf '  - fastboot set-active %s (only if it is not active already)\n' "$SLOT"
+  printf '  - fastboot set_active %s (only if it is not active already)\n' "$SLOT"
   if ((${#BUDGET_LINES[@]})); then
     printf '\nspace budget:\n'
     printf '  %s\n' "${BUDGET_LINES[@]}"
@@ -597,37 +604,50 @@ ok "vbmeta flashed (verification disabled: required for a GSI)"
 # --- 5./6. wipe + active slot (in the bootloader, like guide §8.3) -----------
 # fastbootd only knows logical partitions; erasing userdata/metadata and
 # changing the active slot belong to the bootloader's fastboot, so go back.
-if ((WIPE)) || [[ $SLOT != "${CUR_SLOT:-}" ]]; then
+# Every bootloader-side write goes into ONE fastboot command line (issue #54);
+# getvars happen before it, never between transfers.
+boot_actions=()
+if ((WIPE)); then boot_actions+=(erase userdata erase metadata); fi
+need_bootloader=0
+if ((WIPE)); then need_bootloader=1; fi
+if [[ $SLOT != "${CUR_SLOT:-}" ]]; then need_bootloader=1; fi
+
+if ((need_bootloader)); then
   step "reboot fastbootd -> bootloader" reboot bootloader
   for ((i = 0; i < 60; i++)); do [[ $(dev_mode) == fastboot ]] && break; sleep 2; done
   [[ $(dev_mode) == fastboot ]] || die "device did not return to the bootloader"
   ok "back in the bootloader"
-fi
 
-if ((WIPE)); then
-  # Erasing userdata/metadata is explicitly allowed (never *flashing* them).
-  step "erase userdata (seconds on this device)" erase userdata
-  step "erase metadata (vold regenerates encryption keys)" erase metadata
-  ok "userdata + metadata erased"
-else
-  log "keeping userdata (use --wipe for a clean first boot; /data from the stock ROM is usually not readable by the GSI)"
-fi
-
-cur=$(dev_fb_value current-slot)
-if [[ $cur != a && $cur != b ]]; then
-  warn "unexpected current-slot '$cur' from fastbootd; leaving the active slot untouched"
-  cur=''
-fi
-if [[ $cur == "$SLOT" ]]; then
-  ok "slot $SLOT already active"
-elif [[ -z $cur ]]; then
-  log "active slot not changeable now; flashing slot $SLOT only"
-else
-  if step "set active slot $SLOT" set-active "$SLOT"; then
-    ok "slot $SLOT marked active (takes effect on the next boot)"
-  else
-    warn "could not set the active slot; from the bootloader run: fastboot set-active $SLOT"
+  cur=${CUR_SLOT:-}
+  if [[ -z $cur ]]; then cur=$(dev_fb_value current-slot); fi
+  if [[ $cur != a && $cur != b ]]; then
+    warn "unexpected current-slot '$cur'; leaving the active slot untouched"
+    cur=''
   fi
+  set_active=0
+  if [[ $cur == "$SLOT" ]]; then
+    ok "slot $SLOT already active"
+  elif [[ -z $cur ]]; then
+    log "active slot unknown; flashing slot $SLOT only"
+  else
+    boot_actions+=(set_active "$SLOT")
+    set_active=1
+  fi
+
+  if ((${#boot_actions[@]})); then
+    printf '\n==> bootloader batch (one fastboot process, issue #54):'
+    printf ' %q' "${boot_actions[@]}"
+    printf '\n'
+    if ! dev_fastboot_batch "flash-gsi-bootloader-$TS" "${boot_actions[@]}"; then
+      die "bootloader batch (erase/set-active) failed; device left in the bootloader (see log above)"
+    fi
+    if ((WIPE)); then ok "userdata + metadata erased"; fi
+    if ((set_active)); then ok "slot $SLOT marked active (takes effect on the next boot)"; fi
+  else
+    log "nothing to do in the bootloader"
+  fi
+else
+  log "keeping userdata (use --wipe for a clean first boot; /data from the stock ROM is usually not readable by the GSI); slot $SLOT already active"
 fi
 
 # --- 7. report ---------------------------------------------------------------
