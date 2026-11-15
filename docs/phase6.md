@@ -305,18 +305,22 @@ second timer and no second sysfs reader.
 
 | Property | Type | Meaning |
 |---|---|---|
-| `ashfall.status.power.current_ma` | int | signed/rectified magnitude as measured; `-1` unknown |
-| `ashfall.status.power.voltage_mv` | int | battery voltage; `-1` unknown |
-| `ashfall.status.power.level` | int | 0..100; `-1` unknown |
-| `ashfall.status.power.charging` | int | `0`/`1`/`-1` |
-| `ashfall.status.power.charge_mah` | int | remaining charge; `-1` when the node is missing |
-| `ashfall.status.power.capacity_mah` | int | design capacity; `-1` when missing |
-| `ashfall.status.perf.power_mw` | int | `current_ma * voltage_mv / 1000` from the **same** read; `-1` while charging and when unknown |
 | `ashfall.status.perf.cpu_mhz_silver/gold/prime` | int | effective `scaling_cur_freq`; `-1` unavailable |
 | `ashfall.status.perf.gpu_mhz` | int | effective kgsl clock; `-1` unavailable |
 | `ashfall.status.mem.zram_mb` / `swap_mb` | int | applied sizes; `0` off; `-1` unavailable |
 | `ashfall.status.mem.zram_used_kb` / `zram_saved_kb` | int | `mm_stat`; `-1` unavailable |
 | `ashfall.status.mem.swap_total_kb` / `swap_used_kb` | int | `/proc/meminfo`; `-1` unavailable |
+
+Battery telemetry is **not** in `ashfall-hwd`: a coredomain may not read
+`sysfs_batteryinfo` (`system/sepolicy/private/domain.te` neverallow) and the RP5
+battery attributes are `vendor_sysfs_battery_supply`, a vendor type system_ext
+cannot reference; relabelling them would break the vendor health HAL. Each
+consumer samples `BatteryManager` in its own process instead (SystemUI for the
+status bar, Settings for the read-out, AshFall Parts for the Power graph):
+`current_ma = abs(BATTERY_PROPERTY_CURRENT_NOW)/1000`, `voltage_mv` from the
+sticky `ACTION_BATTERY_CHANGED` `EXTRA_VOLTAGE`, `power_mw =
+abs(current_ua) * voltage_mv / 1e6` and `-1` while charging. No process reads
+battery sysfs, and no new property carries it.
 
 Rules: invalid/missing values are `-1`, never fabricated; a rejected request is
 clamped in the daemon, logged once and the *effective* value is published; the
