@@ -11,7 +11,6 @@
 #include "led.h"
 #include "mem.h"
 #include "plat.h"
-#include "power.h"
 #include "thermal.h"
 #include "throttle.h"
 
@@ -162,7 +161,6 @@ static bool file_is(const char *relative, const char *expected)
 }
 
 #define FAKE_CPUFREQ "/sys/devices/system/cpu/cpufreq"
-#define FAKE_POWER_SUPPLY "/sys/class/power_supply"
 
 static void make_cpu_policy(const char *name, const char *cpus,
                             const char *freqs, const char *cur_khz)
@@ -219,19 +217,6 @@ static int make_sysfs(void)
                "670000000 587000000 525000000 490000000 441600000 400000000 "
                "305000000\n");
     write_file(FAKE_KGSL_DEV "/kgsl/kgsl-3d0/gpuclk", "305000000\n");
-
-    /* Battery telemetry (phase 6, #124/#137): `battery` carries current,
-     * voltage, level and status; `bms` carries the charge counters. */
-    mkdir_p(FAKE_POWER_SUPPLY "/battery");
-    write_file(FAKE_POWER_SUPPLY "/battery/type", "Battery\n");
-    write_file(FAKE_POWER_SUPPLY "/battery/current_now", "850000\n");
-    write_file(FAKE_POWER_SUPPLY "/battery/voltage_now", "3850000\n");
-    write_file(FAKE_POWER_SUPPLY "/battery/capacity", "72\n");
-    write_file(FAKE_POWER_SUPPLY "/battery/status", "Discharging\n");
-    mkdir_p(FAKE_POWER_SUPPLY "/bms");
-    write_file(FAKE_POWER_SUPPLY "/bms/type", "Battery\n");
-    write_file(FAKE_POWER_SUPPLY "/bms/charge_counter", "4100000\n");
-    write_file(FAKE_POWER_SUPPLY "/bms/charge_full_design", "5120000\n");
 
     /* CPU frequency policies (phase 6, #124), kona layout and steps. */
     make_cpu_policy("policy0", "0 1 2 3\n",
@@ -1442,82 +1427,6 @@ static void test_gpu_clock(void)
     write_file(gpuclk, "670000000\n");
 }
 
-/* --- phase 6: battery/power telemetry (#124 + #137) ---------------------- */
-
-static void test_power(void)
-{
-    power_state power;
-    power_sample sample;
-
-    power_state_init(&power);
-    CHECK_EQ(power_sample_read(&power, &sample), 0);
-    CHECK_EQ(sample.current_ma, 850);
-    CHECK_EQ(sample.voltage_mv, 3850);
-    CHECK_EQ(sample.level, 72);
-    CHECK_EQ(sample.charging, 0);
-    CHECK_EQ(sample.charge_mah, 4100);
-    CHECK_EQ(sample.capacity_mah, 5120);
-    CHECK_EQ(sample.power_mw, 3272); /* 850 mA * 3850 mV / 1000 */
-
-    /* Charging: the battery-side wattage is meaningless -> -1. */
-    write_file(FAKE_POWER_SUPPLY "/battery/status", "Charging\n");
-    CHECK_EQ(power_sample_read(&power, &sample), 0);
-    CHECK_EQ(sample.charging, 1);
-    CHECK_EQ(sample.power_mw, -1);
-
-    /* 0, -1 and an implausible current are unknown, never a number. */
-    write_file(FAKE_POWER_SUPPLY "/battery/status", "Discharging\n");
-    write_file(FAKE_POWER_SUPPLY "/battery/current_now", "0\n");
-    CHECK_EQ(power_sample_read(&power, &sample), 0);
-    CHECK_EQ(sample.current_ma, -1);
-    CHECK_EQ(sample.power_mw, -1);
-    write_file(FAKE_POWER_SUPPLY "/battery/current_now", "-1\n");
-    CHECK_EQ(power_sample_read(&power, &sample), 0);
-    CHECK_EQ(sample.current_ma, -1);
-    write_file(FAKE_POWER_SUPPLY "/battery/current_now", "25000000\n");
-    CHECK_EQ(power_sample_read(&power, &sample), 0);
-    CHECK_EQ(sample.current_ma, -1);
-    CHECK_EQ(sample.power_mw, -1);
-    /* Out-of-range voltage (120 mV) is unknown too. */
-    write_file(FAKE_POWER_SUPPLY "/battery/current_now", "850000\n");
-    write_file(FAKE_POWER_SUPPLY "/battery/voltage_now", "120000\n");
-    CHECK_EQ(power_sample_read(&power, &sample), 0);
-    CHECK_EQ(sample.voltage_mv, -1);
-    CHECK_EQ(sample.power_mw, -1);
-    write_file(FAKE_POWER_SUPPLY "/battery/voltage_now", "3850000\n");
-
-    /* Unit helpers: uA/uV/uAh nodes and mA/mV/mAh nodes. */
-    CHECK_EQ(power_ua_to_ma(850000), 850);
-    CHECK_EQ(power_ua_to_ma(850), 850);
-    CHECK_EQ(power_ua_to_ma(0), -1);
-    CHECK_EQ(power_ua_to_ma(-1), -1);
-    CHECK_EQ(power_uv_to_mv(3850000), 3850);
-    CHECK_EQ(power_uv_to_mv(3850), 3850);
-    CHECK_EQ(power_uv_to_mv(1000), -1);
-    CHECK_EQ(power_mah_from_node(5120000), 5120);
-
-    /* Runtime discovery: with no `battery` device the fuel gauge is used. */
-    remove_rel(FAKE_POWER_SUPPLY "/battery");
-    write_file(FAKE_POWER_SUPPLY "/bms/current_now", "900000\n");
-    write_file(FAKE_POWER_SUPPLY "/bms/voltage_now", "3800000\n");
-    power_state_init(&power);
-    CHECK_EQ(power_sample_read(&power, &sample), 0);
-    CHECK_EQ(sample.current_ma, 900);
-    CHECK_EQ(sample.voltage_mv, 3800);
-    CHECK_EQ(sample.power_mw, 3420);
-    CHECK_EQ(sample.level, -1);      /* no capacity node on bms */
-    CHECK_EQ(sample.charge_mah, 4100);
-    CHECK_EQ(sample.charging, -1);   /* no status node on bms */
-
-    /* No battery at all: -1 everywhere, logged no-op, no crash. */
-    remove_rel(FAKE_POWER_SUPPLY);
-    power_state_init(&power);
-    CHECK_EQ(power_sample_read(&power, &sample), -1);
-    CHECK_EQ(sample.current_ma, -1);
-    CHECK_EQ(sample.power_mw, -1);
-    mkdir_p(FAKE_POWER_SUPPLY);
-}
-
 /* --- phase 6: CPU caps and governor (#124) ------------------------------- */
 
 static void test_cpu(void)
@@ -1799,7 +1708,6 @@ int main(void)
     test_gpu();
     test_gpu_clock();
     test_swap_header();
-    test_power();
     test_cpu();
     test_mem();
     test_kick_max_lowered();

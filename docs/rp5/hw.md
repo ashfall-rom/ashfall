@@ -29,7 +29,6 @@ daemon applies settings at boot and at runtime.
 | `/sys/class/sn3112l/led/brightness` | write `"<mode>-<r>:<g>:<b>"` | left ring colour (mode `1` = static) |
 | `/sys/class/sn3112r/led/{enable,brightness}` | same | right stick ring |
 | `/sys/class/thermal/thermal_zone*/{type,temp}` | read | SoC temperatures (millidegrees C) |
-| `/sys/class/power_supply/*/{current_now,voltage_now,capacity,status,charge_counter,charge_full_design}` | read | battery telemetry (§11); the device is resolved at runtime (`battery`, then `bms`) |
 | `/sys/devices/system/cpu/cpufreq/policy*/scaling_*` | read/write | per-cluster max frequency and governor (§12) |
 | `/sys/block/zram0/*`, `/dev/block/zram0` | read/write | zram swap device (§13) |
 | `/data/ashfall/swapfile` | create/read/unlink | swapfile (§13) |
@@ -424,9 +423,9 @@ the first integration build: after flashing, `ls -lZ` must show
 while fan and LEDs are driven.
 
 Phase 6 also relabels `/dev/block/zram0` (`ashfall_zram_device`) and grants
-`sys_admin` for swapon/swapoff; `/sys/class/power_supply` already carries the
-platform `sysfs_batteryinfo` type, so the battery telemetry only needs a read
-grant (no `ashfall_power_sysfs` relabel, §11).
+`sys_admin` for swapon/swapoff.  Battery data is deliberately not read here
+(§11): a coredomain may not touch `sysfs_batteryinfo`, and the RP5 nodes are
+vendor-labelled.
 
 Thermal zones need no new type: the stock vendor policy (still in place under
 the GSI) labels `/devices/virtual/thermal` and `/class/thermal` as
@@ -482,8 +481,9 @@ Run on a build that contains `ashfall-hwd` (a manually pushed binary runs as
    untouched (§9).
 9. `adb shell dmesg | grep avc` (and `logcat -b events | grep avc`) is clean
    after exercising all of the above on an **enforcing** build.
-10. Phase 6 telemetry: §11 (battery/power), §12 (CPU caps and governor) and
-    §13 (zram/swapfile) carry their own property tables and enforcing checks.
+10. Phase 6 telemetry: §12 (CPU caps and governor) and §13 (zram/swapfile)
+    carry their own property tables and enforcing checks; §11 explains why
+    battery data is not read by `ashfall-hwd`.
 
 ## 7. On-device verification (2026-11-13, build 20261113-213314)
 
@@ -745,58 +745,26 @@ builds `integ/phase5` and hands the RP5 over serially).  The checks to run:
    lit after every unlock, one `ashfall-hwd` line per transition, no write
    errors and no retries while the screen is off.
 
-## 11. Battery / power telemetry (#124, #137)
+## 11. Battery / power telemetry (#124, #137): not in `ashfall-hwd`
 
-One sampler, one owner (docs/phase6.md §9.3): `ashfall-hwd` is the only reader
-of `/sys/class/power_supply`, and SystemUI (PlayTime) and the Power page read
-properties.  The read happens on the existing status tick (`STATUS_INTERVAL_MS`,
-2 s; 500 ms while `ashfall.ui.fan_live=1`), there is no second timer and no
-second sysfs reader.
+The daemon has **no** `/sys/class/power_supply` access and publishes no
+`ashfall.status.power.*` / `ashfall.status.perf.power_mw` properties.
 
-| property | type | meaning |
-|---|---|---|
-| `ashfall.status.power.current_ma` | int | rectified magnitude in mA, `-1` unknown |
-| `ashfall.status.power.voltage_mv` | int | battery voltage in mV, `-1` unknown |
-| `ashfall.status.power.level` | int | 0..100, `-1` unknown |
-| `ashfall.status.power.charging` | int | `1` charging, `0` not charging/`Full`, `-1` unknown |
-| `ashfall.status.power.charge_mah` | int | remaining charge, `-1` when no node exists |
-| `ashfall.status.power.capacity_mah` | int | design capacity, `-1` when no node exists |
-| `ashfall.status.perf.power_mw` | int | `current_ma * voltage_mv / 1000` from the same read; `-1` while charging and when unknown |
+The battery sysfs read cannot be made legal from this domain:
 
-**Device discovery.**  The stock unit exposes both a `battery` class device and
-a `bms` fuel gauge, and which one carries `current_now` is not fixed.  The
-daemon walks `/sys/class/power_supply` and keeps only devices whose `type` is
-`Battery`, in the order `battery`, `bms`, then the rest; every attribute is
-taken from the first candidate that has it (so `charge_counter` may come from
-the gauge while `voltage_now` comes from the pack).  The resolved paths are
-logged once at start (`power: battery=... current=...`).
+- `system/sepolicy/private/domain.te` neverallows a coredomain `read`/`open` on
+  `sysfs_batteryinfo`, so `ashfall_hwd` (a system_ext coredomain) cannot use the
+  platform-labelled power-supply attributes.
+- On the RP5 the nodes are `vendor_sysfs_battery_supply`, a vendor type that a
+  system_ext policy cannot reference, and relabelling them would break the
+  vendor health HAL.
 
-**Units and validation.**  The power-supply class documents `current_now` in uA
-and `voltage_now` in uV, but some gauges report mA/mV.  A value `>= 10000` of
-the plausible scale is treated as the micro unit (a 10 A draw in mA would be
-implausible on this unit).  A current of `0`, `-1` or more than 20 000 mA is
-`-1`, a voltage outside 2.0..6.0 V is `-1`, and a `capacity` outside 0..100 is
-`-1`: never a fabricated number.  `charging=1` only for the kernel status
-`Charging`; `Full`/`Not charging`/`Discharging` are `0` and the pack wattage is
-`-1` while charging, because a battery-side number is meaningless then.
-
-Verification on the device (enforcing build):
-
-```bash
-adb shell 'for d in /sys/class/power_supply/*; do echo "$d"; cat $d/type \
-    $d/current_now $d/voltage_now $d/capacity $d/status \
-    $d/charge_counter $d/charge_full_design 2>/dev/null; done'
-adb shell 'getprop | grep -E "ashfall.status.(power|perf.power_mw)"'
-adb shell dmesg | grep avc      # must be clean (sysfs_batteryinfo read)
-```
-
-Expected: `current_ma` follows a 3D load within one tick, `power_mw` is a few
-thousand while idle and `-1` on the charger, `charge_mah`/`capacity_mah` are
-`-1` if the gauge has no such node (that is a correct answer, not a bug).  If
-`dmesg | grep avc` names a label other than `sysfs_batteryinfo` for a
-power-supply attribute, the vendor policy moved it: add exact-path
-`file_contexts` relabels to `ashfall_power_sysfs` following the kgsl pattern
-(§5) and grant `ashfall_hwd` read.
+Battery telemetry therefore comes from **`BatteryManager` in the app/SystemUI
+processes** (Power page #124, PlayTime #137, Parts): `getIntProperty` for
+current/charge/capacity, `EXTRA_VOLTAGE`/`EXTRA_LEVEL`/`EXTRA_STATUS` from the
+battery sticky intent, and `isCharging`.  The 2 s status tick keeps publishing
+the CPU, GPU and memory telemetry only (`docs/phase6.md` §9.3's power rows no
+longer exist).
 
 ## 12. CPU clock caps and governor (#124)
 

@@ -17,7 +17,6 @@
 #include "led.h"
 #include "mem.h"
 #include "plat.h"
-#include "power.h"
 #include "thermal.h"
 #include "throttle.h"
 
@@ -70,14 +69,7 @@
 #define STATUS_GPU_OC "ashfall.status.perf.gpu_oc"
 #define STATUS_PERF_GPU_MHZ "ashfall.status.perf.gpu_mhz"
 
-/* Phase 6 wave 2 telemetry (docs/phase6.md §9.3): one sampler, one owner. */
-#define STATUS_POWER_CURRENT_MA "ashfall.status.power.current_ma"
-#define STATUS_POWER_VOLTAGE_MV "ashfall.status.power.voltage_mv"
-#define STATUS_POWER_LEVEL "ashfall.status.power.level"
-#define STATUS_POWER_CHARGING "ashfall.status.power.charging"
-#define STATUS_POWER_CHARGE_MAH "ashfall.status.power.charge_mah"
-#define STATUS_POWER_CAPACITY_MAH "ashfall.status.power.capacity_mah"
-#define STATUS_PERF_POWER_MW "ashfall.status.perf.power_mw"
+/* Phase 6 wave 2 telemetry (docs/phase6.md §9.3). */
 #define STATUS_PERF_CPU_SILVER "ashfall.status.perf.cpu_mhz_silver"
 #define STATUS_PERF_CPU_GOLD "ashfall.status.perf.cpu_mhz_gold"
 #define STATUS_PERF_CPU_PRIME "ashfall.status.perf.cpu_mhz_prime"
@@ -354,21 +346,6 @@ static void publish_int(const char *name, int value, int *cache)
     *cache = value;
 }
 
-static void publish_power_status(power_state *power, int *cache)
-{
-    power_sample sample;
-
-    /* Fills every field with -1 when the battery nodes are unavailable. */
-    power_sample_read(power, &sample);
-    publish_int(STATUS_POWER_CURRENT_MA, sample.current_ma, &cache[0]);
-    publish_int(STATUS_POWER_VOLTAGE_MV, sample.voltage_mv, &cache[1]);
-    publish_int(STATUS_POWER_LEVEL, sample.level, &cache[2]);
-    publish_int(STATUS_POWER_CHARGING, sample.charging, &cache[3]);
-    publish_int(STATUS_POWER_CHARGE_MAH, sample.charge_mah, &cache[4]);
-    publish_int(STATUS_POWER_CAPACITY_MAH, sample.capacity_mah, &cache[5]);
-    publish_int(STATUS_PERF_POWER_MW, sample.power_mw, &cache[6]);
-}
-
 static void publish_cpu_status(const cpu_state *cpu, int *cache)
 {
     publish_int(STATUS_PERF_CPU_SILVER, cpu_status_mhz(cpu, CPU_CLUSTER_SILVER),
@@ -477,12 +454,10 @@ int main(void)
     gpu_state gpu;
     cpu_state cpu;
     mem_state mem;
-    power_state power;
     struct cpu_settings cpu_settings;
     struct mem_settings mem_settings;
     struct status_cache status;
     struct gpu_status_cache gpu_status;
-    int power_status_cache[7];
     int gpu_clock_cache = INT_MIN;
     int cpu_status_cache[CPU_CLUSTER_COUNT];
     int mem_status_cache[6];
@@ -524,11 +499,8 @@ int main(void)
     gpu_state_init(&gpu);
     cpu_state_init(&cpu);
     mem_state_init(&mem);
-    power_state_init(&power);
     cpu_settings_default(&cpu_settings);
     mem_settings_default(&mem_settings);
-    for (size_t i = 0; i < sizeof(power_status_cache) / sizeof(power_status_cache[0]); i++)
-        power_status_cache[i] = INT_MIN;
     for (size_t i = 0; i < sizeof(cpu_status_cache) / sizeof(cpu_status_cache[0]); i++)
         cpu_status_cache[i] = INT_MIN;
     for (size_t i = 0; i < sizeof(mem_status_cache) / sizeof(mem_status_cache[0]); i++)
@@ -773,9 +745,6 @@ int main(void)
         if (now >= next_status_ms) {
             fan.rpm = fan_read_rpm();
             publish_status(&fan, last_temp, &status, &next_status_ms, now);
-            /* One battery read per status tick feeds every consumer (#124 and
-             * #137 share this sampler, docs/phase6.md §9.3). */
-            publish_power_status(&power, power_status_cache);
             publish_int(STATUS_PERF_GPU_MHZ, gpu_clock_mhz(), &gpu_clock_cache);
             publish_cpu_status(&cpu, cpu_status_cache);
             publish_mem_status(&mem, mem_status_cache);
