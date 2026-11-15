@@ -116,6 +116,13 @@ Phase 5 v2 additions (docs/phase5.md §6.1):
 | `ashfall.ui.fan_live` | `1` | empty | status every 500 ms instead of 2 s while a fan UI is visible |
 | `ashfall.ui.fan_preview_curve` | curve string | empty | while non-empty and mode=`smart`, used instead of `persist.ashfall.fan.curve` (live editor preview; the app clears it) |
 
+Phase 5 v3 additions (docs/phase5.md §7.1, issue #121):
+
+| property | values | default | effect |
+|---|---|---|---|
+| `persist.ashfall.fan.min_pct` | 0..100 | `5` | output below it stops the fan completely (`state=0`, `duty=0`); `0` disables the cut-off |
+| `persist.ashfall.fan.max_pct` | 0..100 | `100` | the fan never runs above it; `100` disables the cap |
+
 * `persist.ashfall.fan.curve`: 2..8 `tempC:pct` pairs, ascending temperature,
   default `45:0,55:30,65:55,75:80,82:100`.  Invalid values are ignored (the
   daemon keeps the default).  `ashfall.ui.fan_preview_curve` follows the same
@@ -160,6 +167,24 @@ Phase 5 v2 additions (docs/phase5.md §6.1):
   at 100 % until the temperature is **80 °C**, in every mode and also with the
   screen off.  `persist.ashfall.fan.safety_c` was removed in phase 5 v2; the
   rule is deliberately not exposed in the UI.
+* **Output limits (phase 5 v3, `min_pct`/`max_pct`):** applied at the very end
+  of `fan_control_tick()`, to the percentage that the active mode, the Smart
+  curve or the screen-off hold resolved, immediately before the duty is
+  written.  `pct == 0` stays `0`; `0 < pct < min_pct` becomes `0` (the fan
+  stops completely: `state=0` *and* `duty=0`, never a partial duty);
+  `min_pct <= pct <= max_pct` is unchanged; `pct > max_pct` becomes `max_pct`.
+  Every mode (Quiet/Balanced/Max, Manual, Smart, `off`) and the screen-off hold
+  are covered, and `ashfall.status.fan.pct` reports the limited value that was
+  applied.
+* **The limits never touch thermal protection:** the 90 °C rule and the
+  no-sensor fail-safe both latch `safety`, are resolved before the limiter and
+  bypass it (`max_pct=40` still gives 100 % at 90 °C).  This exception is not a
+  setting and cannot be configured away.
+* **Quiet consequence:** the shipped `min_pct=5` is above the built-in Quiet
+  preset (`2 %`), so **Quiet stops the fan completely** until the low limit is
+  lowered to 0.  Balanced (46 %) and Max (100 %) sit inside the defaults.
+* **Spin-up kick:** it only runs for a non-zero limited target; a target cut to
+  0 writes `state=0` + `duty=0` and cancels a pending kick.
 
 `ashfall.status.*` (written at most every 2 s, or every 500 ms while
 `ashfall.ui.fan_live=1`; only on change):
@@ -167,18 +192,20 @@ Phase 5 v2 additions (docs/phase5.md §6.1):
 | property | meaning |
 |---|---|
 | `ashfall.status.fan.temp` | hottest CPU/GPU temperature, tenths of °C (`563` = 56.3 °C) |
-| `ashfall.status.fan.pct` | current fan output 0..100 (the kick level during a kick, `-1` if the sysfs write failed) |
+| `ashfall.status.fan.pct` | current fan output 0..100 *after* the min/max limits (the kick level during a kick, `-1` if the sysfs write failed) |
 | `ashfall.status.fan.rpm` | `speed` node value, `0` while the fan is off (never read then), `-1` when unavailable |
 | `ashfall.status.fan.safety` | `1` while the safety override is active |
 
 `persist.ashfall.fan.preset` is UI-only (the active preset id, <= 32 chars); the
 daemon ignores it and only ever reads `mode`, `manual_pct`, `curve`, `kick`,
-`kick_pct` and `screen_off`.
+`kick_pct`, `screen_off`, `min_pct` and `max_pct`.
 
 Numbers are invalid -> default, not clamped: `manual_pct` outside 0..100,
-`kick_pct` outside 10..60, `led.brightness` outside 0..100 and `led.speed`
-outside 1..10 use the documented default (50, 30, 60, 5), and each distinct bad
-value is logged once.
+`min_pct`/`max_pct` outside 0..100, `kick_pct` outside 10..60,
+`led.brightness` outside 0..100 and `led.speed` outside 1..10 use the
+documented default (50, 5/100, 30, 60, 5), and each distinct bad value is
+logged once.  A `min_pct > max_pct` pair is invalid as a pair: both go back to
+`5`/`100` with one warning.
 
 > **Tuning note (2026-11-14):** the RP5 idles at **~66 °C** (hottest CPU zone,
   screen on, no load), where the contract's default curve

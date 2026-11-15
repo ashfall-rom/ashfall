@@ -60,6 +60,13 @@
 #define FAN_SAFETY_ON_C 90
 #define FAN_SAFETY_OFF_C 80
 
+/* Output limits (docs/phase5.md §7.1): the final percentage resolved by the
+ * mode, the smart curve or the screen-off hold is cut to 0 below min_pct and
+ * capped at max_pct.  min_pct = 0 disables the cut-off, max_pct = 100 the cap.
+ * The fixed 90 C rule and the no-sensor fail-safe are exempt. */
+#define FAN_MIN_PCT_DEFAULT 5
+#define FAN_MAX_PCT_DEFAULT 100
+
 #define FAN_MAX_POINTS 8
 #define FAN_CURVE_MAX_LEN 92 /* persist.* property value limit */
 
@@ -89,6 +96,8 @@ typedef struct {
     bool kick;      /* spin-up kick enabled */
     int kick_pct;   /* 10..60, the kick level (never 100 %) */
     bool off_when_screen_off; /* fan off while the screen is off */
+    int min_pct;    /* 0..100, below it the fan stops (0 = no cut-off) */
+    int max_pct;    /* 0..100, never run above it (100 = no cap) */
 } fan_settings;
 
 typedef struct {
@@ -118,6 +127,12 @@ typedef struct {
 
 void fan_settings_default(fan_settings *out);
 
+/* Sanitise a persist.ashfall.fan.{min_pct,max_pct} pair (docs/phase5.md
+ * §7.1): out-of-range values and max < min fall back to the defaults, so both
+ * come back 5/100.  Returns false when the pair was invalid (the caller logs
+ * that once); the two values are corrected either way. */
+bool fan_limits_normalise(int *min_pct, int *max_pct);
+
 bool fan_parse_mode(const char *name, fan_mode *out);
 const char *fan_mode_name(fan_mode mode);
 
@@ -134,9 +149,11 @@ int fan_duty_to_pct(int duty_ns);
 void fan_state_init(fan_state *state);
 
 /* One control tick (every FAN_SAMPLE_MS): applies the mode, the smart curve,
- * the screen-off hold and the always-on safety override.  `screen_on` false
- * holds the fan at 0 % when settings.off_when_screen_off is set; the safety
- * override still runs.  Returns the output percentage that was applied. */
+ * the screen-off hold, the output limits (min_pct/max_pct) and the always-on
+ * safety override.  `screen_on` false holds the fan at 0 % when
+ * settings.off_when_screen_off is set; the safety override still runs.
+ * Returns the output percentage that was applied.  The safety override and
+ * the no-sensor fail-safe bypass the limits. */
 int fan_control_tick(fan_state *state, int temp_tenths, int64_t now_ms,
                      bool screen_on);
 

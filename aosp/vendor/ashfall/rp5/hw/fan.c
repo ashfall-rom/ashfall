@@ -23,12 +23,26 @@ void fan_settings_default(fan_settings *out)
     out->kick = true;
     out->kick_pct = FAN_KICK_DEFAULT_PCT;
     out->off_when_screen_off = true;
+    out->min_pct = FAN_MIN_PCT_DEFAULT;
+    out->max_pct = FAN_MAX_PCT_DEFAULT;
     if (!fan_parse_curve(DEFAULT_CURVE, &out->curve)) {
         /* Cannot happen: the literal above is valid. */
         out->curve.count = 2;
         out->curve.point[0] = (fan_point){45, 0};
         out->curve.point[1] = (fan_point){82, 100};
     }
+}
+
+bool fan_limits_normalise(int *min_pct, int *max_pct)
+{
+    bool valid = *min_pct >= 0 && *min_pct <= 100 && *max_pct >= 0 &&
+                 *max_pct <= 100 && *min_pct <= *max_pct;
+
+    if (!valid) {
+        *min_pct = FAN_MIN_PCT_DEFAULT;
+        *max_pct = FAN_MAX_PCT_DEFAULT;
+    }
+    return valid;
 }
 
 static const struct {
@@ -394,6 +408,21 @@ int fan_control_tick(fan_state *state, int temp_tenths, int64_t now_ms,
         pct = 0;
     if (pct > 100)
         pct = 100;
+
+    /* Output limits (docs/phase5.md §7.1).  They sit here, after the mode, the
+     * smart curve and the screen-off hold resolved the target and before the
+     * duty is written, so every output path is covered: a target below the low
+     * limit stops the fan completely (state=0, duty=0) instead of running it at
+     * a speed the user called useless, and a target above the high limit is
+     * capped.  min_pct=0/max_pct=100 disable the respective side.  The fixed
+     * 90 C rule and the no-sensor fail-safe latch state->safety and bypass
+     * both limits: thermal protection must never be cap-able. */
+    if (!state->safety) {
+        if (pct > 0 && pct < set->min_pct)
+            pct = 0;
+        if (pct > set->max_pct)
+            pct = set->max_pct;
+    }
     return fan_apply_pct(state, pct, now_ms);
 }
 
