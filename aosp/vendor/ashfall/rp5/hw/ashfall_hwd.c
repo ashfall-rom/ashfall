@@ -32,6 +32,8 @@
 #define PROP_FAN_KICK "persist.ashfall.fan.kick"
 #define PROP_FAN_KICK_PCT "persist.ashfall.fan.kick_pct"
 #define PROP_FAN_SCREEN_OFF "persist.ashfall.fan.screen_off"
+#define PROP_FAN_MIN_PCT "persist.ashfall.fan.min_pct"
+#define PROP_FAN_MAX_PCT "persist.ashfall.fan.max_pct"
 
 #define PROP_LED_MODE "persist.ashfall.led.mode"
 #define PROP_LED_LEFT "persist.ashfall.led.color_left"
@@ -97,6 +99,7 @@ static void read_fan_settings(fan_settings *out, bool *changed)
     fan_settings next;
     fan_settings defaults;
     char buf[FAN_CURVE_MAX_LEN + 1];
+    static bool logged_limits;
 
     fan_settings_default(&defaults);
     next = defaults;
@@ -116,6 +119,16 @@ static void read_fan_settings(fan_settings *out, bool *changed)
                                        FAN_KICK_MIN_PCT, FAN_KICK_MAX_PCT);
     if (prop_get_str(PROP_FAN_SCREEN_OFF, buf, sizeof(buf)) > 0)
         next.off_when_screen_off = strcmp(buf, "run") != 0;
+    next.min_pct = prop_get_int_range(PROP_FAN_MIN_PCT, defaults.min_pct, 0, 100);
+    next.max_pct = prop_get_int_range(PROP_FAN_MAX_PCT, defaults.max_pct, 0, 100);
+    /* min > max is an invalid pair even when both values are in range: use
+     * the defaults for both and say so once (docs/phase5.md §7.1). */
+    if (!fan_limits_normalise(&next.min_pct, &next.max_pct) && !logged_limits) {
+        ah_logf(AH_LOG_WARN,
+                "fan: invalid min_pct/max_pct pair; using the defaults (%d/%d)",
+                next.min_pct, next.max_pct);
+        logged_limits = true;
+    }
     if (prop_get_str(PROP_FAN_CURVE, buf, sizeof(buf)) > 0) {
         fan_curve curve;
 

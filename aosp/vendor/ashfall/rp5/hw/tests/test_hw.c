@@ -291,6 +291,7 @@ static void test_screen_off(void)
     fan.settings.kick = true;
     fan.settings.kick_pct = 30;
     fan.settings.off_when_screen_off = true;
+    fan.settings.min_pct = 0; /* limits off: raw mode resolution (see test_limits) */
 
     /* Screen off: the fan stops. */
     CHECK_EQ(fan_control_tick(&fan, 400, 1000, false), 0);
@@ -322,6 +323,7 @@ static void test_presets(void)
 
     fan_state_init(&fan);
     fan.settings.mode = FAN_MODE_QUIET;
+    fan.settings.min_pct = 0; /* Quiet (2 %) runs: see test_limits for the cut-off */
     CHECK_EQ(fan_control_tick(&fan, 400, 1000, true),
              FAN_KICK_DEFAULT_PCT); /* kick, never 100 % */
     CHECK_EQ(fan_control_tick(&fan, 400, 1000 + FAN_KICK_MS + 1, true),
@@ -353,6 +355,170 @@ static void test_safety(void)
     CHECK_EQ(fan_control_tick(&fan, 800, 9000, true), 0);
     CHECK(!fan.safety);
     CHECK_EQ(read_int("/sys/class/gpio5_pwm2/state"), 0);
+}
+
+/* Output limits (docs/phase5.md §7.1): persist.ashfall.fan.{min_pct,max_pct}
+ * are applied to the percentage the mode/curve/screen-off hold resolved, right
+ * before the duty is written.  The 90 C rule and the no-sensor fail-safe are
+ * exempt. */
+static void test_limits(void)
+{
+    fan_state fan;
+    int min;
+    int max;
+
+    /* Defaults and the invalid-pair fallback (min > max -> both defaults). */
+    fan_state_init(&fan);
+    CHECK_EQ(fan.settings.min_pct, FAN_MIN_PCT_DEFAULT);
+    CHECK_EQ(fan.settings.max_pct, FAN_MAX_PCT_DEFAULT);
+    CHECK_EQ(FAN_MIN_PCT_DEFAULT, 5);
+    CHECK_EQ(FAN_MAX_PCT_DEFAULT, 100);
+    min = 60;
+    max = 40;
+    CHECK(!fan_limits_normalise(&min, &max));
+    CHECK_EQ(min, FAN_MIN_PCT_DEFAULT);
+    CHECK_EQ(max, FAN_MAX_PCT_DEFAULT);
+
+    /* In-range pairs are kept, including the two "disabled" ends. */
+    min = 0;
+    max = 0;
+    CHECK(fan_limits_normalise(&min, &max)); /* max 0 caps everything at 0 */
+    CHECK_EQ(min, 0);
+    CHECK_EQ(max, 0);
+    min = 0;
+    max = 100;
+    CHECK(fan_limits_normalise(&min, &max));
+    CHECK_EQ(min, 0);
+    CHECK_EQ(max, 100);
+
+    /* Out-of-range values are not a valid pair either. */
+    min = 40;
+    max = 101;
+    CHECK(!fan_limits_normalise(&min, &max));
+    CHECK_EQ(min, FAN_MIN_PCT_DEFAULT);
+    CHECK_EQ(max, FAN_MAX_PCT_DEFAULT);
+
+    /* manual 2 % with the default min 5: the fan stops completely - state=0
+     * and duty=0, never a partial duty - and no kick runs for that target. */
+    fan_state_init(&fan);
+    fan.settings.mode = FAN_MODE_MANUAL;
+    fan.settings.manual_pct = 50;
+    CHECK_EQ(fan_control_tick(&fan, 400, 1000, true), 50); /* above the kick */
+    CHECK_EQ(read_int("/sys/class/gpio5_pwm2/state"), 1);
+    CHECK_EQ(read_int("/sys/class/gpio5_pwm2/duty"), fan_pct_to_duty(50));
+
+    fan.settings.manual_pct = 2;
+    CHECK_EQ(fan_control_tick(&fan, 400, 4000, true), 0);
+    CHECK_EQ(fan.out_pct, 0);
+    CHECK_EQ(read_int("/sys/class/gpio5_pwm2/state"), 0);
+    CHECK_EQ(read_int("/sys/class/gpio5_pwm2/duty"), 0);
+    CHECK(!fan_kick_pending(&fan, 4000));
+    CHECK_EQ(fan.kick_until_ms, 0);
+
+    /* Exactly min (5) is allowed: it runs (via the kick, then at 5 %). */
+    fan.settings.manual_pct = 5;
+    CHECK_EQ(fan_control_tick(&fan, 400, 6000, true), FAN_KICK_DEFAULT_PCT);
+    CHECK_EQ(fan_control_tick(&fan, 400, 6000 + FAN_KICK_MS + 1, true), 5);
+    CHECK_EQ(read_int("/sys/class/gpio5_pwm2/state"), 1);
+    CHECK_EQ(read_int("/sys/class/gpio5_pwm2/duty"), fan_pct_to_duty(5));
+
+    /* max_pct 40 caps manual 100, and the status output is the capped value. */
+    fan.settings.max_pct = 40;
+    fan.settings.manual_pct = 100;
+    CHECK_EQ(fan_control_tick(&fan, 400, 9000, true), 40);
+    CHECK_EQ(fan.out_pct, 40);
+    CHECK_EQ(read_int("/sys/class/gpio5_pwm2/duty"), fan_pct_to_duty(40));
+
+    /* Quiet (2 %) stops the fan under the shipped defaults and runs again
+     * with min_pct = 0. */
+    fan.settings.mode = FAN_MODE_QUIET;
+    fan.settings.max_pct = FAN_MAX_PCT_DEFAULT;
+    fan.settings.min_pct = FAN_MIN_PCT_DEFAULT;
+    CHECK_EQ(fan_control_tick(&fan, 400, 11000, true), 0);
+    CHECK_EQ(read_int("/sys/class/gpio5_pwm2/state"), 0);
+    fan.settings.min_pct = 0;
+    CHECK_EQ(fan_control_tick(&fan, 400, 13000, true), FAN_KICK_DEFAULT_PCT);
+    CHECK_EQ(fan_control_tick(&fan, 400, 13000 + FAN_KICK_MS + 1, true),
+             FAN_PRESET_QUIET_PCT);
+    CHECK_EQ(read_int("/sys/class/gpio5_pwm2/state"), 1);
+
+    /* max_pct 100 disables the cap. */
+    fan.settings.mode = FAN_MODE_MAX;
+    fan.settings.max_pct = 100;
+    CHECK_EQ(fan_control_tick(&fan, 400, 16000, true), 100);
+    CHECK_EQ(read_int("/sys/class/gpio5_pwm2/duty"),
+             fan_pct_to_duty(100));
+
+    /* The 90 C last-resort rule is never capped: max 40 still gives 100 %. */
+    fan.settings.mode = FAN_MODE_MANUAL;
+    fan.settings.manual_pct = 2;
+    fan.settings.max_pct = 40;
+    CHECK_EQ(fan_control_tick(&fan, 900, 18000, true), 100);
+    CHECK(fan.safety);
+    CHECK_EQ(fan.out_pct, 100);
+    CHECK_EQ(read_int("/sys/class/gpio5_pwm2/duty"),
+             fan_pct_to_duty(100));
+
+    /* The no-sensor fail-safe (balanced 46 %) is exempt as well. */
+    fan_state_init(&fan);
+    fan.settings.mode = FAN_MODE_MANUAL;
+    fan.settings.manual_pct = 2;
+    CHECK_EQ(fan_control_tick(&fan, -1, 22000, true),
+             FAN_PRESET_BALANCED_PCT);
+    CHECK(fan.sensor_fault);
+    CHECK(fan.safety);
+    CHECK_EQ(fan.out_pct, FAN_PRESET_BALANCED_PCT);
+    CHECK_EQ(read_int("/sys/class/gpio5_pwm2/duty"),
+             fan_pct_to_duty(FAN_PRESET_BALANCED_PCT));
+
+    /* Back to a readable sensor: the limits apply again (manual 2 < min 5). */
+    CHECK_EQ(fan_control_tick(&fan, 400, 24000, true), 0);
+    CHECK(!fan.sensor_fault);
+    CHECK(!fan.safety);
+    CHECK_EQ(fan.out_pct, 0);
+
+    /* The spin-up kick is capped by max_pct: with max 10 and the default kick
+     * level of 30 the fan starts at 10, not 30 (and no kick window opens,
+     * because the clamped level does not raise the target). */
+    fan_state_init(&fan);
+    fan.settings.mode = FAN_MODE_MANUAL;
+    fan.settings.manual_pct = 10;
+    fan.settings.max_pct = 10;
+    fan.settings.kick = true;
+    fan.settings.kick_pct = FAN_KICK_DEFAULT_PCT;
+    CHECK_EQ(fan_control_tick(&fan, 400, 26000, true), 10);
+    CHECK_EQ(fan.out_pct, 10);
+    CHECK_EQ(read_int("/sys/class/gpio5_pwm2/state"), 1);
+    CHECK_EQ(read_int("/sys/class/gpio5_pwm2/duty"), fan_pct_to_duty(10));
+    CHECK(!fan_kick_pending(&fan, 26000));
+    CHECK_EQ(fan.kick_until_ms, 0);
+
+    /* max 100 leaves the kick exactly as before: 30 % for a 5 % target. */
+    fan_state_init(&fan);
+    fan.settings.mode = FAN_MODE_MANUAL;
+    fan.settings.manual_pct = 5;
+    fan.settings.kick = true;
+    fan.settings.kick_pct = FAN_KICK_DEFAULT_PCT;
+    CHECK_EQ(fan_control_tick(&fan, 400, 28000, true), FAN_KICK_DEFAULT_PCT);
+    CHECK(fan_kick_pending(&fan, 28000));
+    CHECK_EQ(read_int("/sys/class/gpio5_pwm2/state"), 1);
+    CHECK_EQ(read_int("/sys/class/gpio5_pwm2/duty"),
+             fan_pct_to_duty(FAN_KICK_DEFAULT_PCT));
+    CHECK_EQ(fan_control_tick(&fan, 400, 28000 + FAN_KICK_MS + 1, true), 5);
+
+    /* The safety path is exempt from the kick clamp as well: 90 C with
+     * max 10 still goes to 100 % at once. */
+    fan_state_init(&fan);
+    fan.settings.mode = FAN_MODE_MANUAL;
+    fan.settings.manual_pct = 2;
+    fan.settings.max_pct = 10;
+    fan.settings.kick = true;
+    fan.settings.kick_pct = FAN_KICK_DEFAULT_PCT;
+    CHECK_EQ(fan_control_tick(&fan, 900, 32000, true), 100);
+    CHECK(fan.safety);
+    CHECK_EQ(fan.out_pct, 100);
+    CHECK_EQ(read_int("/sys/class/gpio5_pwm2/state"), 1);
+    CHECK_EQ(read_int("/sys/class/gpio5_pwm2/duty"), fan_pct_to_duty(100));
 }
 
 static void test_smart(void)
@@ -1149,6 +1315,7 @@ int main(void)
     test_screen_off();
     test_presets();
     test_safety();
+    test_limits();
     test_smart();
     test_smart_preview();
     test_led_colour();

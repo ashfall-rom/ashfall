@@ -23,12 +23,26 @@ void fan_settings_default(fan_settings *out)
     out->kick = true;
     out->kick_pct = FAN_KICK_DEFAULT_PCT;
     out->off_when_screen_off = true;
+    out->min_pct = FAN_MIN_PCT_DEFAULT;
+    out->max_pct = FAN_MAX_PCT_DEFAULT;
     if (!fan_parse_curve(DEFAULT_CURVE, &out->curve)) {
         /* Cannot happen: the literal above is valid. */
         out->curve.count = 2;
         out->curve.point[0] = (fan_point){45, 0};
         out->curve.point[1] = (fan_point){82, 100};
     }
+}
+
+bool fan_limits_normalise(int *min_pct, int *max_pct)
+{
+    bool valid = *min_pct >= 0 && *min_pct <= 100 && *max_pct >= 0 &&
+                 *max_pct <= 100 && *min_pct <= *max_pct;
+
+    if (!valid) {
+        *min_pct = FAN_MIN_PCT_DEFAULT;
+        *max_pct = FAN_MAX_PCT_DEFAULT;
+    }
+    return valid;
 }
 
 static const struct {
@@ -255,8 +269,19 @@ int fan_apply_pct(fan_state *state, int pct, int64_t now_ms)
             if (!state->safety && configured > kick_pct)
                 kick_pct = configured;
         }
+        /* The high output limit also holds during the kick: the target is
+         * already limited, so clamping the *raised* level to max_pct keeps
+         * "never above max" true for the whole FAN_KICK_MS.  The safety path
+         * above is exempt, and the minimum side is untouched: a cut-off
+         * target arrives here as 0 and stays off.  Only a level the kick
+         * raised above the target is clamped, so an explicit pct from a
+         * caller is never lowered below what it asked for. */
+        if (!state->safety && kick_pct > pct &&
+            kick_pct > state->settings.max_pct)
+            kick_pct = state->settings.max_pct;
         /* The target itself is never clamped: 61..100 % must run at their
-         * real duty (safety/max).  Only the *kick* level is capped at 60. */
+         * real duty (safety/max).  Only the *kick* level is capped, at 60 %
+         * and at persist.ashfall.fan.max_pct. */
         if (sysfs_write_int(FAN_STATE_NODE, 1) != 0 ||
             sysfs_write_int(FAN_DUTY_NODE, fan_pct_to_duty(kick_pct)) != 0) {
             state->out_pct = -1;
@@ -394,6 +419,21 @@ int fan_control_tick(fan_state *state, int temp_tenths, int64_t now_ms,
         pct = 0;
     if (pct > 100)
         pct = 100;
+
+    /* Output limits (docs/phase5.md §7.1).  They sit here, after the mode, the
+     * smart curve and the screen-off hold resolved the target and before the
+     * duty is written, so every output path is covered: a target below the low
+     * limit stops the fan completely (state=0, duty=0) instead of running it at
+     * a speed the user called useless, and a target above the high limit is
+     * capped.  min_pct=0/max_pct=100 disable the respective side.  The fixed
+     * 90 C rule and the no-sensor fail-safe latch state->safety and bypass
+     * both limits: thermal protection must never be cap-able. */
+    if (!state->safety) {
+        if (pct > 0 && pct < set->min_pct)
+            pct = 0;
+        if (pct > set->max_pct)
+            pct = set->max_pct;
+    }
     return fan_apply_pct(state, pct, now_ms);
 }
 
