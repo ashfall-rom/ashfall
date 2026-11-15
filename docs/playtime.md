@@ -121,10 +121,18 @@ itself rather than throwing.
 
 ## 4. Properties (read by SystemUI, written by Settings > Battery)
 
-Read with `SystemProperties.addChangeCallback` - a listener, not a poll. The callback fires for any
-property change in the system, so it is coalesced onto the main thread, the schema is re-read once
-and listeners are only notified when the parsed values actually changed. Nothing is scheduled while
-the indicator is off.
+The properties are written by Settings in a **different process**, and `SystemProperties` reports
+property changes only inside the process that performed the write
+(`SystemProperties.addChangeCallback` is backed by `report_sysprop_change()`, which runs in the
+writer). Measured on the device: with `show=1` written by Settings while SystemUI was already
+running, no callback ever reached SystemUI and the status bar stayed empty until SystemUI restarted.
+
+So SystemUI re-reads the schema itself: the indicator runs one main-thread tick every **2 s** while it
+is attached, re-parses the table below once (a baker's dozen of property reads and one small
+snapshot) and notifies its listeners - the status bar view and the `REPLACE_PERCENT` composable -
+only when a parsed value actually changed. A change applies within ~2 s without restarting SystemUI.
+That tick is the only periodic work when the feature is off: it is removed with the view on
+`onViewDetached`, and it does not sample the battery, register a receiver or touch the estimator.
 
 | Property | Values | Default |
 |---|---|---|
@@ -156,12 +164,23 @@ label, so SystemUI asks the framework instead.
 
 | Value | Source | Mapping |
 |---|---|---|
-| current | `BatteryManager.getIntProperty(BATTERY_PROPERTY_CURRENT_NOW)` | `abs(uA) / 1000` mA, sign rectified |
+| current | `BatteryManager.getIntProperty(BATTERY_PROPERTY_CURRENT_NOW)` | `abs(uA) / 1000` mA, sign rectified; used when it is `> 0` |
+| current (fallback) | slope of `BATTERY_PROPERTY_CHARGE_COUNTER` | `abs(duAh) * 3600 / dms` mA over a 10-30 s window |
 | voltage | `ACTION_BATTERY_CHANGED`, `EXTRA_VOLTAGE` | mV as is |
 | level | `ACTION_BATTERY_CHANGED`, `EXTRA_LEVEL` / `EXTRA_SCALE` | `level * 100 / scale` |
 | charging | `ACTION_BATTERY_CHANGED`, `EXTRA_STATUS` | `CHARGING` or `FULL` |
 | remaining charge | `BatteryManager.getIntProperty(BATTERY_PROPERTY_CHARGE_COUNTER)` | `uAh / 1000` mAh when `>= 0` |
 | capacity | derived | `charge_mah * 100 / level` when `level > 0`, else unknown |
+
+**The RP5 health HAL reports no current.** `dumpsys
+android.hardware.health.IHealth/default` returns `batteryCurrentMicroamps: 0` and
+`batteryCurrentAverageMicroamps: 0` even under load, so `BATTERY_PROPERTY_CURRENT_NOW` is `0` and the
+indicator would sit on `--` forever. The charge counter *is* provided (`batteryChargeCounterUah:
+5047000`, and `dumpsys battery` "Charge counter" moves), so when the instantaneous value says
+nothing the indicator derives the current from the counter's slope instead: it anchors
+`(elapsedRealtime, uAh)`, waits at least 10 s and re-anchors every 30 s, because the counter's 1 mAh
+resolution is dominated by rounding over a 5 s window. The derived value is reused between
+re-anchors; a zero or implausible slope is "unknown", never a number.
 
 `BATTERY_PROPERTY_CHARGE_COUNTER`, `BATTERY_PROPERTY_CURRENT_NOW` and the extras are optional on
 some devices: `getIntProperty` returning `Integer.MIN_VALUE` (unsupported) or a negative charge
@@ -176,12 +195,17 @@ Update strategy - no polling of the battery:
   broadcast refreshes level, voltage, charging state, charge counter and the derived capacity, and
   takes one sample with a fresh current. It is unregistered with `show=0`, on screen off and on
   detach.
+- Screen state comes from `ACTION_SCREEN_ON`/`ACTION_SCREEN_OFF`, registered while the indicator is
+  attached. `Dependency.get(ScreenLifecycle.class)` is not a provider in this tree ("Unsupported
+  dependency class com.android.systemui.keyguard.ScreenLifecycle. 36 providers known."), so relying
+  on it left sampling running with the screen off and the screen-on purge dead. On screen off the
+  battery receiver, the sample tick and the charge-counter anchor are dropped; on screen on the
+  window is purged and sampling restarts.
 - The sample tick at `persist.ashfall.batt.interval` (2-30 s, the user's sample interval) reads the
-  cached broadcast state plus one `BATTERY_PROPERTY_CURRENT_NOW` value and feeds the estimator. No
-  timer, Handler message or registered receiver is left behind while the indicator is off.
+  cached broadcast state plus the best current available and feeds the estimator. No sample timer,
+  cycle timer or battery receiver is left behind while the indicator is off.
 
-Configuration still comes from `persist.ashfall.batt.*` through the property listener described
-above - that half is unchanged.
+Configuration comes from `persist.ashfall.batt.*` through the 2 s re-read in §4.
 
 ## 6. Unavailable states
 
@@ -213,45 +237,68 @@ java -cp out:junit-4.13.2.jar:hamcrest-core-1.3.jar \
     org.junit.runner.JUnitCore com.android.systemui.ashfall.PlayTimeEstimatorTest
 ```
 
-Covered: no number before one full interval, single sample is never an estimate, window expiry,
-average over the window, screen-off pause + screen-on purge, charging-state purge, noise current,
-unknown level/capacity, invalid current not sampled, charging time-to-full, charging without usable
-current, FULL from level and from the charge counter, capacity override, the four time formats, the
-`>48h` cap, no `0m` rounding, all seven detail modes, `+` watt prefix while charging, unknown values
-as `--`, tap cycle order and rendering, every parser fallback and clamp, cycle meter order, settings
-comparison.
+Covered (29 tests): no number before one full interval, single sample is never an estimate, window
+expiry, average over the window, screen-off pause + screen-on purge, charging-state purge, noise
+current, unknown level/capacity, invalid current not sampled, the charge-counter current fallback
+(µAh/ms to mA, either sign, zero and implausible windows, derived noise still `--`, a derived current
+that produces a real estimate), charging time-to-full, charging without usable current, FULL from
+level and from the charge counter, capacity override, the four time formats, the `>48h` cap, no `0m`
+rounding, all seven detail modes, `+` watt prefix while charging, unknown values as `--`, tap cycle
+order and rendering, every parser fallback and clamp, cycle meter order, settings comparison.
 
 ## 8. Integration checks
 
 1. `scripts/patches.sh apply` (or `git am --3way` on a pristine base + `0001`-`0004`) applies `0005`
-   cleanly; the verifier repeats this on a clean checkout.
+   cleanly; the verifier repeats this on a clean checkout. Verified against
+   `LineageOS/android_frameworks_base` @ `22de88b7b8eb` + `0001`-`0004` on 2026-11-15.
 2. Build the ROM (orchestrator) - SystemUI compiles, `SystemUITests` picks the test up from the
    default source glob, no `Android.bp` change needed.
-3. On the device: `setprop persist.ashfall.batt.show 1` without restarting SystemUI, then compare
-   the estimate against `dumpsys battery` (level, voltage, charge counter) and against a known load;
-   unplug/replug to see the charging branch and the window purge.
-4. Screen off for 10 min, screen on: `--` first, then a fresh number that does not inherit standby
-   drain.
-5. Charging: counts up with the configured symbol; at the top it says `FULL`; the charging cycle
+3. On the device, enable it from **Settings > Battery** (not `setprop`: `shell` may not write
+   `ashfall_prop`) with SystemUI already running, then, without restarting SystemUI, dump the view
+   tree and confirm the element is there and populated:
+
+   ```
+   adb shell cmd window dump-visible-window-views > views.zip
+   unzip -p views.zip '*StatusBar' | strings | grep -i playtime     # PlayTimeIndicatorView present
+   adb shell dumpsys android.hardware.health.IHealth/default         # batteryCurrentMicroamps (0 on RP5)
+   adb shell dumpsys battery                                         # level, voltage, charge counter
+   ```
+
+   Expected: a `PlayTimeIndicatorView` child of `system_icons` (BATTERY_LEFT/RIGHT), `layout:width`
+   above ~120 px once text is set (about 18 px of padding when it is empty), `misc:visibility = 0`,
+   and the text within ~2 s of the toggle (2 s settings re-read) and within one sample interval
+   (default 5 s) plus one charge-counter window (10 s) of a real number. `uiautomator dump` cannot
+   see it: the status bar window is not the active accessibility window.
+4. On battery (not charging): a real estimate, not `--`. The RP5 HAL gives no current, so this
+   exercises the charge-counter fallback; compare against `dumpsys battery` (level, voltage, charge
+   counter) and a known load. `adb shell dumpsys battery unplug` fakes the discharge state for a
+   quick check without unplugging.
+5. Unplug/replug to see the charging branch and the window purge; screen off for 10 min then on:
+   `--` first, then a fresh number that does not inherit standby drain.
+6. Charging: counts up with the configured symbol; at the top it says `FULL`; the charging cycle
    rotates the configured meters and stops with the screen off.
-6. Every placement and detail mode; `REPLACE_PERCENT` with the stock percentage both on and off.
-7. Landscape 1920x1080, 360 dpi, largest `size_sp`, longest string (`>48h · 12.3W · 4.20V`): the
-   indicator must not clip, overlap the clock or push it off-screen. Check `dumpsys SurfaceFlinger
-   --latency-clear` / a screenshot with the clock at both ends of the bar.
-8. Light, dark and tinted (wallpaper) status bars: colour matches the clock and battery text.
-9. Settings > Battery rows apply live and survive reboot; invalid values fall back to the defaults
-   above.
-10. Process cost: with `show=0`, `dumpsys gfxinfo` and `dumpsys activity processes` show no periodic
-    work from this feature (no Handler messages, no listener left behind).
+7. Every placement and detail mode; `REPLACE_PERCENT` with the stock percentage both on and off.
+8. Landscape 1920x1080, 360 dpi, largest `size_sp`, longest string (`>48h · 12.3W · 4.20V`): the
+   indicator must not clip, overlap the clock or push it off-screen. Check a screenshot with the
+   clock at both ends of the bar.
+9. Light, dark and tinted (wallpaper) status bars: colour matches the clock and battery text.
+10. Settings > Battery rows apply live (within ~2 s) and survive reboot; invalid values fall back to
+    the defaults above.
+11. Process cost: with `show=0` the only periodic work is the 2 s settings re-read (§4) - no sample
+    tick, no cycle timer, no registered battery receiver, no estimator work. `dumpsys gfxinfo` and
+    `dumpsys activity processes` should show no animation or wakelock from this feature.
 
 ## 9. Known limits
 
 - Lights-out (doze) dimming is applied by `PhoneStatusBarTransitions` to the containers it knows
   about; the indicator is not alpha-faded with the status icons. It is only visible while the status
   bar is, so this does not show in practice.
-- Reading `persist.ashfall.batt.*` from `system_app` needs `get_prop(system_app, ashfall_prop)`,
-  which the hwd worker adds to `aosp/vendor/ashfall/sepolicy/ashfall_props.te` (issue #137
-  section 1). Without it every settings read is denied and the indicator stays off - the documented
-  "not configured" state, not a crash. Telemetry itself needs no sepolicy change any more: it comes
-  from `BatteryManager`.
+- Reading `persist.ashfall.batt.*` from SystemUI needs `get_prop(platform_app, ashfall_prop)`.
+  SystemUI in this tree runs as **`platform_app`** (audit log on the device:
+  `scontext=u:r:platform_app:s0:c512,c768 app=com.android.systemui`), not `system_app`; the hwd
+  worker's `aosp/vendor/ashfall/sepolicy/ashfall_props.te` (issue #137 section 1) grants the wrong
+  domain, so the reads are currently denied and only work because the wave-2 device is permissive
+  (`permissive=1` in the audit line). An enforcing build needs the `platform_app` rule, otherwise
+  every settings read falls back to `show=0` - the documented "not configured" state, not a crash.
+  Telemetry itself needs no sepolicy change: it comes from `BatteryManager`.
 - The Settings page is out of scope here; it writes the properties above and nothing else.
