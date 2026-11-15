@@ -129,13 +129,19 @@ and roughly halves the size.
 
 Requires numpy, Pillow and `rsvg-convert`; ffmpeg for `--preview` only.
 
-## Promoting later
+## Where it is applied
 
-Not part of this change:
+1. `assets/icon.svg` is the icon the root README shows.
+2. `aosp/vendor/ashfall/apps/AshFallParts/res/drawable/ic_ashfall.xml` is the
+   parts app icon, scaled to 48 dp with the bloom approximated by three
+   translucent discs (no gradient inflation).
+3. `aosp/vendor/ashfall/rp5/brand/bootanimation.zip` ships to
+   `system/media/bootanimation.zip` via `vendor/ashfall/rp5/brand.mk`. The zip is
+   checked in on purpose: the build host has no numpy/Pillow/rsvg-convert, and
+   the animation has to exist at image build time.
 
-1. Copy the icon to the launcher/app icon and the mark to the boot splash.
-2. Ship the zip as `PRODUCT_COPY_FILES` to `system/media/bootanimation.zip`
-   (or `vendor/ashfall/rp5/` alongside the other RP5 product copies), the same
-   shape as the default wallpaper copy in `vendor/ashfall/ui.mk`.
-3. Check it on the RP5 in landscape, in light/dark/themed icon modes, and after
-   a `fastboot flash` that the boot animation is not shown sideways.
+Still to verify on hardware, in the build that carries this:
+
+* the animation comes up landscape, not sideways;
+* the parts app icon and the root README icon match what was authored;
+* no other package installs a second `system/media/bootanimation.zip`.

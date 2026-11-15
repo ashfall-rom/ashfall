@@ -6,6 +6,8 @@
 *.7z
 *.7z.*
 *.zip
+# Shipped boot animation: a static asset, not a build output
+!/aosp/vendor/ashfall/rp5/brand/bootanimation.zip
 *.lz4
 
 # Local overrides

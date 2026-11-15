@@ -1,25 +1,43 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- App icon (app info / Settings rows only; the app has no launcher entry). -->
+<!-- App icon (app info / Settings rows only; the app has no launcher entry).
+     AshFall mark: the A and the bloom from assets/brand/ashfall-icon.svg,
+     scaled to 48dp. The bloom is the same radial gradient as the source, so
+     the app icon and the README icon stay one design. -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:aapt="http://schemas.android.com/aapt"
     android:width="48dp"
     android:height="48dp"
     android:viewportWidth="48"
     android:viewportHeight="48">
+
+    <!-- tile -->
     <path
-        android:fillColor="#FF141414"
-        android:pathData="M12,4h24a8,8 0,0 1,8 8v24a8,8 0,0 1,-8 8H12a8,8 0,0 1,-8 -8V12a8,8 0,0 1,8 -8z" />
+        android:fillColor="#FF0B0C0F"
+        android:pathData="M24,0 a24,24 0 1 1 0,48 a24,24 0 1 1 0,-48 z" />
+
+    <!-- bloom, centred just below the letterform and clipped to the tile -->
+    <path android:pathData="M24,0 a24,24 0 1 1 0,48 a24,24 0 1 1 0,-48 z">
+        <aapt:attr name="android:fillColor">
+            <gradient
+                android:type="radial"
+                android:centerX="24"
+                android:centerY="28.125"
+                android:gradientRadius="23.4">
+                <item android:offset="0.0" android:color="#29FF8A3D" />
+                <item android:offset="0.45" android:color="#0DFF8A3D" />
+                <item android:offset="1.0" android:color="#00FF8A3D" />
+            </gradient>
+        </aapt:attr>
+    </path>
+
+    <!-- the A -->
     <path
-        android:fillColor="#FFFF2020"
-        android:pathData="M10,24.8m-3.4,0a3.4,3.4 0,1 1,6.8 0a3.4,3.4 0,1 1,-6.8 0" />
+        android:fillColor="#FFEDE9E4"
+        android:pathData="M22.875,10.5 C21.375,19.5 19.125,29.625 11.25,38.25 L17.4375,38.25 C22.125,29.8125 24.0,18.75 25.125,10.5 Z" />
     <path
-        android:fillColor="#FFFF2020"
-        android:pathData="M38,24.8m-3.4,0a3.4,3.4 0,1 1,6.8 0a3.4,3.4 0,1 1,-6.8 0" />
+        android:fillColor="#FFEDE9E4"
+        android:pathData="M25.125,10.5 C26.625,19.5 28.875,29.625 36.75,38.25 L30.5625,38.25 C25.875,29.8125 24.0,18.75 22.875,10.5 Z" />
     <path
-        android:fillColor="#00000000"
-        android:strokeColor="#FFFFFFFF"
-        android:strokeWidth="2.4"
-        android:pathData="M16,15h16a4,4 0,0 1,4 4v11a4,4 0,0 1,-4 4H16a4,4 0,0 1,-4 -4V19a4,4 0,0 1,4 -4z" />
-    <path
-        android:fillColor="#FFFFFFFF"
-        android:pathData="M19,20h10v8H19z" />
+        android:fillColor="#FFEDE9E4"
+        android:pathData="M18.375,28.125 a1.7812,1.7812 0 0 1 1.7812,-1.7812 h7.6876 a1.7812,1.7812 0 0 1 1.7812,1.7812 a1.7812,1.7812 0 0 1 -1.7812,1.7812 h-7.6876 a1.7812,1.7812 0 0 1 -1.7812,-1.7812 z" />
 </vector>

@@ -91,9 +91,9 @@ are copied into `res/drawable` under their final names:
 Both are 24 dp, single-colour vectors with no baked tint (`@android:color/white`
 artwork): Settings tints the preference rows, and SystemUI tints the tile icon
 for its active/inactive states, which is why the QS icons must stay
-monochrome.  The root homepage icon (`ic_handheld`) and the app icon
-(`ic_ashfall`) are unchanged; the old `ic_fan`/`ic_led`/`ic_tile_*` drawables are
-removed.
+monochrome.  The root homepage icon (`ic_handheld`) is unchanged; the app icon (`ic_ashfall`)
+is now the AshFall mark (the same geometry as `assets/brand/ashfall-icon.svg`),
+and the old `ic_fan`/`ic_led`/`ic_tile_*` drawables are removed.
 
 ## 2. Pages
 
