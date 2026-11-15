@@ -20,7 +20,9 @@ import android.content.Context;
 import android.util.TypedValue;
 import android.view.View;
 import android.view.ViewGroup;
+import android.view.ViewTreeObserver;
 import android.view.Window;
+import android.view.WindowInsets;
 
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
@@ -167,38 +169,151 @@ public final class Ui {
     /**
      * Sizes a floating dialog so its footer always stays on screen.
      *
-     * <p>The root is measured with the requested width and at most 85 % of the
-     * display height.  The final height is the natural content height clamped
-     * to [{@code minFraction} of the screen, 85 %], and the given {@code
-     * scroll} view is given whatever the header and footer leave over.  That
-     * keeps the Done/OK footer pinned and visible without scrolling (a plain
-     * {@code ScrollView} would otherwise grow to its full content height and
-     * push the footer out of the window), while a dialog with little content
-     * (e.g. the Fan QS preset list) still looks like a full dialog.
+     * <p>The root is measured with the requested width, the final height is the
+     * natural content height clamped to [{@code minFraction} of the screen,
+     * 85 %], and the given {@code scroll} view gets whatever the header and
+     * footer leave over, so the Done/OK footer is pinned and visible while the
+     * list scrolls.
+     *
+     * <p>The sizing is done twice, because a floating dialog does not know its
+     * real height before the window manager has laid it out:
+     *
+     * <ol>
+     *   <li>before the window is attached, with the display height as the
+     *       bound.  This is right for a dialog whose window may be as tall as
+     *       the screen (the colour picker, the Fan dialog);</li>
+     *   <li>in a one-shot post-layout pass, with the height the window really
+     *       got.  A Quick Settings tile dialog is hosted inside the QS panel,
+     *       which clamps it to the panel, and the old code kept the content at
+     *       the requested height: the last row and the Done button were laid
+     *       out past the rounded card and clipped (#156 §15; the Fan, Lighting,
+     *       Power and colour-picker dialogs share this helper).  The second pass
+     *       recomputes the real chrome from an unbounded measure and gives the
+     *       list exactly the space that is left.</li>
+     * </ol>
      */
     public static void fitDialog(@NonNull Window window, @NonNull View root,
             @Nullable View scroll, int widthDp, float minFraction) {
         final Context context = root.getContext();
         final int width = dp(context, widthDp);
-        final int screen = root.getResources().getDisplayMetrics().heightPixels;
+        final int screen = usableHeight(root);
         final int minHeight = Math.max(dp(context, 160),
                 Math.round(screen * Math.max(0f, minFraction)));
         final int maxHeight = Math.max(minHeight, Math.round(screen * 0.85f));
 
-        root.measure(View.MeasureSpec.makeMeasureSpec(width, View.MeasureSpec.EXACTLY),
-                View.MeasureSpec.makeMeasureSpec(maxHeight, View.MeasureSpec.AT_MOST));
-        final int natural = root.getMeasuredHeight();
+        if (scroll != null) {
+            // Start from the natural list height, not from a stale fixed one.
+            setHeight(scroll, ViewGroup.LayoutParams.WRAP_CONTENT);
+        }
+        final int natural = measure(root, width, maxHeight);
         int target = Math.min(Math.max(natural, minHeight), maxHeight);
-        if (scroll != null && target != natural) {
+        if (scroll != null && natural > maxHeight) {
             final int chrome = Math.max(0, natural - scroll.getMeasuredHeight());
-            final int scrollHeight = Math.max(dp(context, 96), target - chrome);
-            final ViewGroup.LayoutParams params = scroll.getLayoutParams();
-            params.height = scrollHeight;
-            scroll.setLayoutParams(params);
-            root.measure(View.MeasureSpec.makeMeasureSpec(width, View.MeasureSpec.EXACTLY),
-                    View.MeasureSpec.makeMeasureSpec(maxHeight, View.MeasureSpec.AT_MOST));
-            target = Math.min(Math.max(root.getMeasuredHeight(), minHeight), maxHeight);
+            setHeight(scroll, Math.max(dp(context, 96), target - chrome));
+            target = Math.min(Math.max(measure(root, width, maxHeight), minHeight), maxHeight);
         }
         window.setLayout(width, target);
+        fitToRealWindow(window, root, scroll, width, minHeight);
+    }
+
+    /**
+     * One-shot post-attach pass: sizes the list to the height the window really
+     * got.  A dialog is already laid out by the time {@code post} runs, so the
+     * pass applies at once; if the window has no height yet it waits for the
+     * first global layout and then applies once.
+     */
+    private static void fitToRealWindow(Window window, View root, @Nullable View scroll,
+            int width, int minHeight) {
+        if (scroll == null) {
+            return;
+        }
+        final View decor = window.getDecorView();
+        final ViewTreeObserver.OnGlobalLayoutListener listener =
+                new ViewTreeObserver.OnGlobalLayoutListener() {
+                    private boolean mDone;
+
+                    @Override
+                    public void onGlobalLayout() {
+                        final int actual = decor.getHeight();
+                        if (mDone || actual <= 0) {
+                            return;
+                        }
+                        mDone = true;
+                        decor.getViewTreeObserver().removeOnGlobalLayoutListener(this);
+                        applyRealHeight(window, root, scroll, width, minHeight, actual);
+                    }
+                };
+        root.post(() -> {
+            if (decor.getHeight() > 0) {
+                listener.onGlobalLayout();
+            } else {
+                decor.getViewTreeObserver().addOnGlobalLayoutListener(listener);
+            }
+        });
+    }
+
+    /**
+     * Fits the dialog to the real window height: the list gets
+     * {@code actual - chrome} where the chrome is the header and footer measured
+     * without a cap, so the footer is always inside the card.
+     */
+    private static void applyRealHeight(Window window, View root, View scroll, int width,
+            int minHeight, int actual) {
+        final Context context = root.getContext();
+        final int floor = dp(context, 96);
+        final int tolerance = dp(context, 2);
+        final int bound = root.getResources().getDisplayMetrics().heightPixels * 4;
+        setHeight(scroll, ViewGroup.LayoutParams.WRAP_CONTENT);
+        final int natural = measure(root, width, bound);
+        final int scrollNatural = scroll.getMeasuredHeight();
+        if (natural <= actual + tolerance) {
+            window.setLayout(width, Math.max(minHeight, Math.min(natural, actual)));
+            return;
+        }
+        final int chrome = Math.max(0, natural - scrollNatural);
+        final int scrollHeight = Math.max(floor, actual - chrome);
+        if (scrollHeight >= scrollNatural) {
+            return;
+        }
+        setHeight(scroll, scrollHeight);
+        final int laidOut = measure(root, width, actual);
+        window.setLayout(width, Math.min(laidOut, actual));
+    }
+
+    /** Measures the root at the requested width and returns its height. */
+    private static int measure(View root, int width, int maxHeight) {
+        root.measure(View.MeasureSpec.makeMeasureSpec(width, View.MeasureSpec.EXACTLY),
+                View.MeasureSpec.makeMeasureSpec(maxHeight, View.MeasureSpec.AT_MOST));
+        return root.getMeasuredHeight();
+    }
+
+    private static void setHeight(View view, int height) {
+        final ViewGroup.LayoutParams params = view.getLayoutParams();
+        if (params == null) {
+            return;
+        }
+        params.height = height;
+        view.setLayoutParams(params);
+    }
+
+    /**
+     * The height a dialog may use: the display height minus the system bars and
+     * a small margin, so the rounded card never touches them.  The real window
+     * insets are not known before the window is attached, and a Quick Settings
+     * dialog is attached only after {@code onCreate}, so this is a conservative
+     * estimate refined later by {@link #fitToRealWindow}.
+     */
+    private static int usableHeight(View root) {
+        final int screen = root.getResources().getDisplayMetrics().heightPixels;
+        final int margin = dp(root.getContext(), 48);
+        WindowInsets insets = root.getRootWindowInsets();
+        if (insets != null) {
+            final int bars = insets.getInsets(
+                    WindowInsets.Type.systemBars() | WindowInsets.Type.displayCutout()).top
+                    + insets.getInsets(
+                    WindowInsets.Type.systemBars() | WindowInsets.Type.displayCutout()).bottom;
+            return Math.max(dp(root.getContext(), 320), screen - bars - margin);
+        }
+        return Math.max(dp(root.getContext(), 320), screen - margin);
     }
 }

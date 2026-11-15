@@ -20,6 +20,7 @@ import android.content.Context;
 import android.content.SharedPreferences;
 import android.util.Log;
 
+import org.ashfall.parts.R;
 import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
@@ -106,22 +107,11 @@ public final class PowerPresetStore {
                 Power.GPU_STOCK_MHZ);
     }
 
-    /** The built-in Performance preset: stock CPU, the 850 MHz GPU step. */
+    /** The built-in Performance preset: stock CPU, the 850 MHz GPU step, `performance`. */
     public static PowerPreset performance() {
         return PowerPreset.builtin(ID_PERFORMANCE, "Performance", Power.SILVER_STOCK_MHZ,
-                Power.GOLD_STOCK_MHZ, Power.PRIME_STOCK_MHZ, Power.GOV_SCHEDUTIL,
-                Power.GPU_PRESET_MAX_MHZ);
-    }
-
-    /** A user preset built from an existing one (the only way to create one). */
-    public synchronized PowerPreset duplicate(PowerPreset preset) {
-        if (preset == null || mPresets.size() >= MAX_PRESETS) {
-            return null;
-        }
-        final PowerPreset copy = preset.copy(newUserId(), uniqueName(preset.name + " copy"));
-        mPresets.add(copy);
-        persist();
-        return copy;
+                Power.GOLD_STOCK_MHZ, Power.PRIME_STOCK_MHZ, Power.GOV_PERFORMANCE,
+                Power.PERFORMANCE_GPU_MHZ);
     }
 
     public synchronized boolean rename(PowerPreset preset, String name) {
@@ -168,6 +158,31 @@ public final class PowerPresetStore {
     }
 
     /**
+     * Restores one preset to its factory values: a built-in returns to the
+     * #124 table, a user preset cannot be reset (only renamed or deleted).
+     * The active settings are untouched; the page applies the new values when
+     * the preset is selected (#156 §5).
+     */
+    public synchronized boolean resetPreset(PowerPreset preset) {
+        if (preset == null) {
+            return false;
+        }
+        final PowerPreset table = tablePreset(preset.id);
+        if (table == null) {
+            return false;
+        }
+        preset.name = table.name;
+        preset.silverMhz = table.silverMhz;
+        preset.goldMhz = table.goldMhz;
+        preset.primeMhz = table.primeMhz;
+        preset.governor = table.governor;
+        preset.gpuMhz = table.gpuMhz;
+        preset.builtin = true;
+        persist();
+        return true;
+    }
+
+    /**
      * "Reset presets": the built-ins go back to the #124 table and every user
      * preset is removed.  The active id is remapped when it named a user preset.
      */
@@ -190,6 +205,23 @@ public final class PowerPresetStore {
         if (activeRemoved) {
             Power.setPresetId(ID_BALANCED);
         }
+    }
+
+    /** A user preset is created from the active one, never from nothing. */
+    public synchronized PowerPreset add(PowerPreset source, String name) {
+        if (source == null || mPresets.size() >= MAX_PRESETS) {
+            return null;
+        }
+        final PowerPreset preset = source.copy(newUserId(), uniqueName(name));
+        preset.builtin = false;
+        mPresets.add(preset);
+        persist();
+        return preset;
+    }
+
+    /** The name a new user preset gets before the user renames it. */
+    public String newPresetName(Context context) {
+        return uniqueName(context.getString(R.string.power_new_preset_name));
     }
 
     /** Restores one built-in to its table values, keeping its identity. */

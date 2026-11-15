@@ -121,6 +121,16 @@
             android:label="@string/power_title"
             android:theme="@style/Theme.AshFall.Settings" />
 
+        <!-- Power preset editor (#156 §5): lists every preset (built-ins
+             included) and edits one per screen.  Opened from the Power page and
+             from the Power Quick Settings dialog; not exported. -->
+        <activity
+            android:name=".PowerPresetActivity"
+            android:configChanges="orientation|screenSize|screenLayout|keyboardHidden"
+            android:exported="false"
+            android:label="@string/power_editor_title"
+            android:theme="@style/Theme.AshFall.Settings" />
+
         <activity
             android:name=".MemoryActivity"
             android:configChanges="orientation|screenSize|screenLayout|keyboardHidden"
