@@ -30,8 +30,11 @@ daemon applies settings at boot and at runtime.
 | `/sys/class/sn3112r/led/{enable,brightness}` | same | right stick ring |
 | `/sys/class/thermal/thermal_zone*/{type,temp}` | read | SoC temperatures (millidegrees C) |
 | `/sys/devices/system/cpu/cpufreq/policy*/scaling_*` | read/write | per-cluster max frequency and governor (§12) |
-| `/sys/block/zram0/*`, `/dev/block/zram0` | read/write | zram swap device (§13) |
-| `/data/ashfall/swapfile` | create/read/unlink | swapfile (§13) |
+| `/sys/block/zram0/*`, `/dev/block/zram0` | read/write | zram swap device, **owned by Android init only** - the daemon never touches it (§13) |
+| `/data/ashfall/swapfile` | create/read/unlink | AshFall swapfile (§13) |
+| `/proc/stat` | read | CPU utilisation for `ashfall.status.perf.cpu_load_pct` (§12.1) |
+| `/proc/meminfo` | read | `SwapTotal`/`SwapFree` for `ashfall.status.mem.swap_*` (§13) |
+| `/sys/devices/platform/soc/3d00000.qcom,kgsl-3d0/kgsl/kgsl-3d0/gpu_busy_percentage` | read | GPU utilisation for `ashfall.status.perf.gpu_load_pct` (§12.1); the daemon opens the resolved path, never the `/sys/class/kgsl` symlink |
 
 The vendor init script already `chmod 0666`s the fan and sn3112 attributes
 (`init.qcom.rc`), so no additional boot-time permission fix is needed.
@@ -60,14 +63,14 @@ stalled state, 5 s per step:
 | 3 700 | 7.4 | 0 | does not start from rest |
 | 3 900 | 7.8 | 1 800 | starts (once) |
 | 4 000 | 8 | 1 500-1 800 | **starts 3/3 from rest**, keeps running |
-| 4 920 | 9.8 | 1 800 | built-in quiet preset |
+| 4 920 | 9.8 | 1 800 | phase 5 built-in quiet preset (2 %, retired in wave 3) |
 | 5 000 | 10 | 2 100 | stock Quiet |
 | 6 000 | 12 | 2 400 | |
 | 8 000 | 16 | 3 300 | |
 | 12 000 | 24 | 4 500 | |
 | 16 000 | 32 | 6 000 | |
 | 20 000 | 40 | 7 200 | |
-| 25 000 | 50 | 8 100-8 700 | stock Sport / built-in balanced preset (25 160 ns) |
+| 25 000 | 50 | 8 100-8 700 | stock Sport |
 | 30 000 | 60 | 10 200 | |
 | 35 000 | 70 | 11 400 | |
 | 40 000 | 80 | 12 600 | |
@@ -94,9 +97,17 @@ Final constants and presets:
 |---|---|---|
 | `FAN_DUTY_MIN_NS` | 4 000 | 1 % output, ~1 800 RPM |
 | `FAN_DUTY_MAX_NS` | 50 000 | 100 % output, ~15 000 RPM |
-| `FAN_PRESET_QUIET_PCT` | 2 | 4 920 ns / ~1 800 RPM (stock Quiet 5 000 ns) |
-| `FAN_PRESET_BALANCED_PCT` | 46 | 25 160 ns / ~8 100 RPM (stock Sport 25 000 ns) |
-| `FAN_PRESET_MAX_PCT` | 100 | 50 000 ns / ~15 000 RPM |
+| `FAN_PRESET_QUIET_PCT` | 15 | 10 900 ns / ~3 900 RPM (interpolated) |
+| `FAN_PRESET_BALANCED_PCT` | 25 | 15 500 ns / ~5 800 RPM (interpolated) |
+| `FAN_PRESET_MAX_PCT` | 50 | 27 000 ns / ~8 500 RPM (interpolated) |
+
+Phase 6 wave 3 (issue #156 item 10) changed the built-in presets from 2/46/100 %
+to 15/25/50 %: the sweep above is still the reference, the values are read off
+it by interpolation.  Quiet is now the everyday silent speed (the old 2 % was
+below the shipped `min_pct=5` and stopped the fan), Balanced sits at ~5 800 RPM
+and the top preset (**displayed as "Performance"** in the app, internal mode id
+still `max`) runs at ~8 500 RPM instead of the 100 % ceiling.  The fan's full
+range stays available through `manual`/`smart`; only the three presets moved.
 
 ## 3. Fan modes
 
@@ -152,7 +163,7 @@ Phase 5 v3 additions (docs/phase5.md §7.1, issue #121):
   two attributes are independent, so a failed duty write can no longer leave
   the fan spinning (`out_pct = -1` makes the next tick retry).
 * **No readable sensor fails safe, never off:** if no zone is readable the fan
-  runs the balanced preset (46 %, ~8 100 RPM), `safety` latches, one warning is
+  runs the balanced preset (25 %, ~5 800 RPM), `safety` latches, one warning is
   logged, and the zones are re-scanned every 2 s until data returns.
 * Smart mode samples every 2 s, smooths with an EMA (`alpha = 0.35`) and applies
   a 3 °C hysteresis on the way down (the target is only lowered once the
@@ -177,23 +188,24 @@ Phase 5 v3 additions (docs/phase5.md §7.1, issue #121):
   written.  `pct == 0` stays `0`; `0 < pct < min_pct` becomes `0` (the fan
   stops completely: `state=0` *and* `duty=0`, never a partial duty);
   `min_pct <= pct <= max_pct` is unchanged; `pct > max_pct` becomes `max_pct`.
-  Every mode (Quiet/Balanced/Max, Manual, Smart, `off`) and the screen-off hold
+  Every mode (Quiet/Balanced/"Performance" (`max`), Manual, Smart, `off`) and the screen-off hold
   are covered, and `ashfall.status.fan.pct` reports the limited value that was
   applied.
 * **The limits never touch thermal protection:** the 90 °C rule and the
   no-sensor fail-safe both latch `safety`, are resolved before the limiter and
   bypass it (`max_pct=40` still gives 100 % at 90 °C).  This exception is not a
   setting and cannot be configured away.
-* **Quiet consequence:** the shipped `min_pct=5` is above the built-in Quiet
-  preset (`2 %`), so **Quiet stops the fan completely** until the low limit is
-  lowered to 0.  Balanced (46 %) and Max (100 %) sit inside the defaults.
+* **Presets and the limits:** every built-in preset (Quiet 15 %, Balanced 25 %,
+  "Performance" 50 %) now sits inside the shipped `min_pct=5`/`max_pct=100`
+  defaults, so none of them is cut off.  A raised `min_pct` above 15 % still
+  stops Quiet completely (`0 < pct < min_pct` -> `state=0`, `duty=0`).
 * **Spin-up kick:** it only runs for a non-zero limited target; a target cut to
   0 writes `state=0` + `duty=0` and cancels a pending kick.  When it does run,
   the level it raises the fan to is itself capped at `max_pct` (never above the
   high limit, not even for the 500 ms kick); the safety override is exempt.
 
 `ashfall.status.*` (written at most every 2 s, or every 500 ms while
-`ashfall.ui.fan_live=1`; only on change):
+`ashfall.ui.fan_live=1` or `ashfall.ui.power_live=1`; only on change):
 
 | property | meaning |
 |---|---|
@@ -229,9 +241,9 @@ logged once.  A `min_pct > max_pct` pair is invalid as a pair: both go back to
 |---|---|
 | `off` | rings disabled |
 | `static` | fixed left/right colour |
-| `breathing` | smooth brightness pulse, period `4000 / speed` ms, gamma-corrected |
-| `rainbow` | hue rotation, full turn every `18000 / speed` ms; with `sync=0` the right ring is offset by 120° |
-| `duo` | both sticks fade smoothly between `color_left` and `color_right` (`5000 / speed` ms per direction) |
+| `breathing` | smooth brightness pulse, period `12000 / speed` ms, gamma-corrected |
+| `rainbow` | hue rotation, full turn every `54000 / speed` ms; with `sync=0` the right ring is offset by 120° |
+| `duo` | both sticks fade smoothly between `color_left` and `color_right` (`15000 / speed` ms per direction) |
 
 `sync=1` makes the right side use the left colour.  `brightness` 0..100 scales
 the channels; `speed` 1..10.  Screen state comes from the framework's
@@ -303,8 +315,13 @@ Repeat after a cold boot and with each mode (`static`, `breathing`, `rainbow`,
 
 **Effects (phase 5 v2):**
 
-* Rainbow is three times slower than v1: one full hue turn takes
-  `18000 / speed` ms (was `6000 / speed`).
+* **All three effect periods were multiplied by 3 in phase 6 wave 3** (issue
+  #156 item 13): at the same `persist.ashfall.led.speed` the effects were
+  perceived as 3x too fast against the stock app.  One full hue turn now takes
+  `54000 / speed` ms, breathing `12000 / speed` ms and duo
+  `15000 / speed` ms each way; the slider range stays 1..10, so speed 10 is
+  still the fastest useful value (`5400` ms per rainbow turn).  The 50 fps
+  render (20 ms) keeps every effect step-free at those periods.
 * Breathing interpolates in **perceptual** brightness: the sine is raised to
   the power 2.2 (gamma) with a 2 % floor, and the daemon renders at 50 fps
   (20 ms), so there are no visible steps at speed 5.
@@ -411,9 +428,9 @@ device (build `20261113-213314`):
 | `ashfall_fan_sysfs` | `/class/gpio5_pwm2` | the driver registers class-level attributes, so `state`/`duty`/`speed` live directly in the class directory (it is a real directory, not a device symlink); `avc` confirms `path="/sys/class/gpio5_pwm2/state"` |
 | `ashfall_led_sysfs` | `/devices/virtual/sn3112l`, `/devices/virtual/sn3112r` | `/sys/class/sn3112{l,r}/led` are symlinks into these device dirs; `avc` confirms `path="/sys/devices/virtual/sn3112l/led/brightness"` |
 | `ashfall_cpu_sysfs` | `/devices/system/cpu/cpufreq`, `/devices/system/cpu/cpu{0..7}/cpufreq` | phase 6 (#124): the `policy*` dirs are symlinks into `cpuN/cpufreq`; the platform label `sysfs_devices_system_cpu` is not writable by a coredomain (§12) |
-| `sysfs_zram` (platform) | `/devices/virtual/block/zram0` | phase 6 (#141): `/sys/block/zram0/*` resolves to the platform-labelled zram device; the daemon gets a read/write allow on the public type (§13) |
 | `ashfall_swap_file` | `/data/ashfall(/.*)?` | phase 6 (#141): the swapfile directory and file; created by init at `post-fs-data` so the label is inherited (§13) |
-| `ashfall_gpu_sysfs` (+ `gpuclk`) | `.../kgsl/kgsl-3d0/gpuclk` (platform + legacy) | phase 6 (#124): the read-only live GPU clock behind `ashfall.status.perf.gpu_mhz`; only this attribute was added, `min_freq`/`max_freq` are unchanged (#120 stays open) |
+| `ashfall_gpu_sysfs` (+ `gpuclk`, `gpu_busy_percentage`) | `.../kgsl/kgsl-3d0/{gpuclk,gpu_busy_percentage}` (platform + legacy) | phase 6 (#124, wave 3 #156): the read-only live GPU clock and GPU busy percentage behind `ashfall.status.perf.{gpu_mhz,gpu_load_pct}`; `min_freq`/`max_freq` are unchanged (#120 stays open) |
+| `proc_meminfo`, `proc_stat` (platform) | `/proc/meminfo`, `/proc/stat` | phase 6 (#141) / wave 3 (#156): the swapfile status and the CPU-load delta; both are explicit allows because the platform does not grant them to every domain (§12/§13) |
 
 On the test build the nodes were still labelled `u:object_r:sysfs:s0` (and the
 `shell` domain that ran the test binary is a permissive domain in userdebug),
@@ -422,10 +439,12 @@ the first integration build: after flashing, `ls -lZ` must show
 `ashfall_fan_sysfs` / `ashfall_led_sysfs` and `dmesg | grep avc` must be clean
 while fan and LEDs are driven.
 
-Phase 6 also relabels `/dev/block/zram0` (`ashfall_zram_device`) and grants
-`sys_admin` for swapon/swapoff.  Battery data is deliberately not read here
-(§11): a coredomain may not touch `sysfs_batteryinfo`, and the RP5 nodes are
-vendor-labelled.
+Phase 6 grants `sys_admin` for swapon/swapoff and labels
+`/data/ashfall(/.*)?` as `ashfall_swap_file`.  **Wave 3 removed the zram half**
+(issue #156 item 7): Android init owns `/dev/block/zram0`, so there is no zram
+device type, no `sysfs_zram` access and only the swapfile remains (§13).
+Battery data is deliberately not read here (§11): a coredomain may not touch
+`sysfs_batteryinfo`, and the RP5 nodes are vendor-labelled.
 
 Thermal zones need no new type: the stock vendor policy (still in place under
 the GSI) labels `/devices/virtual/thermal` and `/class/thermal` as
@@ -454,7 +473,9 @@ Run on a build that contains `ashfall-hwd` (a manually pushed binary runs as
    `adb shell logcat -s ashfall-hwd` shows the thermal zone list and the LED
    backend (`sn3112` left/right yes).
 2. Fan: `adb shell setprop persist.ashfall.fan.mode max` spins up within 1 s;
-   `quiet` is noticeably slower; `off` stops it.  `ashfall.status.fan.pct`
+   `quiet` (15 %) is noticeably slower, `balanced` (25 %) sits in between and
+   the top preset (`max`, shown as "Performance" in the app) runs at 50 %;
+   `off` stops it.  `ashfall.status.fan.pct`
    follows, `ashfall.status.fan.temp` tracks `cpu-1-*`.
 3. Smart: heat the device (game/benchmark); output rises along the curve and
    drops only ~3 °C later than it rose.  With `ashfall.ui.fan_live=1` the
@@ -470,7 +491,8 @@ Run on a build that contains `ashfall-hwd` (a manually pushed binary runs as
    releases at 80 °C, also with the screen off.
 7. Lighting: `static` with `color_left=FF0000` lights the left ring red,
    `color_right=0000FF` (with `sync=0`) the right one blue; `breathing`,
-   `rainbow` (now 3x slower) and `duo` animate smoothly at speed 5;
+   `rainbow` and `duo` animate smoothly and slowly at speed 5
+   (rainbow: one turn per 10.8 s);
    `brightness 0` is dark; `ashfall.ui.led_override=FF0000:0000FF` shows the
    exact colours regardless of mode and stops the animation.
 8. Performance override: `setprop ashfall.perf.throttle_override 1` ->
@@ -481,9 +503,25 @@ Run on a build that contains `ashfall-hwd` (a manually pushed binary runs as
    untouched (§9).
 9. `adb shell dmesg | grep avc` (and `logcat -b events | grep avc`) is clean
    after exercising all of the above on an **enforcing** build.
-10. Phase 6 telemetry: §12 (CPU caps and governor) and §13 (zram/swapfile)
-    carry their own property tables and enforcing checks; §11 explains why
-    battery data is not read by `ashfall-hwd`.
+10. Live tick (wave 3): with the Power page open (`ashfall.ui.power_live=1`)
+    `ashfall.status.perf.cpu_mhz_*`, `gpu_mhz`, `cpu_load_pct`, `gpu_load_pct`
+    and `throttle` change every ~500 ms; close the page (property cleared) and
+    they fall back to the 2 s tick.  No second timer appears in `top -H`.
+11. Load values (wave 3): idle -> `cpu_load_pct` below ~10 and
+    `gpu_load_pct` 0-ish (never a fixed 100 from a clock-ratio); run the stress
+    test -> both rise, and both are `-1` rather than `0` when their node is
+    missing.
+12. Governor (wave 3): `persist.ashfall.perf.cpu_gov=performance` is accepted
+    (one `cpu: governor performance (requested performance)` line) and
+    `scaling_governor` reads `performance` on all three policies, with the
+    `scaling_max_freq` cap still applied; an unknown name still lands on
+    `schedutil` (§12).
+13. Memory (wave 3): no `persist.ashfall.mem.zram_mb` / `ashfall.status.mem.zram_*`
+    property exists; `ashfall.status.mem.swap_*` is the only memory telemetry
+    and the Memory page has no zram row (§13).
+14. Phase 6 telemetry: §12 (CPU caps, governor, CPU/GPU load) and §13
+    (swapfile) carry their own property tables and enforcing checks; §11
+    explains why battery data is not read by `ashfall-hwd`.
 
 ## 7. On-device verification (2026-11-13, build 20261113-213314)
 
@@ -739,7 +777,7 @@ builds `integ/phase5` and hands the RP5 over serially).  The checks to run:
    with the screen and kicks on wake.
 5. LEDs: they are dark with the screen off (no `ashfall.led.screen_off`
    property exists any more) and come back on screen-on after toggling
-   modes; `rainbow` is 3x slower; `breathing` is smooth at speed 5;
+   modes; `rainbow` turns once per 10.8 s at speed 5; `breathing` is smooth;
    `ashfall.ui.led_override=FF0000:0000FF` shows exactly red:blue.
 6. Wake re-apply (#109): the 20-cycle power-button test in §4 -> both rings
    lit after every unlock, one `ashfall-hwd` line per transition, no write
@@ -762,9 +800,10 @@ The battery sysfs read cannot be made legal from this domain:
 Battery telemetry therefore comes from **`BatteryManager` in the app/SystemUI
 processes** (Power page #124, PlayTime #137, Parts): `getIntProperty` for
 current/charge/capacity, `EXTRA_VOLTAGE`/`EXTRA_LEVEL`/`EXTRA_STATUS` from the
-battery sticky intent, and `isCharging`.  The 2 s status tick keeps publishing
-the CPU, GPU and memory telemetry only (`docs/phase6.md` §9.3's power rows no
-longer exist).
+battery sticky intent, and `isCharging`.  The status tick keeps publishing the
+CPU, GPU and swapfile telemetry only (`docs/phase6.md` §9.3's power rows no
+longer exist); its period is 2 s, or 500 ms while the Fan page
+(`ashfall.ui.fan_live`) or the Power page (`ashfall.ui.power_live`) is visible.
 
 ## 12. CPU clock caps and governor (#124)
 
@@ -773,6 +812,8 @@ longer exist).
 | `persist.ashfall.perf.cpu_max_silver` / `_gold` / `_prime` | `ashfall_perf_prop` | MHz cap, `0` = stock max |
 | `persist.ashfall.perf.cpu_gov` | `ashfall_perf_prop` | one governor for all three policies, default `schedutil` |
 | `ashfall.status.perf.cpu_mhz_silver` / `_gold` / `_prime` | `ashfall_status_prop` | effective `scaling_cur_freq`, `-1` unavailable |
+| `ashfall.status.perf.cpu_load_pct` / `gpu_load_pct` | `ashfall_status_prop` | real utilisation 0..100, `-1` unknown (wave 3, §12.1) |
+| `ashfall.ui.power_live` | `ashfall_ui_prop` | `1` while the Power page is visible: the status tick runs at 500 ms instead of 2 s |
 
 **Policy discovery.**  The three policies are found by walking
 `/sys/devices/system/cpu/cpufreq` (not by assuming `policy0/4/7`): each
@@ -796,12 +837,16 @@ table's top *is* stock.  `scaling_max_freq` and `scaling_governor` are
 re-applied at boot (the kernel resets both) and on every property change, and
 are re-validated each time because a property can come from `adb shell`.
 
-**Governor.** Validated against `scaling_available_governors`; only
-`schedutil`, `conservative` and `powersave` are accepted (the editor exposes
-exactly those).  `walt`/`performance` and unknown names become `schedutil`; if
-`schedutil` is not in the list, the first of the three that is.  With
-`powersave` the caps are inert (the governor pins the lowest step), as the app
-documents.
+**Governor.** Validated against `scaling_available_governors`; `schedutil`,
+`conservative`, `powersave` and **`performance`** are accepted (the editor
+exposes exactly those; wave 3 added `performance` for the built-in Performance
+preset, issue #156 item 6).  `walt` and unknown names become `schedutil`; if
+`schedutil` is not in the list, the first of the four that is, and a name the
+kernel does not offer falls back the same way.  With `powersave` the caps are
+inert (the governor pins the lowest step).  **`performance` still respects
+`scaling_max_freq`**: it pins the (capped) asked clock instead of scaling, it
+never raises the cap - a 1171 MHz silver cap plus `performance` stays at 1171
+MHz.
 
 **SELinux.**  The `policy*` directories are symlinks into `cpuN/cpufreq`, which
 is `sysfs_devices_system_cpu` and not writable by a coredomain.  The cpufreq
@@ -827,6 +872,37 @@ adb shell dmesg | grep avc      # must be clean
 the Power page, and treat a denial in an `ashfall_hwd` line (not a `setprop`
 line) as the policy bug.
 
+### 12.1 Real CPU/GPU load (wave 3, issue #156 item 3)
+
+The Power page plots **utilisation**, not clock-as-percent-of-max: an idle
+device sits near 0 %, the stress test drives it up.  Both values are read on the
+existing status tick (no second timer, no second reader) and published only on
+change:
+
+* `ashfall.status.perf.cpu_load_pct` - the **aggregate** `cpu` line of
+  `/proc/stat`: `(total_delta - idle_delta) * 100 / total_delta`, where `idle`
+  is `idle + iowait` and `total` is the first eight fields (`guest`/`guest_nice`
+  are already part of `user`).  The delta is taken between two ticks, so the
+  very first tick after start publishes `-1` (no baseline), as does an
+  unreadable/torn read or counters that went backwards after a hotplug reset -
+  a gap, never a fabricated 0 or 100.  `proc_stat` is granted explicitly in
+  `ashfall_hwd.te`.
+* `ashfall.status.perf.gpu_load_pct` - kgsl's `gpu_busy_percentage` (it prints
+  `"<n> %"`, the daemon parses the number).  Clamped to 0..100, `-1` when the
+  node is missing or negative.
+
+Both attributes were added to the `ashfall_gpu_sysfs` relabel as exact-path
+`file_contexts` entries plus `genfs_contexts` fallbacks for the platform and
+legacy layouts (dots escaped, same pattern as `gpuclk`), read-only for the
+daemon:
+
+```
+/sys/devices/platform/soc/3d00000\.qcom,kgsl-3d0/kgsl/kgsl-3d0/gpu_busy_percentage
+/sys/devices/soc/3d00000\.qcom,kgsl-3d0/kgsl/kgsl-3d0/gpu_busy_percentage
+```
+
+### 12.2 Live GPU clock telemetry
+
 `ashfall.status.perf.gpu_mhz` is the **live** kgsl clock from `gpuclk` (Hz),
 converted to MHz and read once per existing status tick: `-1` when the node is
 missing or unreadable (the Power page graph draws a gap), `0` when the GPU
@@ -843,68 +919,62 @@ escaped:
 `min_freq`/`max_freq` are untouched and the #120 vendor-perf-HAL question stays
 open; the cap properties (`gpu_max_mhz`, `gpu_oc`) are unchanged.
 
-## 13. Memory: zram and swapfile (#141)
+## 13. Memory: swapfile only (#141, #156 item 7)
 
 | property | type | meaning |
 |---|---|---|
-| `persist.ashfall.mem.zram_mb` | `ashfall_prop` | zram size, `0` = off, clamped to `MemTotal/2` |
-| `persist.ashfall.mem.swap_mb` | `ashfall_prop` | swapfile size, `0` = off, clamped to 16384 MB |
-| `ashfall.status.mem.zram_mb` / `swap_mb` | `ashfall_status_prop` | applied sizes; `0` off, `-1` unavailable |
-| `ashfall.status.mem.zram_used_kb` / `zram_saved_kb` | `ashfall_status_prop` | `mm_stat`: compressed size and `orig - compressed` |
-| `ashfall.status.mem.swap_total_kb` / `swap_used_kb` | `ashfall_status_prop` | `/proc/meminfo` `SwapTotal`/`SwapFree` |
+| `persist.ashfall.mem.swap_mb` | `ashfall_prop` | swapfile size, `0` = off, clamped to 16384 MB and to the `/data` free space |
+| `ashfall.status.mem.swap_mb` | `ashfall_status_prop` | applied size; `0` off, `-1` unavailable |
+| `ashfall.status.mem.swap_total_kb` / `swap_used_kb` | `ashfall_status_prop` | `/proc/meminfo` `SwapTotal`/`SwapFree` (includes init's zram, see below) |
 
-**zram.** `/dev/block/zram0` plus `/sys/block/zram0/{disksize,reset,
-comp_algorithm,comp_available,mm_stat}`.  Apply order: `swapoff` (when the
-device is in use) -> `reset` -> `comp_algorithm` -> `disksize` -> **v1 swap
-header** -> `swapon` (priority 1).  A freshly reset zram device is all zeros and
-`swapon(2)` rejects it with `EINVAL`, so the daemon writes the same v1 header
-that Android init's `mkswap` would (version 1, `last_page`, `SWAPSPACE2` at
-offset 4086) before attaching it.  On the boot/restart re-attach path `swapon`
-is tried first; only an `EINVAL` makes the daemon format the device once and
-retry (`EBUSY` means it is already active and is success - an active device is
-never formatted).  The compressor is `lz4` when `comp_available` lists it, else the
-first available one, logged once (`mem: zram compressor lz4`); there is no UI
-option.  The size is clamped to `MemTotal/2` (4000 MB on the 8 GB unit, 6000 on
-12 GB) and to 6144 MB, so the stock 4096 MB is never applied on an 8 GB unit.
-The same size is idempotent: boot and a daemon restart only re-run `swapon`
-instead of reallocating the device.
+**zram is gone (phase 6 wave 3, issue #156 item 7).**  Android init already
+attaches `/dev/block/zram0` (4 GB swap at boot), the device is
+`vendor`-configured and a `system_ext` daemon cannot own it - the stock init
+`mkswap`/`swapon` sequence and the daemon would fight over the same block
+device.  `persist.ashfall.mem.zram_mb`, the `ashfall.status.mem.zram_*`
+properties, the zram apply/probe/status code (`mem.c`/`mem.h`), the zram SELinux
+rules (`ashfall_zram_device`, the `sysfs_zram` allows, the `/dev/block/zram0`
+`file_contexts` entry) and the zram genfs comments were removed.  The Memory page
+row is the app worker's change; the daemon has no zram interface any more.
+`ashfall.status.mem.swap_total_kb` therefore still includes init's zram swap -
+that is the kernel's `/proc/meminfo`, and it is the number the user sees in
+`/proc/swaps`.
 
-**swap.** A file at `/data/ashfall/swapfile` on the f2fs data partition,
-created with `fallocate` (a sparse `ftruncate` when the filesystem refuses) and
-a v1 swap header written by the daemon, then `swapon` with priority 2 (zram
-stays preferred, both coexist).  The request is clamped to 16384 MB (the daemon
-enforces the UI cap too) and to `/data` free space minus a 2048 MB reserve; a
-rejected request logs one line and publishes the effective value.  Disabling
-swaps off, unlinks the file and returns the space.
+**swapfile.** A file at `/data/ashfall/swapfile` on the f2fs data partition
+(`swapon` priority 2), created with `fallocate` (a sparse `ftruncate` when the
+filesystem refuses) and a v1 swap header written by the daemon, then `swapon`.
+The request is clamped to 16384 MB (the daemon enforces the UI cap too) and to
+`/data` free space minus a 2048 MB reserve; a rejected request logs one line and
+publishes the effective value.  The same size is idempotent: boot and a daemon
+restart only re-run `swapon` instead of reallocating the file.  Disabling swaps
+off, unlinks the file and returns the space.
 
-**Missing nodes.**  No `/dev/block/zram0` (module not in `vendor_dlkm`) or no
-`/data` mount is a logged no-op: the size is published as `-1` and the daemon
-keeps running.  A swapfile allocation of several GB can take seconds on the
-first enable (and at boot if the property is set); the daemon is single-threaded,
-so the fan holds its last applied duty for that window.  This is documented, not
-a regression: no new daemon or thread is added.
+**Missing nodes.**  No `/data` mount is a logged no-op: the size is published as
+`-1` and the daemon keeps running.  A swapfile allocation of several GB can take
+seconds on the first enable (and at boot if the property is set); the daemon is
+single-threaded, so the fan holds its last applied duty for that window.  This is
+documented, not a regression: no new daemon or thread is added.  A request that
+is still not in effect is retried every 5 s for a bounded number of attempts
+(`MEM_RETRY_BUDGET`), so a permanent failure cannot turn into a retry loop that
+re-allocates the file.
 
-**SELinux / init.**  `/dev/block/zram0` is `ashfall_zram_device`,
-`/sys/block/zram0/*` -> the platform's `sysfs_zram` (no AshFall relabel),
-`/data/ashfall(/.*)?` ->
-`ashfall_swap_file`, and `swapon`/`swapoff` need `sys_admin`.
-`ashfall-hwd.rc` creates `/data/ashfall` at `post-fs-data` with
-`restorecon_recursive`, so both the directory and a runtime-created swapfile
-carry `ashfall_swap_file` (a directory created by the daemon itself would
-inherit the `/data` label).  Enforcing check:
+**SELinux / init.**  `/data/ashfall(/.*)?` is `ashfall_swap_file`, and
+`swapon`/`swapoff` need `sys_admin`.  `ashfall-hwd.rc` creates `/data/ashfall` at
+`post-fs-data` with `restorecon_recursive`, so both the directory and a
+runtime-created swapfile carry `ashfall_swap_file` (a directory created by the
+daemon itself would inherit the `/data` label).  `/proc/meminfo` is
+`proc_meminfo`; the platform does not grant it to every domain (the #141 logcat
+showed the denial on the permissive test build, where it is only logged), so
+`ashfall_hwd.te` carries an explicit `allow ashfall_hwd proc_meminfo:file
+r_file_perms`.  Enforcing check:
 
 ```bash
 adb shell 'ls -Zd /data/ashfall /data/ashfall/swapfile'
 #   -> u:object_r:ashfall_swap_file:s0
-adb shell ls -Z /dev/block/zram0 /sys/block/zram0/disksize
-#   -> ashfall_zram_device / sysfs_zram (platform type)
-adb shell 'setprop persist.ashfall.mem.zram_mb 2048; cat /proc/swaps'
-adb shell 'getprop | grep ashfall.status.mem'
+adb shell 'setprop persist.ashfall.mem.swap_mb 2048; cat /proc/swaps'
+adb shell 'getprop ashfall.status.mem.swap_mb ashfall.status.mem.swap_used_kb'
 adb shell dmesg | grep avc      # must be clean
 ```
-
-`/proc/meminfo` is `proc_meminfo`, readable by every domain in the platform
-policy, so it needs no AshFall rule.
 
 ## 14. Fan output limit during the spin-up kick (#129)
 

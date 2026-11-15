@@ -8,6 +8,7 @@
 #include "cpu.h"
 #include "fan.h"
 #include "gpu.h"
+#include "hwd.h"
 #include "led.h"
 #include "mem.h"
 #include "plat.h"
@@ -118,15 +119,6 @@ static int read_int(const char *relative)
     return atoi(buf);
 }
 
-static long long read_ll(const char *relative)
-{
-    char buf[64];
-
-    if (read_file(relative, buf, sizeof(buf)) < 0)
-        return LLONG_MIN;
-    return strtoll(buf, NULL, 10);
-}
-
 static long long file_size(const char *relative)
 {
     char path[PATH_MAX];
@@ -217,6 +209,7 @@ static int make_sysfs(void)
                "670000000 587000000 525000000 490000000 441600000 400000000 "
                "305000000\n");
     write_file(FAKE_KGSL_DEV "/kgsl/kgsl-3d0/gpuclk", "305000000\n");
+    write_file(FAKE_KGSL_DEV "/kgsl/kgsl-3d0/gpu_busy_percentage", "0 %\n");
 
     /* CPU frequency policies (phase 6, #124), kona layout and steps. */
     make_cpu_policy("policy0", "0 1 2 3\n",
@@ -228,19 +221,13 @@ static int make_sysfs(void)
                     "2841600 2419200 1958400 1516800 1171200 940800 844800\n",
                     "1958400\n");
 
-    /* Memory (phase 6, #141): 8 GB unit, zram module loaded, 0 MB applied. */
+    /* Memory (phase 6, #141): swapfile only (zram removed in wave 3). */
     mkdir_p("/proc");
     write_file("/proc/meminfo",
                "MemTotal:        8192000 kB\nMemFree:         4096000 kB\n"
                "SwapTotal:             0 kB\nSwapFree:              0 kB\n");
-    mkdir_p("/sys/block/zram0");
-    write_file("/sys/block/zram0/disksize", "0\n");
-    write_file("/sys/block/zram0/reset", "0\n");
-    write_file("/sys/block/zram0/comp_algorithm", "lzo\n");
-    write_file("/sys/block/zram0/comp_available", "lzo lzo-rle lz4\n");
-    write_file("/sys/block/zram0/mm_stat", "0 0 0 0 0 0 0\n");
-    mkdir_p("/dev/block");
-    write_file("/dev/block/zram0", "");
+    write_file("/proc/stat",
+               "cpu  100 0 100 800 0 0 0 0 0 0\ncpu0 100 0 100 800 0 0 0 0 0 0\n");
     mkdir_p("/data");
 
     mkdir_p("/sys/class/thermal/thermal_zone0");
@@ -420,15 +407,26 @@ static void test_presets(void)
 
     fan_state_init(&fan);
     fan.settings.mode = FAN_MODE_QUIET;
-    fan.settings.min_pct = 0; /* Quiet (2 %) runs: see test_limits for the cut-off */
+    fan.settings.min_pct = 0; /* low limit off (see test_limits) */
     CHECK_EQ(fan_control_tick(&fan, 400, 1000, true),
              FAN_KICK_DEFAULT_PCT); /* kick, never 100 % */
     CHECK_EQ(fan_control_tick(&fan, 400, 1000 + FAN_KICK_MS + 1, true),
              FAN_PRESET_QUIET_PCT);
 
+    /* Issue #156 item 10: Quiet 15 %, Balanced 25 %, "Performance" 50 %. */
+    CHECK_EQ(FAN_PRESET_QUIET_PCT, 15);
+    CHECK_EQ(FAN_PRESET_BALANCED_PCT, 25);
+    CHECK_EQ(FAN_PRESET_MAX_PCT, 50);
+    CHECK_EQ(fan_control_tick(&fan, 400, 2000, true), 15);
+    fan.settings.mode = FAN_MODE_BALANCED;
+    CHECK_EQ(fan_control_tick(&fan, 400, 3000, true), 25);
+    CHECK_EQ(read_int("/sys/class/gpio5_pwm2/duty"),
+             fan_pct_to_duty(25));
+
     fan.settings.mode = FAN_MODE_MAX;
     CHECK_EQ(fan_control_tick(&fan, 400, 5000, true), FAN_PRESET_MAX_PCT);
-    CHECK_EQ(read_int("/sys/class/gpio5_pwm2/duty"), fan_pct_to_duty(100));
+    CHECK_EQ(read_int("/sys/class/gpio5_pwm2/duty"),
+             fan_pct_to_duty(FAN_PRESET_MAX_PCT));
 }
 
 static void test_safety(void)
@@ -526,12 +524,15 @@ static void test_limits(void)
     CHECK_EQ(fan.out_pct, 40);
     CHECK_EQ(read_int("/sys/class/gpio5_pwm2/duty"), fan_pct_to_duty(40));
 
-    /* Quiet (2 %) stops the fan under the shipped defaults and runs again
-     * with min_pct = 0. */
+    /* Quiet (15 %) sits inside the shipped 5..100 limits and runs; it is cut
+     * to 0 only when the low limit is raised above it. */
     fan.settings.mode = FAN_MODE_QUIET;
     fan.settings.max_pct = FAN_MAX_PCT_DEFAULT;
     fan.settings.min_pct = FAN_MIN_PCT_DEFAULT;
-    CHECK_EQ(fan_control_tick(&fan, 400, 11000, true), 0);
+    CHECK_EQ(fan_control_tick(&fan, 400, 11000, true), FAN_PRESET_QUIET_PCT);
+    CHECK_EQ(read_int("/sys/class/gpio5_pwm2/state"), 1);
+    fan.settings.min_pct = 20;
+    CHECK_EQ(fan_control_tick(&fan, 400, 13500, true), 0);
     CHECK_EQ(read_int("/sys/class/gpio5_pwm2/state"), 0);
     fan.settings.min_pct = 0;
     CHECK_EQ(fan_control_tick(&fan, 400, 13000, true), FAN_KICK_DEFAULT_PCT);
@@ -542,9 +543,10 @@ static void test_limits(void)
     /* max_pct 100 disables the cap. */
     fan.settings.mode = FAN_MODE_MAX;
     fan.settings.max_pct = 100;
-    CHECK_EQ(fan_control_tick(&fan, 400, 16000, true), 100);
+    CHECK_EQ(fan_control_tick(&fan, 400, 16000, true),
+             FAN_PRESET_MAX_PCT);
     CHECK_EQ(read_int("/sys/class/gpio5_pwm2/duty"),
-             fan_pct_to_duty(100));
+             fan_pct_to_duty(FAN_PRESET_MAX_PCT));
 
     /* The 90 C last-resort rule is never capped: max 40 still gives 100 %. */
     fan.settings.mode = FAN_MODE_MANUAL;
@@ -556,7 +558,7 @@ static void test_limits(void)
     CHECK_EQ(read_int("/sys/class/gpio5_pwm2/duty"),
              fan_pct_to_duty(100));
 
-    /* The no-sensor fail-safe (balanced 46 %) is exempt as well. */
+    /* The no-sensor fail-safe (balanced 25 %) is exempt as well. */
     fan_state_init(&fan);
     fan.settings.mode = FAN_MODE_MANUAL;
     fan.settings.manual_pct = 2;
@@ -736,20 +738,20 @@ static void test_led_effects(void)
     /* duo: both sticks show the interpolated colour; at phase 0 it is the
      * left colour, half a period later the right colour. */
     led.settings.mode = LED_MODE_DUO;
-    led.settings.speed = 5; /* period 5000 ms / 5 = 1000 ms */
+    led.settings.speed = 5; /* period 15000 ms / 5 = 3000 ms */
     led.settings.left = (rgb_t){255, 0, 0};
     led.settings.right = (rgb_t){0, 0, 255};
     led_frame(&led, 0, frame);
     CHECK_EQ(frame[0].r, 255);
     CHECK_EQ(frame[0].b, 0);
     CHECK(!memcmp(&frame[0], &frame[1], sizeof(frame[0])));
-    led_frame(&led, 250, frame);
+    led_frame(&led, 750, frame);
     CHECK(frame[0].r >= 127 && frame[0].r <= 128);
     CHECK(frame[0].b >= 127 && frame[0].b <= 128);
-    led_frame(&led, 500, frame);
+    led_frame(&led, 1500, frame);
     CHECK_EQ(frame[0].r, 0); /* half a period later: the right colour */
     CHECK_EQ(frame[0].b, 255);
-    led_frame(&led, 1000, frame);
+    led_frame(&led, 3000, frame);
     CHECK_EQ(frame[0].r, 255); /* a full period wraps back */
 
     /* breathing stays between 2 % (gamma curve floor) and 100 % of the base
@@ -757,23 +759,23 @@ static void test_led_effects(void)
     led.settings.mode = LED_MODE_BREATHING;
     led.settings.left = (rgb_t){200, 200, 200};
     led.settings.right = (rgb_t){200, 200, 200};
-    for (int t = 0; t <= 800; t += 5) {
+    for (int t = 0; t <= 2400; t += 5) {
         led_frame(&led, t, frame);
         CHECK(frame[0].r >= 3);
         CHECK(frame[0].r <= 200);
     }
 
     /* rainbow at t=0 is pure red, a third of the (3x slower) period later
-     * pure green: speed 5 -> 18 000/5 = 3 600 ms per turn. */
+     * pure green: speed 5 -> 54 000/5 = 10 800 ms per turn. */
     led.settings.mode = LED_MODE_RAINBOW;
     led.settings.speed = 5;
     led.settings.sync = true;
     led_frame(&led, 0, frame);
     CHECK_EQ(frame[0].r, 255);
     CHECK_EQ(frame[0].g, 0);
-    led_frame(&led, 400, frame);
-    CHECK(frame[0].g < 255); /* no longer a third of the turn at 400 ms */
     led_frame(&led, 1200, frame);
+    CHECK(frame[0].g < 255); /* no longer a third of the turn at 1200 ms */
+    led_frame(&led, 3600, frame);
     CHECK_EQ(frame[0].r, 0);
     CHECK_EQ(frame[0].g, 255);
     CHECK(!memcmp(&frame[0], &frame[1], sizeof(frame[0])));
@@ -980,7 +982,7 @@ static void test_thermal(void)
 static void test_off_writes_state(void)
 {
     fan_state fan;
-    char path[PATH_MAX];
+    char path[PATH_MAX + 64];
 
     memset(&fan, 0, sizeof(fan));
     fan_settings_default(&fan.settings);
@@ -1069,7 +1071,7 @@ static void test_led_retry(void)
     led_state led;
     rgb_t frame[2] = {{1, 2, 3}, {4, 5, 6}};
     char buf[64];
-    char path[PATH_MAX];
+    char path[PATH_MAX + 64];
 
     /* Model the vendor-chmod race: the attribute exists (present) but opening
      * it for write fails.  A directory in place of the file makes the write
@@ -1222,7 +1224,7 @@ static void test_throttle(void)
     write_file("/sys/class/thermal/thermal_zone6/trip_point_3_temp", "115000\n");
     for (int i = 0; i < 4; i++) {
         char dir[128];
-        char file[128];
+        char file[160];
 
         snprintf(dir, sizeof(dir), "/sys/class/thermal/thermal_zone6/cdev%d", i);
         mkdir_p(dir);
@@ -1435,6 +1437,8 @@ static void test_cpu(void)
     const char *silver_max = FAKE_CPUFREQ "/policy0/scaling_max_freq";
     const char *gold_max = FAKE_CPUFREQ "/policy4/scaling_max_freq";
     const char *prime_max = FAKE_CPUFREQ "/policy7/scaling_max_freq";
+    /* The stock kona governor list, as scaling_available_governors shows it. */
+    const char *govs = "walt conservative powersave performance schedutil";
 
     CHECK_EQ(cpu_cluster_from_cpu(0), CPU_CLUSTER_SILVER);
     CHECK_EQ(cpu_cluster_from_cpu(3), CPU_CLUSTER_SILVER);
@@ -1469,19 +1473,34 @@ static void test_cpu(void)
     CHECK_EQ(cpu_apply(&cpu, 100, 100, 100, "schedutil"), 0);
     CHECK_EQ(read_int(silver_max), 300000);
 
-    /* Governor validation: only the documented three, unknown -> schedutil. */
-    CHECK(!strcmp(cpu_validate_governor("conservative",
-                                        "walt conservative powersave schedutil"),
-                  "conservative"));
+    /* Governor validation: the documented four, unknown -> schedutil. */
+    CHECK(!strcmp(cpu_validate_governor("conservative", govs), "conservative"));
     CHECK(!strcmp(cpu_validate_governor("powersave", "schedutil powersave"),
                   "powersave"));
-    CHECK(!strcmp(cpu_validate_governor("walt", "walt powersave schedutil"),
-                  "schedutil"));
+    CHECK(!strcmp(cpu_validate_governor("walt", govs), "schedutil"));
+    /* Issue #156 item 6: `performance` is accepted and written. */
+    CHECK(!strcmp(cpu_validate_governor("performance", govs), "performance"));
     CHECK(!strcmp(cpu_validate_governor("performance",
                                         "performance powersave"),
-                  "powersave"));
+                  "performance"));
+    /* A kernel that does not offer it falls back like any unknown name. */
+    CHECK(!strcmp(cpu_validate_governor("performance",
+                                        "schedutil conservative"),
+                  "schedutil"));
     CHECK(!strcmp(cpu_validate_governor(NULL, "schedutil conservative"),
                   "schedutil"));
+    CHECK_EQ(cpu_apply(&cpu, 0, 0, 0, "performance"), 0);
+    CHECK(file_is(FAKE_CPUFREQ "/policy0/scaling_governor", "performance"));
+    CHECK(file_is(FAKE_CPUFREQ "/policy4/scaling_governor", "performance"));
+    CHECK(file_is(FAKE_CPUFREQ "/policy7/scaling_governor", "performance"));
+    CHECK(!strcmp(cpu_governor_name(&cpu), "performance"));
+    /* `performance` still respects the cap: it pins the capped clock. */
+    CHECK_EQ(cpu_apply(&cpu, 1171, 1478, 1632, "performance"), 0);
+    CHECK_EQ(read_int(silver_max), 1171200);
+    CHECK_EQ(read_int(gold_max), 1478400);
+    CHECK_EQ(read_int(prime_max), 1516800);
+    CHECK(file_is(FAKE_CPUFREQ "/policy0/scaling_governor", "performance"));
+    /* Unknown still falls back to schedutil. */
     CHECK_EQ(cpu_apply(&cpu, 0, 0, 0, "walt"), 0);
     CHECK(file_is(FAKE_CPUFREQ "/policy0/scaling_governor", "schedutil"));
     CHECK(!strcmp(cpu_governor_name(&cpu), "schedutil"));
@@ -1518,88 +1537,19 @@ static void test_swap_header(void)
     unlink(path);
 }
 
-/* --- phase 6: zram and swapfile (#141) ----------------------------------- */
+/* --- phase 6: the swapfile (#141); zram was removed in wave 3 ------------ */
 
 static void test_mem(void)
 {
     mem_state mem;
     int free_mb;
     int limit;
-    int used;
-    int saved;
     int total;
     int swap_used;
 
     mem_state_init(&mem);
-    CHECK_EQ(mem.mem_total_mb, 8000);
-    CHECK(mem.zram_supported);
-    CHECK_EQ(mem.zram_mb, 0);
-
-    /* zram is clamped to MemTotal/2, never to a fixed 4096. */
-    CHECK_EQ(mem_clamp_zram(&mem, 8000), 4000);
-    CHECK_EQ(mem_clamp_zram(&mem, MEM_ZRAM_MAX_MB), 4000);
-    CHECK_EQ(mem_clamp_zram(&mem, 512), 512);
-    CHECK_EQ(mem_clamp_zram(&mem, 0), 0);
-    CHECK_EQ(mem_clamp_zram(&mem, -1), 0);
-
-    /* Apply order: reset -> compressor -> disksize -> swapon (nothing to swap
-     * off on a fresh device). */
-    CHECK_EQ(mem_apply_zram(&mem, 4096), 4000);
-    CHECK(!strcmp(mem.trace, "reset,comp,disksize,signature,swapon"));
-    CHECK_EQ(read_ll("/sys/block/zram0/disksize"), 4000LL * 1024 * 1024);
-    {
-        unsigned int value = 0;
-        char magic[10];
-
-        /* The reset device got the swap signature before swapon. */
-        CHECK(read_at("/dev/block/zram0", 1024, &value, sizeof(value)));
-        CHECK_EQ(value, 1);
-        CHECK(read_at("/dev/block/zram0", 1028, &value, sizeof(value)));
-        CHECK_EQ(value, 4000u * 1024u * 1024u / 4096u - 1u);
-        CHECK(read_at("/dev/block/zram0", 4086, magic, sizeof(magic)));
-        CHECK(!memcmp(magic, "SWAPSPACE2", sizeof(magic)));
-    }
-    {
-        char comp[32];
-
-        CHECK_EQ(read_file("/sys/block/zram0/comp_algorithm", comp,
-                           sizeof(comp)),
-                 0);
-        CHECK(!strcmp(comp, "lz4")); /* lz4 wins when comp_available lists it */
-    }
-
-    /* Idempotent: the same size only re-attaches the device. */
-    CHECK_EQ(mem_apply_zram(&mem, 4000), 4000);
-    CHECK(!strcmp(mem.trace, "swapon"));
-
-    /* Resize/disable: swapoff -> reset, status back to 0. */
-    CHECK_EQ(mem_apply_zram(&mem, 0), 0);
-    CHECK(!strcmp(mem.trace, "swapoff,reset"));
-    CHECK_EQ(mem.zram_mb, 0);
-
-    /* First available compressor when lz4 is not listed. */
-    write_file("/sys/block/zram0/comp_available", "lzo lzo-rle\n");
-    CHECK_EQ(mem_apply_zram(&mem, 2048), 2048);
-    {
-        char comp[32];
-
-        CHECK_EQ(read_file("/sys/block/zram0/comp_algorithm", comp,
-                           sizeof(comp)),
-                 0);
-        CHECK(!strcmp(comp, "lzo"));
-    }
-
-    /* mm_stat: used = compressed size, saved = orig - compressed. */
-    write_file("/sys/block/zram0/mm_stat", "2000000 500000 700000 0 0 0 0\n");
-    CHECK_EQ(mem_status_zram(&mem, &used, &saved), 0);
-    CHECK_EQ(used, 488);
-    CHECK_EQ(saved, 1464);
-
-    /* Missing /dev/block/zram0 (module not loaded): logged no-op, -1 status. */
-    remove_rel("/dev/block/zram0");
-    CHECK_EQ(mem_apply_zram(&mem, 2048), -1);
-    CHECK_EQ(mem.zram_mb, -1);
-    write_file("/dev/block/zram0", "");
+    CHECK_EQ(mem.swap_mb, 0);
+    CHECK_EQ(mem.swap_request, 0);
 
     /* Swap: 16384 MB cap and the 2 GiB /data reserve. */
     free_mb = mem_data_free_mb();
@@ -1624,13 +1574,130 @@ static void test_mem(void)
     CHECK_EQ(file_size(MEM_SWAPFILE), -1);
     CHECK_EQ(mem.swap_mb, 0);
 
-    /* /proc/meminfo SwapTotal/SwapFree. */
+    /* /proc/meminfo SwapTotal/SwapFree (the swapfile status). */
     write_file("/proc/meminfo",
                "MemTotal:        8192000 kB\n"
                "SwapTotal:       4096000 kB\nSwapFree:        1024000 kB\n");
     CHECK_EQ(mem_status_swap(&total, &swap_used), 0);
     CHECK_EQ(total, 4096000);
     CHECK_EQ(swap_used, 3072000);
+
+    /* A missing node is -1, never a fabricated 0. */
+    remove_rel("/proc/meminfo");
+    CHECK_EQ(mem_status_swap(&total, &swap_used), -1);
+    CHECK_EQ(total, -1);
+    CHECK_EQ(swap_used, -1);
+    write_file("/proc/meminfo",
+               "MemTotal:        8192000 kB\n"
+               "SwapTotal:       4096000 kB\nSwapFree:        1024000 kB\n");
+}
+
+/* --- wave 3: real CPU/GPU load (#156 item 3) ----------------------------- */
+
+static void test_cpu_load(void)
+{
+    cpu_load load;
+
+    /* The first sample only primes the delta: a gap, not 0 %. */
+    write_file("/proc/stat",
+               "cpu  100 0 100 800 0 0 0 0 0 0\n"
+               "cpu0 100 0 100 800 0 0 0 0 0 0\n");
+    cpu_load_init(&load);
+    CHECK_EQ(cpu_load_pct(&load), -1);
+
+    /* 200 more jiffies, 100 of them idle -> 50 %. */
+    write_file("/proc/stat",
+               "cpu  150 0 150 900 0 0 0 0 0 0\n"
+               "cpu0 150 0 150 900 0 0 0 0 0 0\n");
+    CHECK_EQ(cpu_load_pct(&load), 50);
+
+    /* 90 more jiffies, 70 idle -> 22 %. */
+    write_file("/proc/stat",
+               "cpu  160 0 160 970 0 0 0 0 0 0\n");
+    CHECK_EQ(cpu_load_pct(&load), 22);
+
+    /* An idle-only delta is 0 %, a busy-only delta 100 %. */
+    write_file("/proc/stat",
+               "cpu  160 0 160 1070 0 0 0 0 0 0\n");
+    CHECK_EQ(cpu_load_pct(&load), 0);
+    write_file("/proc/stat",
+               "cpu  260 0 260 1070 0 0 0 0 0 0\n");
+    CHECK_EQ(cpu_load_pct(&load), 100);
+
+    /* iowait counts as idle (kernel accounting: not CPU work). */
+    write_file("/proc/stat",
+               "cpu  260 0 260 1100 20 0 0 0 0 0\n");
+    CHECK_EQ(cpu_load_pct(&load), 0);
+
+    /* Unreadable/garbage: -1 and the baseline is dropped, so the next good
+     * read is a baseline again (no fabricated jump). */
+    remove_rel("/proc/stat");
+    CHECK_EQ(cpu_load_pct(&load), -1);
+    write_file("/proc/stat", "cpu  nope\n");
+    CHECK_EQ(cpu_load_pct(&load), -1);
+    write_file("/proc/stat", "cpu  1 2 3 4 5 6 7 8 9 10\n");
+    CHECK_EQ(cpu_load_pct(&load), -1);
+    write_file("/proc/stat", "cpu  11 2 3 4 5 6 7 8 9 10\n");
+    CHECK_EQ(cpu_load_pct(&load), 100);
+
+    /* Counters going backwards (a hotplug reset) re-prime the baseline. */
+    write_file("/proc/stat", "cpu  5 0 5 10 0 0 0 0 0 0\n");
+    CHECK_EQ(cpu_load_pct(&load), -1);
+    write_file("/proc/stat", "cpu  6 0 6 18 0 0 0 0 0 0\n");
+    CHECK_EQ(cpu_load_pct(&load), 20);
+
+    /* Baseline for the other tests. */
+    write_file("/proc/stat",
+               "cpu  100 0 100 800 0 0 0 0 0 0\ncpu0 100 0 100 800 0 0 0 0 0 0\n");
+}
+
+static void test_gpu_load(void)
+{
+    const char *busy = FAKE_KGSL_DEV "/kgsl/kgsl-3d0/gpu_busy_percentage";
+
+    /* kgsl prints "<n> %": the trailing unit must not make it unknown. */
+    write_file(busy, "37 %\n");
+    CHECK_EQ(gpu_load_pct(), 37);
+    write_file(busy, "0 %\n");
+    CHECK_EQ(gpu_load_pct(), 0);
+    write_file(busy, "100 %\n");
+    CHECK_EQ(gpu_load_pct(), 100);
+
+    /* Out-of-range values are clamped, a negative one is unknown. */
+    write_file(busy, "140 %\n");
+    CHECK_EQ(gpu_load_pct(), 100);
+    write_file(busy, "-1 %\n");
+    CHECK_EQ(gpu_load_pct(), -1);
+    write_file(busy, "busy\n");
+    CHECK_EQ(gpu_load_pct(), -1);
+
+    /* Missing node: a gap, never 0 %. */
+    remove_rel(busy);
+    CHECK_EQ(gpu_load_pct(), -1);
+
+    /* The legacy layout is the fallback when the /platform level is absent. */
+    mkdir_p(FAKE_KGSL_LEGACY "/kgsl/kgsl-3d0");
+    write_file(FAKE_KGSL_LEGACY "/kgsl/kgsl-3d0/gpu_busy_percentage", "62 %\n");
+    CHECK_EQ(gpu_load_pct(), 62);
+    remove_rel(FAKE_KGSL_LEGACY);
+
+    write_file(busy, "0 %\n");
+}
+
+/* --- wave 3: the status tick follows both live pages (#156 item 2) ------- */
+
+static void test_status_interval(void)
+{
+    /* Neither page visible: the background 2 s tick. */
+    CHECK_EQ(hwd_status_interval_ms(false, false), 2000);
+    /* Either page keeps the 500 ms tick, exactly like the Fan page does. */
+    CHECK_EQ(hwd_status_interval_ms(true, false), 500);
+    CHECK_EQ(hwd_status_interval_ms(false, true), 500);
+    CHECK_EQ(hwd_status_interval_ms(true, true), 500);
+    CHECK_EQ(STATUS_LIVE_MS, 500);
+    CHECK_EQ(STATUS_INTERVAL_MS, 2000);
+    /* The idle wait must not be longer than the fast tick. */
+    CHECK(STATUS_LIVE_MS <= STATUS_INTERVAL_MS);
 }
 
 /* --- #129: max_pct lowered while the spin-up kick is open ---------------- */
@@ -1707,8 +1774,11 @@ int main(void)
     test_throttle();
     test_gpu();
     test_gpu_clock();
+    test_gpu_load();
+    test_status_interval();
     test_swap_header();
     test_cpu();
+    test_cpu_load();
     test_mem();
     test_kick_max_lowered();
 

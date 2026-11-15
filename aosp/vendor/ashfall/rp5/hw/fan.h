@@ -33,10 +33,15 @@
 #define FAN_DUTY_MIN_NS 4000
 #define FAN_DUTY_MAX_NS 50000
 
-/* Built-in preset percentages (quiet/balanced/max), from the measurement. */
-#define FAN_PRESET_QUIET_PCT 2     /* ~4 920 ns / ~1 800 RPM (stock Quiet 5 000) */
-#define FAN_PRESET_BALANCED_PCT 46 /* ~25 160 ns / ~8 100 RPM (stock Sport 25 000) */
-#define FAN_PRESET_MAX_PCT 100     /* 50 000 ns / ~15 000 RPM */
+/* Built-in preset percentages (quiet/balanced/max), from the measurement.
+ * Phase 6 wave 3 (issue #156 item 10) raised Quiet/Balanced and lowered the top
+ * preset: the old 2/46/100 % range was perceived as too narrow at the top and
+ * too slow to be useful at the bottom, and the 100 % "Max" preset was louder
+ * than the user wanted as the everyday "Performance" mode.  The internal mode
+ * id stays `max`; only the output percentage changes. */
+#define FAN_PRESET_QUIET_PCT 15    /* ~10 900 ns / ~3 900 RPM */
+#define FAN_PRESET_BALANCED_PCT 25 /* ~15 500 ns / ~5 800 RPM */
+#define FAN_PRESET_MAX_PCT 50      /* ~27 000 ns / ~8 500 RPM */
 
 /* Smart mode tuning (see docs/phase5.md §2.1). */
 #define FAN_SAMPLE_MS 2000

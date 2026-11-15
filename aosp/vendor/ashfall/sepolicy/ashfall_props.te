@@ -4,8 +4,8 @@
 #                    sharedUserId android.uid.system) and read by both daemons.
 # ashfall.status.*   status published by the daemons and read by the app.
 # ashfall.ui.*       non-persistent UI liveness/preview values (fan live,
-#                    live curve preview, gamepad-tester LED override): the
-#                    app writes them, ashfall_hwd reads them.
+#                    power live, live curve preview, gamepad-tester LED
+#                    override): the app writes them, ashfall_hwd reads them.
 # ashfall.perf.*     non-persistent performance override request, plus the
 #                    persistent *_permanent switch (persist.ashfall.perf.*,
 #                    matched by the more specific prefix in
