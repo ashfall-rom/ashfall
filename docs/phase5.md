@@ -237,3 +237,88 @@ Home, Back, D-pad) with a documented bit layout (docs/rp5/input.md).
   or an on-screen close button, LED reaction via `ashfall.ui.led_override`, no Select setting;
   calibration pauses after each step until Start is pressed.
 - QS dialogs: no stray shadows, Done button not clipped.
+
+## 7. Follow-ups v3 (user request 2026-11-15) - fan graph and output limits
+
+**Phase 5, not phase 6.** Supersedes the matching parts of §2.1 and §3.1: the
+Fan page's status read-out becomes a live graph, and two new properties limit
+the fan output. Issue references are in the per-area issues.
+
+### 7.1 Output limits (properties, enforced by the daemon)
+
+| Property | Type | Writer -> reader | Values | Default |
+|---|---|---|---|---|
+| `persist.ashfall.fan.min_pct` | `ashfall_prop` | app -> hwd | 0..100 | `5` |
+| `persist.ashfall.fan.max_pct` | `ashfall_prop` | app -> hwd | 0..100 | `100` |
+
+The limits are applied in `ashfall-hwd` (the UI never writes the fan), to the
+output that the active mode, the Smart curve and the screen-off hold resolved,
+immediately before the output is applied:
+
+- `pct == 0` stays `0` (mode off, or the screen-off hold is active).
+- `0 < pct < min_pct` -> `0`: a target below the low limit stops the fan
+  **completely** instead of running it at a speed the user called useless.
+- `min_pct <= pct <= max_pct` -> unchanged.
+- `pct > max_pct` -> `max_pct`: the fan never runs above the high limit.
+- `min_pct = 0` disables the low cut-off, `max_pct = 100` the cap.
+
+**Exempt from both limits:** the fixed 90 °C last-resort rule (§6.1) and the
+no-sensor fail-safe (`FAN_PRESET_BALANCED_PCT`). Thermal protection must never
+be cap-able; this is the only documented exception and it is not a setting.
+
+Missing or invalid values (unparsable, outside 0..100) fall back to the
+defaults, like every other `persist.ashfall.*` value. If `min_pct > max_pct`
+the pair is invalid: the daemon applies both defaults and logs it once.
+`ashfall.status.fan.pct` keeps reporting the output that was actually applied,
+so the page always shows what the limits did.
+
+Consequence of the shipped defaults: the low limit (`5`) is above the built-in
+Quiet preset (`2 %`), so **Quiet stops the fan completely** until the low limit
+is lowered. That is the intended reading of "below the low limit -> shut off",
+and the page states it on the slider row.
+
+### 7.2 Fan page: live graph replaces the status read-out
+
+The three-column **Status** block (`res/layout/preference_status.xml`:
+Temperature / Output / Fan speed plus the output gauge) is removed. The Status
+category holds one **non-selectable graph row** instead:
+
+- A scrolling line chart of the **last 60 s**: the page already reads the status
+  every 500 ms while visible, and appends one sample per tick (120 samples, in
+  memory in the app - no new property, no daemon-side history, resets when the
+  page is reopened).
+- Three series in one plot area:
+  - **temperature** (`ashfall.status.fan.temp`, tenths °C) on the **left
+    axis**, fixed scale **20..100 °C** with grid lines/labels at 40/60/80;
+  - **fan output** (`ashfall.status.fan.pct`) on the **right axis**, 0..100 %
+    with labels at 0/50/100;
+  - **fan speed** (`ashfall.status.fan.rpm`) drawn against the right axis with
+    a fixed **16 000 rpm** reference (the measured maximum is ~15 600 rpm), no
+    axis labels of its own.
+- A legend line above the plot carries the colour swatch and the **current
+  exact value** of each series (`58 °C`, `75 %`, `9 800 rpm`), so the numbers
+  the old read-out showed stay readable; `—` for a value that is unknown, and
+  rpm is the documented `-1` when the tach node is unavailable.
+- Missing samples (daemon not yet published, `-1`) are **gaps**, never zeros.
+- The row is not focusable and not selectable (the D-pad skips it), is drawn
+  with Canvas primitives only (no new dependency, no vector/RRO), follows the
+  Settings theme in day, night and pure-black mode, is ~160 dp tall and spans
+  the row width.
+- While the daemon does not respond (no `ashfall.status.fan.*` values) the row
+  shows the existing "The fan daemon is not responding." message instead of the
+  plot. The last-resort warning line (`fan_status_safety`) stays below the
+  graph.
+
+### 7.3 Fan page: limit sliders
+
+A new category **Fan speed limits** sits directly below **Manual output**:
+
+| Row | Property | Range | Default | Summary |
+|---|---|---|---|---|
+| Minimum output | `persist.ashfall.fan.min_pct` | 0..100 | 5 | below it the fan stops completely; `0` = no low cut-off |
+| Maximum output | `persist.ashfall.fan.max_pct` | 0..100 | 100 | the fan never runs above it; `100` = no cap |
+
+Both are ordinary `ui/SliderPreference` rows (D-pad left/right, touch), write
+their property on every change, and keep `min_pct <= max_pct` by moving the
+other slider along with them. The page never clamps the output itself: the
+daemon is the single enforcement point, and the graph/legend show the result.
