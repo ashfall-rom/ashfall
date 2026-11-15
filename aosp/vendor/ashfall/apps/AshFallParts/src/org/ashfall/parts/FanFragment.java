@@ -49,8 +49,10 @@ import java.util.List;
  * <p>While the page is visible it sets {@code ashfall.ui.fan_live=1} so the
  * daemon publishes status every 500 ms instead of every 2 s.
  *
- * <p>The Performance controls (throttling override and GPU max frequency) moved
- * to the Power page (#124); this page keeps one row that points there.
+ * <p>The Performance controls (throttling override, GPU max frequency, CPU caps
+ * and presets) live on the Power page (#124); the one-line "Performance → Power"
+ * row was removed again in #156 §9, because the Power page is a first-class
+ * page next to Fan on the Handheld screen.
  */
 public class FanFragment extends PreferenceFragmentCompat {
 
@@ -208,20 +210,6 @@ public class FanFragment extends PreferenceFragmentCompat {
             refreshToggles();
         });
         behaviour.addPreference(mScreenOff);
-
-        // Performance moved to the Power page (#124): the throttling override
-        // and the GPU cap live there now, with the CPU caps and the presets.
-        // One row keeps the section discoverable from here.
-        final Preference performance = new Preference(requireContext());
-        performance.setKey("fan_performance_link");
-        performance.setTitle(R.string.power_fan_row_title);
-        performance.setSummary(R.string.power_fan_row_summary);
-        performance.setIcon(R.drawable.ic_ashfall_power);
-        performance.setOnPreferenceClickListener(preference -> {
-            startActivity(new Intent(requireContext(), PowerActivity.class));
-            return true;
-        });
-        mScreen.addPreference(performance);
 
         final Preference versionRow = new Preference(requireContext());
         versionRow.setKey("fan_version");

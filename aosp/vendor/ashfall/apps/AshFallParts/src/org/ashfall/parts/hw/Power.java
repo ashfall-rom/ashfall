@@ -38,6 +38,10 @@ import org.ashfall.parts.ipc.Props;
  *
  * <p>The active preset id lives in {@code persist.ashfall.power.preset} and is
  * this app's own state; the daemon only ever sees the applied values.
+ *
+ * <p>While a power UI is visible the app sets {@code ashfall.ui.power_live=1},
+ * so {@code ashfall-hwd} publishes the perf status every 500 ms instead of its
+ * own 2 s tick; the page plots the real CPU/GPU load it publishes (#156 §2/§3).
  */
 public final class Power {
 
@@ -50,10 +54,17 @@ public final class Power {
     /** App-only: the id of the active power preset. */
     public static final String PRESET = "persist.ashfall.power.preset";
 
+    /** {@code 1} while a power UI is visible: the daemon publishes every 500 ms. */
+    public static final String UI_LIVE = "ashfall.ui.power_live";
+
     public static final String STATUS_CPU_MHZ_SILVER = "ashfall.status.perf.cpu_mhz_silver";
     public static final String STATUS_CPU_MHZ_GOLD = "ashfall.status.perf.cpu_mhz_gold";
     public static final String STATUS_CPU_MHZ_PRIME = "ashfall.status.perf.cpu_mhz_prime";
     public static final String STATUS_GPU_MHZ = "ashfall.status.perf.gpu_mhz";
+    /** Real CPU utilisation 0..100 from {@code /proc/stat}; {@code -1} unknown. */
+    public static final String STATUS_CPU_LOAD_PCT = "ashfall.status.perf.cpu_load_pct";
+    /** Real GPU utilisation 0..100 from kgsl {@code gpu_busy_percentage}; {@code -1}. */
+    public static final String STATUS_GPU_LOAD_PCT = "ashfall.status.perf.gpu_load_pct";
 
     /** Stock top step of each cluster; no preset goes above it. */
     public static final int SILVER_STOCK_MHZ = 1804;
@@ -67,33 +78,36 @@ public final class Power {
     public static final String GOV_SCHEDUTIL = "schedutil";
     public static final String GOV_CONSERVATIVE = "conservative";
     public static final String GOV_POWERSAVE = "powersave";
-    /** The governors the page offers; {@code walt}/{@code performance} stay hidden. */
-    public static final String[] GOVERNORS = {GOV_SCHEDUTIL, GOV_CONSERVATIVE, GOV_POWERSAVE};
+    public static final String GOV_PERFORMANCE = "performance";
+    /**
+     * The governors the page offers.  {@code walt} stays hidden (the kernel
+     * exposes it, but there is no use case that does not break the preset
+     * model); {@code performance} was added in #156 §6 and the built-in
+     * Performance preset writes it.
+     */
+    public static final String[] GOVERNORS = {
+            GOV_SCHEDUTIL, GOV_CONSERVATIVE, GOV_POWERSAVE, GOV_PERFORMANCE,
+    };
 
-    /** GPU cap range and the highest step a preset may carry (docs/phase6.md §3). */
+    /** GPU cap range; a preset may carry every step, 940 and 1000 included (#156 §5). */
     public static final int GPU_MIN_MHZ = 305;
     public static final int GPU_STOCK_MHZ = 670;
-    public static final int GPU_PRESET_MAX_MHZ = 850;
+    public static final int GPU_MAX_MHZ = 1000;
+    /** The GPU step of the built-in Performance preset (#124). */
+    public static final int PERFORMANCE_GPU_MHZ = 850;
     /** The step that needs the thermal/stability confirmation. */
     public static final int GPU_EXPERIMENTAL_MHZ = 1000;
     /**
-     * The GPU steps the selector offers.  {@code Perf.GPU_STEPS} lacks 305,
-     * which the Low power preset needs, so the page keeps its own list;
-     * 940/1000 MHz stay manual-only and never enter a preset.
+     * The GPU steps the selectors offer.  {@code Perf.GPU_STEPS} lacks 305,
+     * which the Low power preset needs, so the Power page keeps its own list.
      */
     public static final int[] GPU_STEPS = {305, 670, 765, 850, 940, 1000};
 
     /** Slider floor of the CPU caps: what the daemon falls back to. */
     public static final int STOCK_CAP_MHZ = 0;
 
-    /**
-     * Reference for the graph's percent axis: the prime stock clock and the top
-     * of the phase-6 GPU table (docs/phase6.md §2).  The app cannot read
-     * {@code gpu_available_frequencies} (it is sysfs), so the reference is a
-     * constant; the daemon's own table is the one an AshFall build ships.
-     */
-    public static final int CPU_REFERENCE_MHZ = PRIME_STOCK_MHZ;
-    public static final int GPU_REFERENCE_MHZ = 1000;
+    /** Number of open power UIs; the live flag stays set until the last one closes. */
+    private static int sLiveCount;
 
     /**
      * Test-only switch for the emulator preview: {@code adb shell setprop
@@ -249,7 +263,9 @@ public final class Power {
     /**
      * "Reset to stock": every control on the page returns to what the kernel
      * ships with.  The caps go back to {@code 0} rather than to 1804/2419/2841,
-     * because {@code 0} is the contract's own "stock maximum".
+     * because {@code 0} is the contract's own "stock maximum".  The page also
+     * restores the built-in Balanced preset, so the preset row cannot claim
+     * values the properties do not hold.
      */
     public static void resetToStock() {
         clearCpuCaps();
@@ -257,6 +273,26 @@ public final class Power {
         setGpuMhz(GPU_STOCK_MHZ);
         setThrottleOverride(false);
         setPresetId(PowerPresetStore.ID_BALANCED);
+    }
+
+    /**
+     * Marks a power UI (page, preset editor, Quick Settings dialog) as visible.
+     * A counter is used because more than one can be visible at the same time;
+     * {@code ashfall-hwd} publishes the perf status every 500 ms while it is
+     * set and returns to its own 2 s tick when the last UI closes (#156 §2).
+     */
+    public static synchronized void setLive(boolean live) {
+        if (live) {
+            sLiveCount++;
+        } else if (sLiveCount > 0) {
+            sLiveCount--;
+        }
+        refreshLive();
+    }
+
+    /** Re-publishes the current live flag (used by the 500 ms page refresh). */
+    public static synchronized void refreshLive() {
+        Props.set(UI_LIVE, sLiveCount > 0 ? "1" : "0");
     }
 
     // ---------------------------------------------------------------------
@@ -377,17 +413,42 @@ public final class Power {
         return statusMhz(STATUS_GPU_MHZ);
     }
 
+    /**
+     * Real CPU utilisation 0..100 from the daemon ({@code /proc/stat} idle delta
+     * over the total delta), or {@code -1} when it is not published.  The page
+     * plots this; it never derives usage from the clocks (#156 §3).
+     */
+    public static int cpuLoadPct() {
+        if (mockEnabled()) {
+            return mockCpuLoad();
+        }
+        return statusPercent(STATUS_CPU_LOAD_PCT);
+    }
+
+    /** Real GPU utilisation 0..100 from kgsl {@code gpu_busy_percentage}, or -1. */
+    public static int gpuLoadPct() {
+        if (mockEnabled()) {
+            return mockGpuLoad();
+        }
+        return statusPercent(STATUS_GPU_LOAD_PCT);
+    }
+
+    /** Whether any real utilisation sample exists. */
+    public static boolean loadAvailable() {
+        return cpuLoadPct() >= 0 || gpuLoadPct() >= 0;
+    }
+
     /** The fastest cluster currently running, or {@code -1}. */
     public static int cpuMhzMax() {
         return Math.max(cpuMhzSilver(), Math.max(cpuMhzGold(), cpuMhzPrime()));
     }
 
     /**
-     * False when {@code ashfall-hwd} has not published the clocks yet.  The
+     * False when {@code ashfall-hwd} has not published any perf status yet.  The
      * battery series is independent of the daemon, so it no longer counts.
      */
     public static boolean daemonAlive() {
-        return cpuMhzMax() >= 0 || gpuMhz() >= 0;
+        return cpuMhzMax() >= 0 || gpuMhz() >= 0 || loadAvailable();
     }
 
     // ---------------------------------------------------------------------
@@ -404,15 +465,17 @@ public final class Power {
 
     /** {@code schedutil} for anything the kernel does not offer. */
     public static String sanitizeGovernor(String governor) {
-        if (GOV_CONSERVATIVE.equals(governor) || GOV_POWERSAVE.equals(governor)) {
-            return governor;
+        for (String known : GOVERNORS) {
+            if (known.equals(governor)) {
+                return governor;
+            }
         }
         return GOV_SCHEDUTIL;
     }
 
-    /** The GPU cap a preset may carry: at most 850 MHz (never 940/1000). */
+    /** Every GPU step is valid in a preset now, 940 and 1000 MHz included. */
     public static int sanitizePresetGpuMhz(int mhz) {
-        return clampMhz(mhz, GPU_MIN_MHZ, GPU_PRESET_MAX_MHZ);
+        return clampMhz(mhz, GPU_MIN_MHZ, GPU_MAX_MHZ);
     }
 
     public static int clampMhz(int mhz, int min, int max) {
@@ -424,27 +487,33 @@ public final class Power {
         return value > 0 ? value : -1;
     }
 
+    /** A 0..100 status value; anything else is "unknown" and becomes a gap. */
+    private static int statusPercent(String key) {
+        final int value = Props.getInt(key, -1);
+        return value >= 0 && value <= 100 ? value : -1;
+    }
+
     // ---------------------------------------------------------------------
     // Emulator fake daemon (test-only)
     // ---------------------------------------------------------------------
 
-    private static final long MOCK_TICK_MS = 2000;
+    private static final long MOCK_TICK_MS = 500;
 
     private static long mockTick() {
         return SystemClock.elapsedRealtime() / MOCK_TICK_MS;
     }
 
-    /** A 30-tick (60 s) cycle with a 6-tick charging window (power = -1). */
+    /** A 120-tick (60 s) cycle with a 24-tick charging window (power = -1). */
     private static boolean mockCharging() {
-        return mockTick() % 30 >= 24;
+        return mockTick() % 120 >= 96;
     }
 
     private static int mockPowerMw() {
-        final long tick = mockTick() % 30;
-        if (tick >= 24) {
+        final long tick = mockTick() % 120;
+        if (tick >= 96) {
             return -1;
         }
-        final double phase = tick / 30.0 * 2 * Math.PI;
+        final double phase = tick / 120.0 * 2 * Math.PI;
         return (int) (2600 + 2100 * (1 + Math.sin(phase)));
     }
 
@@ -461,15 +530,32 @@ public final class Power {
     }
 
     private static int mockClock(int cap, int base, int swing) {
-        final double phase = mockTick() / 30.0 * 2 * Math.PI;
+        final double phase = mockTick() / 120.0 * 2 * Math.PI;
         final int value = (int) (base + swing * (1 + Math.sin(phase)) / 2);
         return Math.min(cap, value);
     }
 
     private static int mockGpu() {
-        final double phase = mockTick() / 30.0 * 2 * Math.PI + 1.2;
+        final double phase = mockTick() / 120.0 * 2 * Math.PI + 1.2;
         final int value = (int) (305 + 300 * (1 + Math.sin(phase)) / 2);
         return Math.min(mockGpuCap(), value);
+    }
+
+    /**
+     * A synthetic idle-to-busy cycle, floored by the stress test's own CPU
+     * level so the emulator shows the load rising while the page's stress
+     * controls run (the real daemon measures {@code /proc/stat} instead).
+     */
+    private static int mockCpuLoad() {
+        final double phase = mockTick() / 120.0 * 2 * Math.PI;
+        final int idle = (int) (8 + 22 * (1 + Math.sin(phase - 0.6)) / 2);
+        return Math.max(idle, Stress.get().cpuPct());
+    }
+
+    private static int mockGpuLoad() {
+        final double phase = mockTick() / 120.0 * 2 * Math.PI + 0.9;
+        final int idle = (int) (4 + 40 * (1 + Math.sin(phase)) / 2);
+        return Math.max(idle, Stress.get().gpuPct());
     }
 
     /** The fake daemon clamps like the real one: the override wins, then the table. */

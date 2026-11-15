@@ -46,15 +46,15 @@ import java.util.Arrays;
  * the right axis (labels at 0/50/100 %).
  *
  * <p>Power chart: battery power in watts on the left axis (0..12 W, labels at
- * 0/6/12) and the CPU/GPU clocks on the right axis as percent of their maximum
- * available clock (labels at 0/50/100 %); the exact MHz are in the legend.
+ * 0/6/12) and the real CPU/GPU utilisation on the right axis (0..100 %, labels
+ * at 0/50/100 %); the exact clocks are in the legend, not plotted (#156 §3).
  */
 public class FanGraphView extends View {
 
     /** Samples in one fan window: 120 page ticks of 500 ms = the last 60 s. */
     public static final int SAMPLES = 120;
-    /** Samples in one power window: 30 daemon ticks of 2 s = the last 60 s. */
-    public static final int POWER_SAMPLES = 30;
+    /** Samples in one power window: 120 page ticks of 500 ms = the last 60 s. */
+    public static final int POWER_SAMPLES = 120;
 
     private static final float TEMP_MIN_C = 20f;
     private static final float TEMP_MAX_C = 100f;

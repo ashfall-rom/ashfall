@@ -45,6 +45,9 @@ import java.util.Locale;
  */
 public class PowerDialog extends Dialog {
 
+    /** The daemon's live status period while a power UI is visible (#156 §2). */
+    private static final long TICK_MS = 500;
+
     public interface Listener {
         void onPresetChanged();
 
@@ -60,7 +63,8 @@ public class PowerDialog extends Dialog {
         @Override
         public void run() {
             updateSubtitle();
-            mHandler.postDelayed(this, 2000);
+            Power.refreshLive();
+            mHandler.postDelayed(this, TICK_MS);
         }
     };
 
@@ -104,14 +108,16 @@ public class PowerDialog extends Dialog {
     @Override
     protected void onStart() {
         super.onStart();
+        Power.setLive(true);
         mHandler.removeCallbacks(mTick);
-        mHandler.postDelayed(mTick, 2000);
+        mHandler.postDelayed(mTick, TICK_MS);
     }
 
     @Override
     protected void onStop() {
         super.onStop();
         mHandler.removeCallbacks(mTick);
+        Power.setLive(false);
     }
 
     private void rebuild() {
@@ -130,7 +136,7 @@ public class PowerDialog extends Dialog {
             final TextView title = row.findViewById(R.id.qs_preset_title);
             final TextView summary = row.findViewById(R.id.qs_preset_summary);
             title.setText(preset.displayName(getContext()));
-            summary.setText(summary(preset));
+            summary.setText(preset.summary(getContext()));
             radio.setChecked(preset.id.equals(activeId));
             row.setOnClickListener(view -> {
                 Power.apply(preset);
@@ -148,16 +154,6 @@ public class PowerDialog extends Dialog {
         if (first != null) {
             first.requestFocus();
         }
-    }
-
-    private CharSequence summary(PowerPreset preset) {
-        final String governor = Power.sanitizeGovernor(preset.governor);
-        if (preset.isStock()) {
-            return getContext().getString(R.string.power_preset_summary_stock, governor,
-                    preset.gpuMhz);
-        }
-        return getContext().getString(R.string.power_preset_summary, preset.silverMhz,
-                preset.goldMhz, preset.primeMhz, governor, preset.gpuMhz);
     }
 
     private void updateSubtitle() {

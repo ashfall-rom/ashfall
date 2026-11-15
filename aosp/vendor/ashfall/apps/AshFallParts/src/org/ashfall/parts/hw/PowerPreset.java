@@ -70,8 +70,8 @@ public final class PowerPreset {
         goldMhz = Power.clampMhz(goldMhz, Power.GOLD_MIN_MHZ, Power.GOLD_STOCK_MHZ);
         primeMhz = Power.clampMhz(primeMhz, Power.PRIME_MIN_MHZ, Power.PRIME_STOCK_MHZ);
         governor = Power.sanitizeGovernor(governor);
-        // 940/1000 MHz are manual-only and never part of a preset; a stored
-        // value above 850 is clamped back into the preset range.
+        // Every GPU step the daemon accepts is a valid preset value, 940 and
+        // 1000 MHz included (#156 §5).
         gpuMhz = Power.sanitizePresetGpuMhz(gpuMhz);
     }
 
@@ -101,6 +101,20 @@ public final class PowerPreset {
                 && primeMhz >= Power.PRIME_STOCK_MHZ
                 && Power.GOV_SCHEDUTIL.equals(governor)
                 && gpuMhz <= Power.GPU_STOCK_MHZ;
+    }
+
+    /**
+     * The one-line value summary shown by the page, the editor and the Quick
+     * Settings dialog: the three caps or "Stock clocks", the governor and the
+     * GPU step.
+     */
+    public String summary(Context context) {
+        final String governor = Power.sanitizeGovernor(this.governor);
+        if (isStock()) {
+            return context.getString(R.string.power_preset_summary_stock, governor, gpuMhz);
+        }
+        return context.getString(R.string.power_preset_summary, silverMhz, goldMhz,
+                primeMhz, governor, gpuMhz);
     }
 
     public PowerPreset copy(String newId, String newName) {

@@ -22,7 +22,7 @@ import android.os.Looper;
 import android.service.quicksettings.Tile;
 import android.service.quicksettings.TileService;
 
-import org.ashfall.parts.PowerActivity;
+import org.ashfall.parts.PowerPresetActivity;
 import org.ashfall.parts.R;
 import org.ashfall.parts.hw.Power;
 import org.ashfall.parts.hw.PowerPreset;
@@ -88,9 +88,8 @@ public class PowerTileService extends TileService {
 
             @Override
             public void onEditPresets() {
-                // The Power page is its own preset editor (its "Edit presets"
-                // row); there is no separate Power preset activity.
-                startActivity(new Intent(PowerTileService.this, PowerActivity.class)
+                // The preset editor (#156 §5) is the same screen the page opens.
+                startActivity(new Intent(PowerTileService.this, PowerPresetActivity.class)
                         .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
             }
         });
