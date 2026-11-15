@@ -218,6 +218,26 @@ static int do_swapoff(const char *path)
 #endif
 }
 
+/* A reset zram device has no swap signature (all zeros), so swapon returns
+ * EINVAL until the header is written - init normally does this with mkswap. */
+static int zram_format(int mb)
+{
+    char path[PATH_MAX];
+    long long size = (long long)mb * 1024 * 1024;
+    int fd;
+    int rc;
+
+    fd = open(plat_resolve(MEM_ZRAM_DEV, path, sizeof(path)), O_RDWR | O_CLOEXEC);
+    if (fd < 0) {
+        ah_logf(AH_LOG_WARN, "mem: cannot open %s for the swap header: %s",
+                MEM_ZRAM_DEV, strerror(errno));
+        return -1;
+    }
+    rc = mem_write_swap_header(fd, size);
+    close(fd);
+    return rc;
+}
+
 /* lz4 when comp_available lists it, else the first available compressor. */
 static void choose_compressor(char *out, size_t len)
 {
@@ -281,14 +301,28 @@ int mem_apply_zram(mem_state *state, int request_mb)
     /* Same size already set up (boot, or a restart in the same boot): attach
      * it instead of reallocating the device. */
     if (state->zram_mb == clamped) {
-        /* Already allocated (boot, or a restart in the same boot): re-attach;
-         * EBUSY means it is still the active swap device. */
+        /* Already allocated (boot, or a restart in the same boot): re-attach.
+         * EBUSY means it is still the active swap device; EINVAL means the
+         * device lost its signature (e.g. fresh boot, reset by someone else),
+         * so format once and retry.  Never format an active device. */
         trace_add(state, "swapon");
         if (do_swapon(MEM_ZRAM_DEV, MEM_ZRAM_PRIORITY) != 0 && errno != EBUSY) {
-            ah_logf(AH_LOG_WARN, "mem: swapon zram failed: %s",
-                    strerror(errno));
-            state->zram_mb = -1;
-            return -1;
+            if (errno != EINVAL) {
+                ah_logf(AH_LOG_WARN, "mem: swapon zram failed: %s",
+                        strerror(errno));
+                state->zram_mb = -1;
+                return -1;
+            }
+            ah_logf(AH_LOG_INFO,
+                    "mem: zram has no swap signature; formatting %d MB", clamped);
+            trace_add(state, "signature");
+            if (zram_format(clamped) != 0 ||
+                do_swapon(MEM_ZRAM_DEV, MEM_ZRAM_PRIORITY) != 0) {
+                ah_logf(AH_LOG_WARN, "mem: swapon zram after formatting failed: %s",
+                        strerror(errno));
+                state->zram_mb = -1;
+                return -1;
+            }
         }
         return clamped;
     }
@@ -328,6 +362,15 @@ int mem_apply_zram(mem_state *state, int request_mb)
             return -1;
         }
     }
+    /* A reset zram device is all zeros: write the v1 swap header before
+     * swapon(2), exactly like the swapfile (init's mkswap equivalent). */
+    trace_add(state, "signature");
+    ah_logf(AH_LOG_INFO, "mem: writing the zram swap signature (%d MB)", clamped);
+    if (zram_format(clamped) != 0) {
+        ah_logf(AH_LOG_WARN, "mem: cannot write the zram swap signature");
+        state->zram_mb = -1;
+        return -1;
+    }
     trace_add(state, "swapon");
     if (do_swapon(MEM_ZRAM_DEV, MEM_ZRAM_PRIORITY) != 0) {
         ah_logf(AH_LOG_WARN, "mem: swapon zram failed: %s", strerror(errno));
@@ -339,7 +382,7 @@ int mem_apply_zram(mem_state *state, int request_mb)
     return clamped;
 }
 
-static int write_swap_header(int fd, long long size)
+int mem_write_swap_header(int fd, long long size)
 {
     unsigned char page[SWAP_HEADER_PAGE];
     unsigned int version = 1;
@@ -388,7 +431,7 @@ static int swapfile_create(int mb)
             return -1;
         }
     }
-    rc = write_swap_header(fd, size);
+    rc = mem_write_swap_header(fd, size);
     close(fd);
     if (rc != 0) {
         unlink(path);

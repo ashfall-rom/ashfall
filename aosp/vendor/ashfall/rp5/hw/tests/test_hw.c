@@ -139,6 +139,21 @@ static long long file_size(const char *relative)
     return (long long)st.st_size;
 }
 
+static bool read_at(const char *relative, off_t offset, void *buf, size_t len)
+{
+    char path[PATH_MAX];
+    int fd;
+    ssize_t n;
+
+    plat_resolve(relative, path, sizeof(path));
+    fd = open(path, O_RDONLY);
+    if (fd < 0)
+        return false;
+    n = pread(fd, buf, len, offset);
+    close(fd);
+    return n == (ssize_t)len;
+}
+
 static bool file_is(const char *relative, const char *expected)
 {
     char buf[64];
@@ -1569,6 +1584,31 @@ static void test_cpu(void)
     CHECK_EQ(cpu_status_mhz(&cpu, CPU_CLUSTER_SILVER), -1);
 }
 
+/* --- phase 6: the shared v1 swap header (zram + swapfile, #141) ---------- */
+
+static void test_swap_header(void)
+{
+    char path[PATH_MAX];
+    unsigned int value = 0;
+    char magic[10];
+    int fd;
+
+    plat_resolve("/swapheader.test", path, sizeof(path));
+    fd = open(path, O_RDWR | O_CREAT | O_TRUNC, 0600);
+    CHECK(fd >= 0);
+    CHECK_EQ(mem_write_swap_header(fd, 16LL * 1024 * 1024), 0);
+    CHECK(read_at("/swapheader.test", 1024, &value, sizeof(value)));
+    CHECK_EQ(value, 1); /* version */
+    CHECK(read_at("/swapheader.test", 1028, &value, sizeof(value)));
+    CHECK_EQ(value, 16u * 1024u * 1024u / 4096u - 1u); /* last_page */
+    CHECK(read_at("/swapheader.test", 4086, magic, sizeof(magic)));
+    CHECK(!memcmp(magic, "SWAPSPACE2", sizeof(magic)));
+    /* A size below two pages cannot be a swap device. */
+    CHECK_EQ(mem_write_swap_header(fd, 4096), -1);
+    close(fd);
+    unlink(path);
+}
+
 /* --- phase 6: zram and swapfile (#141) ----------------------------------- */
 
 static void test_mem(void)
@@ -1596,8 +1636,20 @@ static void test_mem(void)
     /* Apply order: reset -> compressor -> disksize -> swapon (nothing to swap
      * off on a fresh device). */
     CHECK_EQ(mem_apply_zram(&mem, 4096), 4000);
-    CHECK(!strcmp(mem.trace, "reset,comp,disksize,swapon"));
+    CHECK(!strcmp(mem.trace, "reset,comp,disksize,signature,swapon"));
     CHECK_EQ(read_ll("/sys/block/zram0/disksize"), 4000LL * 1024 * 1024);
+    {
+        unsigned int value = 0;
+        char magic[10];
+
+        /* The reset device got the swap signature before swapon. */
+        CHECK(read_at("/dev/block/zram0", 1024, &value, sizeof(value)));
+        CHECK_EQ(value, 1);
+        CHECK(read_at("/dev/block/zram0", 1028, &value, sizeof(value)));
+        CHECK_EQ(value, 4000u * 1024u * 1024u / 4096u - 1u);
+        CHECK(read_at("/dev/block/zram0", 4086, magic, sizeof(magic)));
+        CHECK(!memcmp(magic, "SWAPSPACE2", sizeof(magic)));
+    }
     {
         char comp[32];
 
@@ -1746,6 +1798,7 @@ int main(void)
     test_throttle();
     test_gpu();
     test_gpu_clock();
+    test_swap_header();
     test_power();
     test_cpu();
     test_mem();

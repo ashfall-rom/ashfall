@@ -887,8 +887,14 @@ open; the cap properties (`gpu_max_mhz`, `gpu_oc`) are unchanged.
 
 **zram.** `/dev/block/zram0` plus `/sys/block/zram0/{disksize,reset,
 comp_algorithm,comp_available,mm_stat}`.  Apply order: `swapoff` (when the
-device is in use) -> `reset` -> `comp_algorithm` -> `disksize` -> `swapon`
-(priority 1).  The compressor is `lz4` when `comp_available` lists it, else the
+device is in use) -> `reset` -> `comp_algorithm` -> `disksize` -> **v1 swap
+header** -> `swapon` (priority 1).  A freshly reset zram device is all zeros and
+`swapon(2)` rejects it with `EINVAL`, so the daemon writes the same v1 header
+that Android init's `mkswap` would (version 1, `last_page`, `SWAPSPACE2` at
+offset 4086) before attaching it.  On the boot/restart re-attach path `swapon`
+is tried first; only an `EINVAL` makes the daemon format the device once and
+retry (`EBUSY` means it is already active and is success - an active device is
+never formatted).  The compressor is `lz4` when `comp_available` lists it, else the
 first available one, logged once (`mem: zram compressor lz4`); there is no UI
 option.  The size is clamped to `MemTotal/2` (4000 MB on the 8 GB unit, 6000 on
 12 GB) and to 6144 MB, so the stock 4096 MB is never applied on an 8 GB unit.
