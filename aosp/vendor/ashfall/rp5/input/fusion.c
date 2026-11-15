@@ -9,12 +9,14 @@
  */
 #include "fusion.h"
 #include "plat.h"
+#include "uinput_dev.h"
 
 #include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <strings.h>
+#include <sys/inotify.h>
 
 #include <linux/input.h>
 
@@ -224,6 +226,38 @@ bool fusion_is_self(uint16_t vendor, uint16_t product, const char *name)
     if (!name || !name[0])
         return true;
     return strncmp(name, "AshFall ", 8) == 0;
+}
+
+bool fusion_node_mergeable(const struct fusion_node *node, char *key,
+                           size_t key_len)
+{
+    if (!node)
+        return false;
+    if (key && key_len > 0)
+        key[0] = '\0';
+    if (fusion_is_self(node->vendor, node->product, node->name))
+        return false;
+    if (node->motion_only || !node->gamepad)
+        return false;
+    if (key && key_len > 0)
+        fusion_key_format(node->vendor, node->product, node->connection, key,
+                          key_len);
+    return true;
+}
+
+bool fusion_hotplug_scan(unsigned int mask, const char *name)
+{
+    /*
+     * The watch is on /dev/input, so a create/delete/move/attrib means "look
+     * again".  A queue overflow must rescan too, otherwise a pad that
+     * appeared while the queue was full is only found by the periodic scan.
+     */
+    if (!(mask & (IN_CREATE | IN_DELETE | IN_ATTRIB | IN_MOVED_FROM |
+                  IN_MOVED_TO | IN_Q_OVERFLOW)))
+        return false;
+    if (!name || !name[0])
+        return true; /* the directory itself changed */
+    return strncmp(name, "event", 5) == 0;
 }
 
 void fusion_axis_sources(const struct fusion_absinfo *info,
@@ -720,19 +754,16 @@ static bool axis_is_trigger(int slot)
     return slot == FUSION_AXIS_L2 || slot == FUSION_AXIS_R2;
 }
 
-/* The range the fusion uinput device advertises for a slot. */
+/* The range the fusion uinput device advertises for a slot: same helper the
+ * device construction uses, so a pad is rescaled to exactly what we report. */
 static void axis_target_range(int slot, int *minimum, int *maximum)
 {
-    if (axis_is_trigger(slot)) {
-        *minimum = 0;
-        *maximum = 255;
-    } else if (slot == FUSION_AXIS_HATX || slot == FUSION_AXIS_HATY) {
-        *minimum = -1;
-        *maximum = 1;
-    } else {
+    if (slot < 0 || slot >= FUSION_AXIS_COUNT) {
         *minimum = -32768;
         *maximum = 32767;
+        return;
     }
+    uinput_dev_axis_range(fusion_axis_codes[slot], minimum, maximum);
 }
 
 static int scale_linear(int value, int src_min, int src_max, int dst_min,

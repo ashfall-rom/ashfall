@@ -12,9 +12,9 @@ CPPFLAGS += -I..
 LDLIBS += -lm
 
 SRCS = test_input.c ../calib.c ../control.c ../fusion.c ../input.c \
-       ../mapping.c ../plat.c ../session.c
+       ../mapping.c ../plat.c ../session.c ../uinput_dev.c
 HDRS = ../calib.h ../control.h ../fusion.h ../input.h ../mapping.h \
-       ../plat.h ../session.h
+       ../plat.h ../session.h ../uinput_dev.h
 
 test_input: $(SRCS) $(HDRS)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ $(SRCS) $(LDLIBS)

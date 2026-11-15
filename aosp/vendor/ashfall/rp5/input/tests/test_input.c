@@ -11,16 +11,19 @@
 #include "mapping.h"
 #include "plat.h"
 #include "session.h"
+#include "uinput_dev.h"
 
 #include <errno.h>
 #include <fcntl.h>
 #include <limits.h>
 #include <linux/input.h>
+#include <linux/uinput.h>
 #include <poll.h>
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/inotify.h>
 #include <sys/socket.h>
 #include <sys/time.h>
 #include <sys/stat.h>
@@ -1312,6 +1315,385 @@ static void test_fusion_status(void)
     CHECK(strstr(text, "bad name") != NULL);
 }
 
+/* --- #156: uinput capability/device-setup construction ------------------- */
+
+#define CALL_MAX 160
+
+struct uinput_call {
+    unsigned long request;
+    unsigned long arg;
+};
+
+/*
+ * A fake kernel: it records the sequence and, optionally, enforces the two
+ * rules that made the fusion device fail on the device -
+ *
+ *   drivers/input/misc/uinput.c: UI_DEV_CREATE rejects EV_FF without
+ *   ff_effects_max, and an unsupported FF bit is refused at UI_SET_FFBIT.
+ *
+ * so the test fails if the daemon ever sends the sequence #156 shipped.
+ */
+struct uinput_fake {
+    int opens;
+    int closes;
+    int fd;
+    bool ffbit_supported;
+    bool enforce_ff_rule;
+    bool ff_set; /* EV_FF seen on the current fd */
+    struct uinput_call calls[CALL_MAX];
+    int call_count;
+    struct uinput_setup setup;
+    int creates;
+};
+
+static int fake_open(void *ctx)
+{
+    struct uinput_fake *fake = ctx;
+
+    fake->opens++;
+    fake->fd = 64 + fake->opens;
+    fake->ff_set = false;
+    return fake->fd;
+}
+
+static void fake_record(struct uinput_fake *fake, unsigned long request,
+                        unsigned long arg)
+{
+    if (fake->call_count >= CALL_MAX)
+        return;
+    fake->calls[fake->call_count].request = request;
+    fake->calls[fake->call_count].arg = arg;
+    fake->call_count++;
+}
+
+static int fake_ioctl(void *ctx, int fd, unsigned long request,
+                      unsigned long arg)
+{
+    struct uinput_fake *fake = ctx;
+
+    (void)fd;
+    fake_record(fake, request, arg);
+
+    switch (request) {
+    case UI_SET_EVBIT:
+        if ((int)arg == EV_FF) {
+            if (!fake->ffbit_supported) {
+                errno = EINVAL;
+                return -1;
+            }
+            fake->ff_set = true;
+        }
+        return 0;
+    case UI_SET_FFBIT:
+        if (!fake->ffbit_supported) {
+            errno = EINVAL;
+            return -1;
+        }
+        return 0;
+    case UI_DEV_SETUP:
+        memcpy(&fake->setup, (const void *)(uintptr_t)arg,
+               sizeof(fake->setup));
+        return 0;
+    case UI_DEV_CREATE:
+        fake->creates++;
+        if (fake->enforce_ff_rule && fake->ff_set &&
+            fake->setup.ff_effects_max == 0) {
+            errno = EINVAL;
+            return -1;
+        }
+        return 0;
+    default:
+        return 0;
+    }
+}
+
+static int fake_write(void *ctx, int fd, const void *buf, size_t len)
+{
+    struct uinput_fake *fake = ctx;
+
+    (void)fd;
+    (void)buf;
+    (void)len;
+    fake_record(fake, 0xdeadbeef, 0);
+    return 0;
+}
+
+static void fake_close(void *ctx, int fd)
+{
+    struct uinput_fake *fake = ctx;
+
+    (void)fd;
+    fake->closes++;
+}
+
+static const struct uinput_dev_ops fake_ops = {
+    .ctx = NULL, /* filled in per test */
+    .open = fake_open,
+    .ioctl = fake_ioctl,
+    .write = fake_write,
+    .close = fake_close,
+};
+
+/* First call index for a request, or -1. */
+static int call_index(const struct uinput_fake *fake, unsigned long request)
+{
+    for (int i = 0; i < fake->call_count; i++) {
+        if (fake->calls[i].request == request)
+            return i;
+    }
+    return -1;
+}
+
+static int call_count_of(const struct uinput_fake *fake, unsigned long request,
+                         unsigned long arg)
+{
+    int count = 0;
+
+    for (int i = 0; i < fake->call_count; i++) {
+        if (fake->calls[i].request == request && fake->calls[i].arg == arg)
+            count++;
+    }
+    return count;
+}
+
+static void fake_init(struct uinput_fake *fake, struct uinput_dev_ops *ops)
+{
+    memset(fake, 0, sizeof(*fake));
+    fake->ffbit_supported = true;
+    fake->enforce_ff_rule = true;
+    *ops = fake_ops;
+    ops->ctx = fake;
+}
+
+/* The full fusion capability set, exactly as the daemon advertises it. */
+static void fusion_spec(struct uinput_dev_spec *spec)
+{
+    memset(spec, 0, sizeof(*spec));
+    spec->name = FUSION_NAME_ON;
+    spec->bustype = BUS_USB;
+    spec->vendor = FUSION_VID;
+    spec->product = FUSION_PID;
+    spec->version = 1;
+    spec->keys = fusion_key_caps;
+    spec->key_count = fusion_key_cap_count;
+    spec->axes = fusion_axis_codes;
+    spec->axis_count = FUSION_AXIS_COUNT;
+    spec->rumble = true;
+}
+
+static void test_uinput_fusion_caps(void)
+{
+    struct uinput_dev_spec spec;
+    struct uinput_dev_ops ops;
+    struct uinput_fake fake;
+    bool rumble = false;
+    int fd;
+
+    fake_init(&fake, &ops);
+    fusion_spec(&spec);
+    fd = uinput_dev_create(&ops, &spec, &rumble);
+
+    CHECK(fd >= 0);
+    CHECK(rumble);
+    CHECK_EQ(fake.opens, 1);
+    CHECK_EQ(fake.creates, 1);
+
+    /* Event types first, then key bits, then FF, then axes and only then the
+     * device setup the kernel reads ff_effects_max from. */
+    CHECK_EQ(fake.calls[0].request, UI_SET_EVBIT);
+    CHECK_EQ(fake.calls[0].arg, EV_KEY);
+    CHECK(call_index(&fake, UI_SET_KEYBIT) < call_index(&fake, UI_SET_FFBIT));
+    CHECK(call_index(&fake, UI_SET_FFBIT) < call_index(&fake, UI_DEV_SETUP));
+    CHECK(call_index(&fake, UI_DEV_SETUP) < call_index(&fake, UI_DEV_CREATE));
+    CHECK(call_index(&fake, UI_DEV_CREATE) == fake.call_count - 1);
+    CHECK(call_index(&fake, UI_ABS_SETUP) < call_index(&fake, UI_DEV_SETUP));
+
+    /* Force feedback: EV_FF + FF_RUMBLE, and the non-zero effect count that
+     * UI_DEV_CREATE requires (the #156 EINVAL). */
+    CHECK_EQ(call_count_of(&fake, UI_SET_EVBIT, EV_FF), 1);
+    CHECK_EQ(call_count_of(&fake, UI_SET_FFBIT, FF_RUMBLE), 1);
+    CHECK(fake.setup.ff_effects_max == UINPUT_DEV_FF_EFFECTS);
+    CHECK(fake.setup.ff_effects_max > 0);
+
+    /* Identity: the well-known Xbox pad, so apps bind their gamepad profile. */
+    CHECK(strcmp(fake.setup.name, FUSION_NAME_ON) == 0);
+    CHECK_EQ(fake.setup.id.vendor, FUSION_VID);
+    CHECK_EQ(fake.setup.id.product, FUSION_PID);
+    CHECK_EQ(fake.setup.id.bustype, BUS_USB);
+
+    /* Every advertised key and axis is set, hats/triggers with their ranges. */
+    CHECK_EQ(call_count_of(&fake, UI_SET_KEYBIT, BTN_A), 1);
+    CHECK_EQ(call_count_of(&fake, UI_SET_KEYBIT, BTN_MODE), 1);
+    CHECK_EQ(call_count_of(&fake, UI_SET_ABSBIT, ABS_HAT0X), 1);
+    CHECK_EQ(call_count_of(&fake, UI_SET_ABSBIT, ABS_BRAKE), 1);
+    for (int i = 0; i < spec.key_count; i++) {
+        if (spec.keys[i] == 0)
+            continue;
+        CHECK_EQ(call_count_of(&fake, UI_SET_KEYBIT, spec.keys[i]), 1);
+    }
+}
+
+static void test_uinput_phase5_device(void)
+{
+    static const uint16_t keys[] = {
+        /* The MCU keymap has holes for the D-pad bits: a 0 entry must never
+         * reach the kernel. */
+        BTN_TL, BTN_TR, BTN_A, 0, KEY_HOMEPAGE, KEY_BACK,
+    };
+    struct uinput_dev_spec spec;
+    struct uinput_dev_ops ops;
+    struct uinput_fake fake;
+    bool rumble = true;
+    int fd;
+
+    fake_init(&fake, &ops);
+    memset(&spec, 0, sizeof(spec));
+    spec.name = FUSION_NAME_OFF;
+    spec.bustype = BUS_USB;
+    spec.vendor = FUSION_MCU_VID;
+    spec.product = FUSION_MCU_PID;
+    spec.version = 1;
+    spec.keys = keys;
+    spec.key_count = (int)(sizeof(keys) / sizeof(keys[0]));
+    spec.axes = fusion_axis_codes;
+    spec.axis_count = FUSION_AXIS_COUNT;
+    spec.rumble = false;
+
+    fd = uinput_dev_create(&ops, &spec, &rumble);
+    CHECK(fd >= 0);
+    /* Fusion off is the phase-5 device: no EV_FF, no FF bits, no effect
+     * slots.  It must stay byte-for-byte the device apps already know. */
+    CHECK(!rumble);
+    CHECK_EQ(fake.creates, 1);
+    CHECK_EQ(call_index(&fake, UI_DEV_SETUP) >= 0, 1);
+    CHECK(call_count_of(&fake, UI_SET_EVBIT, EV_FF) == 0);
+    CHECK(call_count_of(&fake, UI_SET_FFBIT, FF_RUMBLE) == 0);
+    /* Holes in the keymap are skipped, never set as code 0. */
+    CHECK(call_count_of(&fake, UI_SET_KEYBIT, 0) == 0);
+    CHECK(call_count_of(&fake, UI_SET_KEYBIT, BTN_A) == 1);
+    CHECK_EQ(fake.setup.ff_effects_max, 0);
+    CHECK(strcmp(fake.setup.name, FUSION_NAME_OFF) == 0);
+    CHECK_EQ(fake.setup.id.vendor, FUSION_MCU_VID);
+    CHECK_EQ(fake.setup.id.product, FUSION_MCU_PID);
+}
+
+static void test_uinput_ff_refused(void)
+{
+    struct uinput_dev_spec spec;
+    struct uinput_dev_ops ops;
+    struct uinput_fake fake;
+    bool rumble = true;
+    int fd;
+
+    /* A kernel that does not take EV_FF: the pad must still be created, with
+     * rumble honestly reported as unavailable. */
+    fake_init(&fake, &ops);
+    fake.ffbit_supported = false;
+    fusion_spec(&spec);
+
+    fd = uinput_dev_create(&ops, &spec, &rumble);
+    CHECK(fd >= 0);
+    CHECK(!rumble);
+    CHECK_EQ(fake.opens, 2); /* first attempt without FF is closed again */
+    CHECK_EQ(fake.closes, 1);
+    CHECK_EQ(fake.creates, 1);
+    CHECK_EQ(fake.setup.ff_effects_max, 0);
+    CHECK(strcmp(fake.setup.name, FUSION_NAME_ON) == 0);
+}
+
+static void test_uinput_axis_range(void)
+{
+    int min = 0;
+    int max = 0;
+
+    uinput_dev_axis_range(ABS_BRAKE, &min, &max);
+    CHECK_EQ(min, 0);
+    CHECK_EQ(max, 255);
+    uinput_dev_axis_range(ABS_GAS, &min, &max);
+    CHECK_EQ(max, 255);
+    uinput_dev_axis_range(ABS_HAT0X, &min, &max);
+    CHECK_EQ(min, -1);
+    CHECK_EQ(max, 1);
+    uinput_dev_axis_range(ABS_HAT0Y, &min, &max);
+    CHECK_EQ(min, -1);
+    uinput_dev_axis_range(ABS_X, &min, &max);
+    CHECK_EQ(min, -32768);
+    CHECK_EQ(max, 32767);
+    uinput_dev_axis_range(ABS_RZ, &min, &max);
+    CHECK_EQ(max, 32767);
+}
+
+/* --- #156: external pad detection and hotplug ---------------------------- */
+
+static void test_fusion_node_mergeable(void)
+{
+    struct fusion_node node;
+    char key[FUSION_KEY_MAX];
+
+    memset(&node, 0, sizeof(node));
+    node.vendor = 0x0b05;
+    node.product = 0x1b21;
+    node.connection = FUSION_CONN_USB;
+    node.name = "8BitDo Ultimate 2C";
+    node.gamepad = true;
+    CHECK(fusion_node_mergeable(&node, key, sizeof(key)));
+    CHECK(strcmp(key, "0b05:1b21:usb") == 0);
+
+    /* The same pad over Bluetooth keeps its own stable key. */
+    node.connection = FUSION_CONN_BT;
+    CHECK(fusion_node_mergeable(&node, key, sizeof(key)));
+    CHECK(strcmp(key, "0b05:1b21:bt") == 0);
+
+    /* Our own uinput device is never a pad, in either identity. */
+    node.vendor = FUSION_VID;
+    node.product = FUSION_PID;
+    node.name = FUSION_NAME_ON;
+    CHECK(!fusion_node_mergeable(&node, key, sizeof(key)));
+    CHECK_EQ(key[0], '\0');
+    node.vendor = FUSION_MCU_VID;
+    node.product = FUSION_MCU_PID;
+    node.name = FUSION_NAME_OFF;
+    CHECK(!fusion_node_mergeable(&node, key, sizeof(key)));
+
+    /* Motion-only and key-only nodes stay with their own subsystems. */
+    node.vendor = 0x0001;
+    node.product = 0x0001;
+    node.name = "accelerometer";
+    node.motion_only = true;
+    CHECK(!fusion_node_mergeable(&node, key, sizeof(key)));
+    node.motion_only = false;
+    node.gamepad = false;
+    CHECK(!fusion_node_mergeable(&node, key, sizeof(key)));
+
+    /* A short buffer truncates the key but never overflows it. */
+    node.gamepad = true;
+    node.name = "pad";
+    memset(key, 'x', sizeof(key));
+    CHECK(fusion_node_mergeable(&node, key, 6));
+    CHECK_EQ(strlen(key), 5);
+    CHECK(fusion_node_mergeable(&node, NULL, 0));
+}
+
+static void test_fusion_hotplug(void)
+{
+    /* A pad that appears or disappears is a rescan now, not on the next
+     * 2 s tick. */
+    CHECK(fusion_hotplug_scan(IN_CREATE, "event7"));
+    CHECK(fusion_hotplug_scan(IN_DELETE, "event7"));
+    CHECK(fusion_hotplug_scan(IN_ATTRIB, "event12"));
+    CHECK(fusion_hotplug_scan(IN_MOVED_FROM, "event3"));
+    CHECK(fusion_hotplug_scan(IN_MOVED_TO, "event3"));
+    /* Queue overflow and directory-level changes: look again. */
+    CHECK(fusion_hotplug_scan(IN_Q_OVERFLOW, ""));
+    CHECK(fusion_hotplug_scan(IN_CREATE, ""));
+    CHECK(fusion_hotplug_scan(IN_CREATE, NULL));
+    /* Nodes that are not event devices, and events we do not watch. */
+    CHECK(!fusion_hotplug_scan(IN_CREATE, "mouse0"));
+    CHECK(!fusion_hotplug_scan(IN_CREATE, "js0"));
+    CHECK(!fusion_hotplug_scan(IN_IGNORED, "event7"));
+    CHECK(!fusion_hotplug_scan(IN_OPEN, "event7"));
+}
+
 /* --- #74: out-of-range deadzone properties use the contract default ------ */
 
 static void test_deadzone_props(void)
@@ -1376,6 +1758,12 @@ int main(void)
     test_fusion_topology_and_grab();
     test_fusion_settings();
     test_fusion_status();
+    test_uinput_fusion_caps();
+    test_uinput_phase5_device();
+    test_uinput_ff_refused();
+    test_uinput_axis_range();
+    test_fusion_node_mergeable();
+    test_fusion_hotplug();
 
     {
         char cmd[PATH_MAX + 32];

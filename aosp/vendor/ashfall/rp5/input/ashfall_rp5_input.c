@@ -37,6 +37,7 @@
 #include "mapping.h"
 #include "plat.h"
 #include "session.h"
+#include "uinput_dev.h"
 
 #include <dirent.h>
 #include <errno.h>
@@ -68,7 +69,7 @@
 #define MCU_REINIT_MS 500
 #define FUSION_SCAN_MS 2000
 #define SELF_NODE_MS 500
-#define FUSION_FF_MAX 16
+#define FUSION_FF_MAX UINPUT_DEV_FF_EFFECTS
 
 /* A5 D3 5A 3D | seq | cmd | len_lo len_hi | payload | checksum */
 static const uint8_t mcu_header[4] = {0xA5, 0xD3, 0x5A, 0x3D};
@@ -188,6 +189,7 @@ struct daemon {
 
     bool fusion_device; /* the uinput device currently is the fusion pad */
     bool grabbed;       /* a tester owns GRAB ON */
+    bool rumble;        /* the uinput device really advertises EV_FF */
 
     uint8_t rx[4096];
     size_t rx_len;
@@ -251,155 +253,93 @@ static void emit_sync(int fd)
 
 /* --- uinput device -------------------------------------------------------- */
 
-static void uinput_key_bits(int fd, const uint16_t *codes, int count)
-{
-    for (int i = 0; i < count; i++) {
-        if (codes[i] == 0)
-            continue;
-        if (ioctl(fd, UI_SET_KEYBIT, codes[i]) < 0)
-            ah_logf(AH_LOG_WARN, "UI_SET_KEYBIT(%u) failed: %s", codes[i],
-                    strerror(errno));
-    }
-}
-
-static void uinput_axis_bits(int fd)
-{
-    for (size_t i = 0; i < ARRAY_SIZE(axis_codes); i++) {
-        struct input_absinfo absinfo;
-        uint16_t code = axis_codes[i];
-
-        memset(&absinfo, 0, sizeof(absinfo));
-        if (code == ABS_BRAKE || code == ABS_GAS) {
-            absinfo.minimum = 0;
-            absinfo.maximum = 255;
-        } else if (code == ABS_HAT0X || code == ABS_HAT0Y) {
-            absinfo.minimum = -1;
-            absinfo.maximum = 1;
-        } else {
-            absinfo.minimum = -32768;
-            absinfo.maximum = 32767;
-        }
-
-        if (ioctl(fd, UI_SET_ABSBIT, code) < 0)
-            ah_logf(AH_LOG_WARN, "UI_SET_ABSBIT(%u) failed: %s", code,
-                    strerror(errno));
-
-#ifdef UI_ABS_SETUP
-        {
-            struct uinput_abs_setup setup;
-
-            memset(&setup, 0, sizeof(setup));
-            setup.code = code;
-            setup.absinfo = absinfo;
-            if (ioctl(fd, UI_ABS_SETUP, &setup) < 0)
-                ah_logf(AH_LOG_WARN, "UI_ABS_SETUP(%u) failed: %s", code,
-                        strerror(errno));
-        }
-#endif
-    }
-}
-
 /*
- * One uinput device, two identities (#138): fusion off is the device this
- * daemon has always created; fusion on is the well-known Xbox pad, plus
- * force-feedback bits so rumble can be relayed to the physical pads.  The
- * identities cannot be switched in place, so a toggle destroys and recreates
- * the device - one device at a time, never two.
+ * The capability plan and the ioctl sequence live in uinput_dev.c so the host
+ * tests can assert them (#156): the kernel only reports a bad capability at
+ * UI_DEV_CREATE, and "Invalid argument" there is the same for a wrong bit, a
+ * wrong order and a missing ff_effects_max.  These are the syscalls.
  */
-static int create_uinput(bool fusion_on)
+static int uinput_open(void *ctx)
 {
-    const char *name = fusion_on ? FUSION_NAME_ON : FUSION_NAME_OFF;
-    uint16_t vendor = fusion_on ? FUSION_VID : FUSION_MCU_VID;
-    uint16_t product = fusion_on ? FUSION_PID : FUSION_MCU_PID;
+    (void)ctx;
     /*
      * O_NONBLOCK is required, not an optimisation: the fd is also read for
      * EV_UINPUT/EV_FF, and a blocking read on an empty queue parks in
      * uinput_read() holding the device mutex - the input loop, the next
      * UI_DEV_DESTROY and every later write would wait forever.
      */
-    int fd = open("/dev/uinput", O_RDWR | O_NONBLOCK | O_CLOEXEC);
+    return open("/dev/uinput", O_RDWR | O_NONBLOCK | O_CLOEXEC);
+}
 
-    if (fd < 0) {
-        ah_logf(AH_LOG_ERROR, "cannot open /dev/uinput: %s", strerror(errno));
-        return -1;
-    }
+static int uinput_ioctl(void *ctx, int fd, unsigned long request,
+                        unsigned long arg)
+{
+    (void)ctx;
+    return ioctl(fd, request, arg);
+}
 
-    if (ioctl(fd, UI_SET_EVBIT, EV_KEY) < 0 ||
-        ioctl(fd, UI_SET_EVBIT, EV_ABS) < 0 ||
-        ioctl(fd, UI_SET_EVBIT, EV_SYN) < 0) {
-        ah_logf(AH_LOG_ERROR, "UI_SET_EVBIT failed: %s", strerror(errno));
-        close(fd);
-        return -1;
-    }
+static int uinput_write(void *ctx, int fd, const void *buf, size_t len)
+{
+    (void)ctx;
+    return write_all(fd, buf, len);
+}
 
+static void uinput_close(void *ctx, int fd)
+{
+    (void)ctx;
+    close(fd);
+}
+
+static const struct uinput_dev_ops uinput_ops = {
+    .ctx = NULL,
+    .open = uinput_open,
+    .ioctl = uinput_ioctl,
+    .write = uinput_write,
+    .close = uinput_close,
+};
+
+/*
+ * One uinput device, two identities (#138): fusion off is the device this
+ * daemon has always created; fusion on is the well-known Xbox pad, plus force
+ * feedback bits so rumble can be relayed to the physical pads.  The
+ * identities cannot be switched in place, so a toggle destroys and recreates
+ * the device - one device at a time, never two.
+ */
+static int create_uinput(struct daemon *d, bool fusion_on)
+{
+    struct uinput_dev_spec spec;
+    bool rumble = false;
+    int fd;
+
+    memset(&spec, 0, sizeof(spec));
+    spec.name = fusion_on ? FUSION_NAME_ON : FUSION_NAME_OFF;
+    spec.bustype = BUS_USB;
+    spec.vendor = fusion_on ? FUSION_VID : FUSION_MCU_VID;
+    spec.product = fusion_on ? FUSION_PID : FUSION_MCU_PID;
+    spec.version = 1;
     if (fusion_on) {
-        uinput_key_bits(fd, fusion_key_caps, fusion_key_cap_count);
-        if (ioctl(fd, UI_SET_EVBIT, EV_FF) < 0)
-            ah_logf(AH_LOG_WARN, "UI_SET_EVBIT(EV_FF) failed: %s",
-                    strerror(errno));
-        if (ioctl(fd, UI_SET_FFBIT, FF_RUMBLE) < 0)
-            ah_logf(AH_LOG_WARN, "UI_SET_FFBIT(FF_RUMBLE) failed: %s",
-                    strerror(errno));
+        spec.keys = fusion_key_caps;
+        spec.key_count = fusion_key_cap_count;
+        spec.rumble = true;
     } else {
-        uinput_key_bits(fd, mcu_keymap, (int)ARRAY_SIZE(mcu_keymap));
+        spec.keys = mcu_keymap;
+        spec.key_count = (int)ARRAY_SIZE(mcu_keymap);
     }
-    uinput_axis_bits(fd);
+    spec.axes = axis_codes;
+    spec.axis_count = (int)ARRAY_SIZE(axis_codes);
 
-#ifdef UI_DEV_SETUP
-    {
-        struct uinput_setup setup;
-
-        memset(&setup, 0, sizeof(setup));
-        setup.id.bustype = BUS_USB;
-        setup.id.vendor = vendor;
-        setup.id.product = product;
-        setup.id.version = 1;
-        snprintf(setup.name, sizeof(setup.name), "%s", name);
-        if (ioctl(fd, UI_DEV_SETUP, &setup) < 0) {
-            ah_logf(AH_LOG_ERROR, "UI_DEV_SETUP failed: %s", strerror(errno));
-            close(fd);
-            return -1;
-        }
-    }
-#else
-    {
-        struct uinput_user_dev dev;
-
-        memset(&dev, 0, sizeof(dev));
-        snprintf(dev.name, sizeof(dev.name), "%s", name);
-        dev.id.bustype = BUS_USB;
-        dev.id.vendor = vendor;
-        dev.id.product = product;
-        dev.id.version = 1;
-        for (size_t i = 0; i < ARRAY_SIZE(axis_codes); i++) {
-            uint16_t code = axis_codes[i];
-
-            if (code == ABS_BRAKE || code == ABS_GAS) {
-                dev.absmin[code] = 0;
-                dev.absmax[code] = 255;
-            } else if (code == ABS_HAT0X || code == ABS_HAT0Y) {
-                dev.absmin[code] = -1;
-                dev.absmax[code] = 1;
-            } else {
-                dev.absmin[code] = -32768;
-                dev.absmax[code] = 32767;
-            }
-        }
-        if (write_all(fd, &dev, sizeof(dev)) < 0) {
-            close(fd);
-            return -1;
-        }
-    }
-#endif
-
-    if (ioctl(fd, UI_DEV_CREATE) < 0) {
-        ah_logf(AH_LOG_ERROR, "UI_DEV_CREATE failed: %s", strerror(errno));
-        close(fd);
+    fd = uinput_dev_create(&uinput_ops, &spec, &rumble);
+    d->rumble = rumble;
+    if (fd < 0) {
+        ah_logf(AH_LOG_ERROR, "uinput %s: %s%s", spec.name, strerror(errno),
+                fusion_on ? " (EV_FF/rumble, then without)" : "");
         return -1;
     }
-
-    ah_logf(AH_LOG_INFO, "uinput gamepad created (%s %04x:%04x)", name, vendor,
-            product);
+    if (fusion_on && !rumble)
+        ah_logf(AH_LOG_WARN,
+                "uinput: kernel refused EV_FF/FF_RUMBLE, rumble relay off");
+    ah_logf(AH_LOG_INFO, "uinput %s created (%04x:%04x%s)", spec.name,
+            spec.vendor, spec.product, rumble ? ", rumble" : "");
     return fd;
 }
 
@@ -479,6 +419,11 @@ struct pad_probe {
     enum fusion_connection connection;
     struct fusion_absinfo absinfo[FUSION_ABS_MAX];
     uint16_t axis_src[FUSION_AXIS_COUNT];
+    /* What the fusion registry asked for: a mergeable node plus its stable
+     * vendor:product:connection key. */
+    struct fusion_node node;
+    char key[FUSION_KEY_MAX];
+    bool motion_only; /* log only: the node is left on the sensor path */
 };
 
 static enum fusion_connection connection_of(const struct input_id *id)
@@ -493,7 +438,8 @@ static enum fusion_connection connection_of(const struct input_id *id)
  * BTN_GAMEPAD/BTN_SOUTH/BTN_A/BTN_TRIGGER and at least one EV_ABS axis.  A
  * motion-only node fails this test and is therefore never opened, never
  * grabbed, and keeps feeding Android's sensor path.  Our own uinput device is
- * excluded too, or fusion would feed back into itself.
+ * excluded too, or fusion would feed back into itself.  The decision itself is
+ * fusion_node_mergeable() so the host tests cover it (#156).
  */
 static bool probe_pad(int fd, struct pad_probe *out)
 {
@@ -517,10 +463,19 @@ static bool probe_pad(int fd, struct pad_probe *out)
     if (ioctl(fd, EVIOCGPROP(sizeof(props)), props) < 0)
         memset(props, 0, sizeof(props));
 
-    if (fusion_is_self(out->id.vendor, out->id.product, out->name))
-        return false;
-    if (!fusion_classify(keybits, sizeof(keybits), absbits, sizeof(absbits),
-                         props, sizeof(props)))
+    out->connection = connection_of(&out->id);
+    out->node.vendor = out->id.vendor;
+    out->node.product = out->id.product;
+    out->node.connection = out->connection;
+    out->node.name = out->name;
+    out->node.gamepad =
+        fusion_classify(keybits, sizeof(keybits), absbits, sizeof(absbits),
+                        props, sizeof(props));
+    out->node.motion_only =
+        fusion_is_motion_only(keybits, sizeof(keybits), absbits, sizeof(absbits),
+                              props, sizeof(props));
+    out->motion_only = out->node.motion_only;
+    if (!fusion_node_mergeable(&out->node, out->key, sizeof(out->key)))
         return false;
 
     for (int code = 0; code <= ABS_MAX; code++) {
@@ -536,7 +491,6 @@ static bool probe_pad(int fd, struct pad_probe *out)
         out->absinfo[code].maximum = info.maximum;
     }
     fusion_axis_sources(out->absinfo, out->axis_src);
-    out->connection = connection_of(&out->id);
     return true;
 }
 
@@ -602,7 +556,6 @@ static void fusion_scan(struct daemon *d)
         struct fusion_pad *pad;
         struct pad_handle *handle;
         char node[64];
-        char key[FUSION_KEY_MAX];
         int slot;
         int fd;
         bool writable;
@@ -660,10 +613,11 @@ static void fusion_scan(struct daemon *d)
             }
         }
 
-        fusion_key_format(probe.id.vendor, probe.id.product, probe.connection,
-                          key, sizeof(key));
-        pad = fusion_pad_add(&d->fusion, key, probe.name, probe.connection,
-                             ah_now_ms());
+        /* The key the registry decided on (vendor:product:connection), logged
+         * by fusion_pad_add, so a BT and a USB session of the same pad keep
+         * distinct, stable keys. */
+        pad = fusion_pad_add(&d->fusion, probe.key, probe.name,
+                             probe.connection, ah_now_ms());
         if (!pad) {
             close(fd);
             continue;
@@ -822,7 +776,8 @@ static void ff_relay(struct daemon *d, int id, int value)
 {
     const struct ff_effect *src = effect_find(d, id);
 
-    if (!src || value < 0)
+    /* No EV_FF on the device (kernel refused it): nothing to relay. */
+    if (!d->rumble || !src || value < 0)
         return;
     for (int i = 0; i < FUSION_MAX_PADS; i++) {
         struct pad_handle *pad = &d->pads[i];
@@ -1217,7 +1172,7 @@ static void apply_fusion_mode(struct daemon *d, bool on)
         close(d->uinput_fd);
         d->uinput_fd = -1;
     }
-    d->uinput_fd = create_uinput(on);
+    d->uinput_fd = create_uinput(d, on);
     d->fusion_device = on;
     effects_reset(d);
     d->prev_keys = 0;
@@ -1324,10 +1279,28 @@ static void drain_inotify(struct daemon *d)
 {
     char buf[sizeof(struct inotify_event) + NAME_MAX + 1];
 
-    while (read(d->notify_fd, buf, sizeof(buf)) > 0) {
-        /* Every event on /dev/input means "look again"; the scan is cheap and
-         * idempotent, and it also covers ATTRIB/MOVED events. */
-        d->last_scan_ms = 0;
+    for (;;) {
+        ssize_t n = read(d->notify_fd, buf, sizeof(buf));
+        char *p;
+
+        if (n <= 0)
+            break;
+        for (p = buf; p + sizeof(struct inotify_event) <= buf + n;) {
+            const struct inotify_event *event =
+                (const struct inotify_event *)p;
+
+            p += sizeof(*event) + event->len;
+            /* A hotplugged pad is a new event node: say so once (logcat
+             * evidence for #156), then let the scan pick it up now instead of
+             * on the next 2 s tick. */
+            if (!fusion_hotplug_scan(event->mask,
+                                     event->len ? event->name : ""))
+                continue;
+            d->last_scan_ms = 0;
+            if (event->len > 0 && strncmp(event->name, "event", 5) == 0)
+                ah_logf(AH_LOG_INFO, "fusion: hotplug %s, rescanning",
+                        event->name);
+        }
     }
 }
 
@@ -1357,7 +1330,7 @@ static void uinput_retry(struct daemon *d)
     if (d->uinput_fd >= 0 || now - d->last_uinput_ms < MCU_OPEN_MS)
         return;
     d->last_uinput_ms = now;
-    d->uinput_fd = create_uinput(d->fusion.enabled);
+    d->uinput_fd = create_uinput(d, d->fusion.enabled);
     if (d->uinput_fd < 0)
         return;
     d->fusion_device = d->fusion.enabled;
@@ -1425,9 +1398,16 @@ static void daemon_tick(struct daemon *d)
         }
         if (d->uinput_fd >= 0 &&
             (d->last_scan_ms == 0 || now - d->last_scan_ms >= FUSION_SCAN_MS)) {
+            int merged = d->fusion.pad_count;
+
             d->last_scan_ms = now;
             fusion_check_missing(d);
             fusion_scan(d);
+            /* Log the result only when it changed: a 2 s tick must not fill
+             * logcat, but a pad that appears or disappears must be visible. */
+            if (d->fusion.pad_count != merged)
+                ah_logf(AH_LOG_INFO, "fusion: scan: %d pad(s) merged",
+                        d->fusion.pad_count);
         }
         if (d->own_fd < 0 && now - d->last_self_ms >= SELF_NODE_MS) {
             d->last_self_ms = now;
@@ -1487,7 +1467,7 @@ int main(void)
      * happen to race ueventd; init's crash backoff could be minutes. */
     while (g_running && d.uinput_fd < 0) {
         d.last_uinput_ms = ah_now_ms();
-        d.uinput_fd = create_uinput(d.fusion.enabled);
+        d.uinput_fd = create_uinput(&d, d.fusion.enabled);
         if (d.uinput_fd < 0) {
             retry_calibration(&d.ctx, &d.cal_retries, &d.last_cal_ms);
             control_wait(d.control, 1000);
