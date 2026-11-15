@@ -56,7 +56,7 @@ genfscon sysfs /devices/system/cpu/cpu6/cpufreq u:object_r:ashfall_cpu_sysfs:s0
 genfscon sysfs /devices/system/cpu/cpu7/cpufreq u:object_r:ashfall_cpu_sysfs:s0
 
 # zram attributes (phase 6, #141).  /sys/block/zram0 is a class symlink to the
-# virtual block device; both prefixes are listed for the same reason as the
-# fan/LED class entries above.
+# virtual block device, so only the resolved path is listed: checkpolicy
+# resolves the /block/zram0 class prefix to the same path and rejects both
+# entries as a duplicate genfs entry.
 genfscon sysfs /devices/virtual/block/zram0     u:object_r:ashfall_zram_sysfs:s0
-genfscon sysfs /block/zram0                     u:object_r:ashfall_zram_sysfs:s0
