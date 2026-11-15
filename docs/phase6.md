@@ -248,3 +248,135 @@ Boundaries:
   verified.
 - Verification rules are unchanged: static + host tests, emulator for UI, RP5
   for hardware, orchestrator does the builds and the only device flash.
+
+## 9. Wave 2 contract: Power, Memory, Fusion, PlayTime, charging, desktop, tuning
+
+Status: contract, 2026-11-15. The seven issues (#124, #137, #138, #140, #141,
+#131, #130) remain the systems of record for behaviour, rationale, risks and
+per-feature checklists. This section fixes only what they share: the feature
+order, one writer per path, the telemetry ownership, the Settings patch
+boundary and the verification rules. Decisions marked "user" below were taken
+with the user on 2026-11-15.
+
+### 9.1 Order
+
+Wave 1, parallel and device-free:
+
+- **#124** AshFall Power page (clocks, presets, live stats) + Power QS tile.
+- **#137** PlayTime indicator: SystemUI estimator/element and the
+  `Settings > Battery` rows.
+- **#138** GamepadFusion: `ashfall-rp5-input` fusion mode, Controller page and
+  one QS tile/dialog.
+- **#141** AshFall Memory page: zram and swapfile.
+
+Wave 2, gated:
+
+- **#140** charging separation: after the `Settings > Battery` page from #137
+  exists. Second patch in the same series, never a concurrent edit.
+- **#131** desktop mode: after the RP5 is free and runs an AshFall build. Step 0
+  is a no-rebuild proof on the device; the pointer uinput device extends
+  `ashfall-rp5-input` only after the #138 daemon PR has merged.
+- **#130** performance tuning: measure-first, device-exclusive. Only measured
+  wins become code; everything else is documented as rejected.
+
+### 9.2 One writer per path (wave 1)
+
+| Worker | Issues | Owns | Never touches |
+|---|---|---|---|
+| hwd native | #124, #137, #141 daemon + #120, #129 | `aosp/vendor/ashfall/rp5/hw/**`, `aosp/vendor/ashfall/sepolicy/**`, `docs/rp5/hw.md` | `rp5/input/**`, `apps/**`, `patches/**` |
+| input native | #138 daemon | `aosp/vendor/ashfall/rp5/input/**`, `sepolicy/ashfall_rp5_input.te`, `docs/rp5/input.md` | `rp5/hw/**`, `apps/**` |
+| Power app | #124 app + #132 | `Power*.java`, `hw/Power*.java`, `ui/FanGraphView.java`, `FanFragment.java`, `qs/Power*.java`, `docs/parts-power.md` | any other feature page, `ControllerActivity`, `Memory*` |
+| Memory app | #141 app | `Memory*.java`, `hw/Memory*.java`, `docs/parts-memory.md` | any other page |
+| Fusion app | #138 app | `ControllerActivity.java`, `ipc/FusionClient.java`, `qs/Fusion*.java`, `ControllerSummary.java`, `docs/parts-fusion.md` | any other page, `FanFragment` |
+| SystemUI | #137 SystemUI | `patches/frameworks/base/0005-*.patch`, `docs/playtime.md` | `patches/packages/**` |
+| Settings | #137 Settings | `patches/packages/apps/Settings/0001-*.patch`, `docs/settings-battery.md` | `patches/frameworks/**` |
+
+`HandheldActivity.java`, `AndroidManifest.xml`, `TilePreferencesActivity.java`,
+`res/values/strings.xml` titles and the page/tile icons are committed by the
+orchestrator **before** the workers start (the shell). A worker replaces only
+its own stub classes and may add strings under its own prefix
+(`power_*`, `mem_*`, `fusion_*`) or layout files it owns.
+
+### 9.3 Shared telemetry: one sampler, one owner
+
+`ashfall-hwd` is the only sampler and the only writer of `ashfall.status.*`.
+The 2 s tick reads each node at most once and feeds every consumer; there is no
+second timer and no second sysfs reader.
+
+| Property | Type | Meaning |
+|---|---|---|
+| `ashfall.status.power.current_ma` | int | signed/rectified magnitude as measured; `-1` unknown |
+| `ashfall.status.power.voltage_mv` | int | battery voltage; `-1` unknown |
+| `ashfall.status.power.level` | int | 0..100; `-1` unknown |
+| `ashfall.status.power.charging` | int | `0`/`1`/`-1` |
+| `ashfall.status.power.charge_mah` | int | remaining charge; `-1` when the node is missing |
+| `ashfall.status.power.capacity_mah` | int | design capacity; `-1` when missing |
+| `ashfall.status.perf.power_mw` | int | `current_ma * voltage_mv / 1000` from the **same** read; `-1` while charging and when unknown |
+| `ashfall.status.perf.cpu_mhz_silver/gold/prime` | int | effective `scaling_cur_freq`; `-1` unavailable |
+| `ashfall.status.perf.gpu_mhz` | int | effective kgsl clock; `-1` unavailable |
+| `ashfall.status.mem.zram_mb` / `swap_mb` | int | applied sizes; `0` off; `-1` unavailable |
+| `ashfall.status.mem.zram_used_kb` / `zram_saved_kb` | int | `mm_stat`; `-1` unavailable |
+| `ashfall.status.mem.swap_total_kb` / `swap_used_kb` | int | `/proc/meminfo`; `-1` unavailable |
+
+Rules: invalid/missing values are `-1`, never fabricated; a rejected request is
+clamped in the daemon, logged once and the *effective* value is published; the
+graph and the status bar treat `-1` as a gap/`—`. Gamepad fusion state is **not**
+a property: it is returned by `FUSION STATUS` on `/dev/socket/ashfall_input`
+because a pad list does not fit the 92-char limit.
+
+### 9.4 Settings patch boundary
+
+`packages/apps/Settings` is a new ownership boundary for this project.
+
+- `0001-playtime-battery-page.patch` (#137) and
+  `0002-charging-control.patch` (#140) are **sequential**: #140 rebases on
+  #137's patch, never the other way round, and the two never edit
+  `power_usage_summary.xml` or `strings.xml` concurrently.
+- Baseline for #137 at contract time: `packages/apps/Settings` @ `31b1a9f`
+  (lineage-24.0 manifest revision, no AshFall patch yet).
+- The SystemUI patch is `patches/frameworks/base/0005-*.patch`, based on
+  `22de88b7b` + patches `0001`-`0004`. The status bar in this tree is the View
+  implementation (`PhoneStatusBarView`, `BatteryMeterView`), not Compose.
+- Both patches must apply with `git am --3way` on a pristine project; the
+  verifier checks that and reads the diff. No new APK, no launcher entry, no
+  reflection into a foreign process.
+
+### 9.5 App pages and tiles
+
+Handheld page order: Fan, Lighting, Controller, **Power**, **Memory**. One page
+per feature, no tabs. QS tiles: exactly one for Power (#124) and one for Fusion
+(#138); Memory, PlayTime and charging get none. A tile's tap opens its settings
+dialog and long-press opens its page, as the Fan/Lighting tiles do. The
+structural shell (rows, manifest, tile routing, summary stubs) is on `main`
+before any worker starts, so no two workers edit the same page shell.
+
+### 9.6 Verification
+
+- Wave 1 workers do **not** touch the RP5. Hardware evidence is collected by the
+  orchestrator after the integration flash.
+- Native: `make -C aosp/vendor/ashfall/rp5/hw/tests check` and
+  `make -C aosp/vendor/ashfall/rp5/input/tests check` must pass warning-free;
+  the new logic must be testable with `-DASHFALL_HOST` and a fake sink.
+- App: the `preview/` Gradle build plus the emulator (`Retroid_Pocket_5` AVD);
+  daemon properties are mocked, no device.
+- Patches: `git apply --check` against the exact baseline, then the integration
+  build proves them.
+- Each PR gets an independent verifier thread with zero owned paths; defects
+  become GitHub issues, never verifier edits.
+
+### 9.7 Fixed decisions (user, 2026-11-15)
+
+- Fusion off by default; v1 custom remap is the raw `from->to` code list
+  (record-a-button later); a motion-only node is never opened or grabbed.
+- PlayTime off by default; `capacity_mah=0` means auto; View status bar.
+- Memory off by default; zram (priority 1) and the swapfile (priority 2)
+  coexist; the 16 GiB cap is enforced in the daemon as well as the UI.
+- Power presets exactly as #124 (Low power GPU 305, Balanced 670, Performance
+  850); 940/1000 MHz stay manual-only.
+- #120 (vendor PERFD-SERVER denial on `ashfall_gpu_sysfs`) and #129 (fan
+  `max_pct` kick window) are fixed in the hwd worker; #132 (fan graph duplicate
+  sample) in the Power app worker.
+- Desktop mode: conditional Launcher3 taskbar, 320 dpi, entry via QS tile +
+  Parts row + `L1+R1+Start`, internal display only in v1.
+- Performance tuning: Eden, Winlator and one native game; p95 frame time and
+  1% low decide; MGLRU/PELT stay hidden/root-only in v1.

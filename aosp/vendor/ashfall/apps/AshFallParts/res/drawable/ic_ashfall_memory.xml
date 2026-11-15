@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- AshFall Memory icon (#141, clean-room): a memory chip outline with pins,
+     matching the 80-unit stroke of the Fan/Power page icons.
+     24dp, single colour, tinted by the consumer. 960 viewport; 80 = 2dp. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="960"
+    android:viewportHeight="960">
+    <path
+        android:fillColor="@android:color/transparent"
+        android:strokeColor="@android:color/white"
+        android:strokeWidth="80"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:pathData="M280.00,280.00L680.00,280.00L680.00,680.00L280.00,680.00Z" />
+    <path
+        android:fillColor="@android:color/transparent"
+        android:strokeColor="@android:color/white"
+        android:strokeWidth="80"
+        android:strokeLineCap="round"
+        android:pathData="M400.00,120.00L400.00,280.00M560.00,120.00L560.00,280.00M400.00,680.00L400.00,840.00M560.00,680.00L560.00,840.00M120.00,400.00L280.00,400.00M120.00,560.00L280.00,560.00M680.00,400.00L840.00,400.00M680.00,560.00L840.00,560.00" />
+</vector>

@@ -19,12 +19,15 @@
 
     <!-- Settings homepage entry -->
     <string name="handheld_title">AshFall settings</string>
-    <string name="handheld_summary">Fan, lighting, controller</string>
+    <string name="handheld_summary">Fan, lighting, controller, power, memory</string>
 
     <!-- Pages -->
     <string name="fan_title">Fan</string>
     <string name="lighting_title">Lighting</string>
     <string name="controller_title">Controller</string>
+    <string name="power_title">Power</string>
+    <string name="memory_title">Memory</string>
+    <string name="page_placeholder">This page is being built.</string>
     <string name="presets_title">Fan presets</string>
     <string name="curve_title">Fan curve</string>
     <string name="tester_title">Controller tester</string>
@@ -61,6 +64,8 @@
     <string name="home_fan_summary">%1$s · %2$s</string>
     <string name="home_lighting_summary">%1$s · %2$s</string>
     <string name="home_controller_summary">Stick deadzone %1$d%% · %2$d%%</string>
+    <string name="home_power_summary_empty">Live power, clocks and presets</string>
+    <string name="home_memory_summary_empty">zram and swapfile</string>
     <string name="home_daemon_note">Fan and lighting are applied by the AshFall daemons.  Presets are stored by this app; the daemons only see the active values.</string>
 
     <!-- Fan -->
@@ -275,6 +280,8 @@
     <!-- Quick Settings -->
     <string name="tile_fan">Fan</string>
     <string name="tile_lighting">Lighting</string>
+    <string name="tile_power">Power</string>
+    <string name="tile_fusion">Fusion</string>
     <string name="tile_fan_dialog_title">Fan</string>
     <string name="tile_fan_dialog_subtitle">%1$s · %2$d °C</string>
     <string name="tile_lighting_dialog_title">Lighting</string>

@@ -29,7 +29,6 @@ import androidx.preference.PreferenceScreen;
 
 import org.ashfall.parts.hw.Fan;
 import org.ashfall.parts.hw.Led;
-import org.ashfall.parts.hw.Pad;
 import org.ashfall.parts.hw.Preset;
 import org.ashfall.parts.hw.PresetStore;
 import org.ashfall.parts.ui.Ui;
@@ -52,6 +51,11 @@ public class HandheldActivity extends PartsActivity {
         private Preference mFanRow;
         private Preference mLightingRow;
         private Preference mControllerRow;
+        private Preference mPowerRow;
+        private Preference mMemoryRow;
+        private ControllerSummary mControllerSummary;
+        private PowerSummary mPowerSummary;
+        private MemorySummary mMemorySummary;
         private final Handler mHandler = new Handler(Looper.getMainLooper());
         private final Runnable mTick = new Runnable() {
             @Override
@@ -98,7 +102,33 @@ public class HandheldActivity extends PartsActivity {
                 startActivity(new Intent(requireContext(), ControllerActivity.class));
                 return true;
             });
+            mControllerSummary = new ControllerSummary(requireContext());
+            mControllerRow.setSummaryProvider(mControllerSummary);
             category.addPreference(mControllerRow);
+
+            mPowerRow = new Preference(requireContext());
+            mPowerRow.setKey("home_power");
+            mPowerRow.setTitle(R.string.power_title);
+            mPowerRow.setIcon(R.drawable.ic_ashfall_power);
+            mPowerRow.setOnPreferenceClickListener(preference -> {
+                startActivity(new Intent(requireContext(), PowerActivity.class));
+                return true;
+            });
+            mPowerSummary = new PowerSummary(requireContext());
+            mPowerRow.setSummaryProvider(mPowerSummary);
+            category.addPreference(mPowerRow);
+
+            mMemoryRow = new Preference(requireContext());
+            mMemoryRow.setKey("home_memory");
+            mMemoryRow.setTitle(R.string.memory_title);
+            mMemoryRow.setIcon(R.drawable.ic_ashfall_memory);
+            mMemoryRow.setOnPreferenceClickListener(preference -> {
+                startActivity(new Intent(requireContext(), MemoryActivity.class));
+                return true;
+            });
+            mMemorySummary = new MemorySummary(requireContext());
+            mMemoryRow.setSummaryProvider(mMemorySummary);
+            category.addPreference(mMemoryRow);
 
             final Preference note = new Preference(requireContext());
             note.setKey("home_note");
@@ -141,8 +171,9 @@ public class HandheldActivity extends PartsActivity {
                     + (Led.isOn() ? Ui.hex(colour) : getString(R.string.off));
             mLightingRow.setSummary(lighting);
 
-            mControllerRow.setSummary(getString(R.string.home_controller_summary,
-                    Pad.inner(), Pad.outer()));
+            mControllerRow.setSummary(mControllerSummary.provideSummary(mControllerRow));
+            mPowerRow.setSummary(mPowerSummary.provideSummary(mPowerRow));
+            mMemoryRow.setSummary(mMemorySummary.provideSummary(mMemoryRow));
         }
     }
 }
