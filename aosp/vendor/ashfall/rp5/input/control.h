@@ -11,6 +11,12 @@
  *     long as that client stays connected (auto GRAB OFF on disconnect); the
  *     RAW stream keeps carrying every button, including Home/Back/Select/
  *     Start/B (see docs/rp5/input.md for the bit layout).
+ *   FUSION STATUS             -> OK FUSION <0|1> PADS <n> + one PAD line/pad
+ *   FUSION ON | OFF           -> OK   (live state; the app owns the property)
+ *   FUSION LAYOUT <key> <mode> -> OK | ERR <reason>
+ *   FUSION REMAP <key> <map>  -> OK | ERR <reason>   (map: 304->305,305->304)
+ *   FUSION RESCAN             -> OK   (fresh /dev/input scan on the next tick)
+ *   The fusion grammar is fixed by docs/phase6.md §9.8.
  *
  * The socket itself is created by init (`socket ashfall_input seqpacket 0660
  * system system`) and inherited as $ANDROID_SOCKET_ashfall_input.  For

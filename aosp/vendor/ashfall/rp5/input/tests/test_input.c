@@ -6,6 +6,7 @@
  */
 #include "calib.h"
 #include "control.h"
+#include "fusion.h"
 #include "input.h"
 #include "mapping.h"
 #include "plat.h"
@@ -270,7 +271,7 @@ static void test_factory_rp5(void)
     struct calibration cal;
     struct calibration defaults;
 
-    snprintf(path, sizeof(path), "%s/joys.rp5", g_dir);
+    snprintf(path, sizeof(path), "%.300s/joys.rp5", g_dir);
     write_file(path, FACTORY_RP5_TEXT);
     CHECK(calib_load_file(path, &cal, err, sizeof(err)));
     calib_defaults(&defaults);
@@ -394,6 +395,7 @@ static char *client_command(struct control *control, int client,
 static void test_control_socket(void)
 {
     struct input_ctx ctx;
+    struct fusion_state fusion;
     struct control *control;
     char reply[1200];
     int client;
@@ -401,6 +403,9 @@ static void test_control_socket(void)
     memset(&ctx, 0, sizeof(ctx));
     deadzones_default(&ctx.dz);
     input_reload_calibration(&ctx); /* defaults: no files */
+    unsetenv(PROP_FUSION);
+    fusion_defaults(&fusion);
+    ctx.fusion = &fusion;
 
     remove_file(user_path());
     remove_file(factory_path());
@@ -521,6 +526,46 @@ static void test_control_socket(void)
     /* A dangling GRAB ON is released automatically when its client goes. */
     client_command(control, client, "GRAB ON\n", reply, sizeof(reply));
     CHECK(control_grabbed(control));
+
+    /* #138 / docs/phase6.md §9.8: the fusion grammar on the same socket. */
+    client_command(control, client, "FUSION STATUS\n", reply, sizeof(reply));
+    CHECK(strncmp(reply, "OK FUSION 0 PADS 0\n", 19) == 0);
+
+    client_command(control, client, "FUSION ON\n", reply, sizeof(reply));
+    CHECK(strcmp(reply, "OK\n") == 0);
+    CHECK(fusion.enabled);
+    /* The app owns the property: the same text must not undo the command. */
+    fusion_settings_read(&fusion);
+    CHECK(fusion.enabled);
+
+    client_command(control, client, "FUSION LAYOUT 2020:3001:mcu NINTENDO\n",
+                   reply, sizeof(reply));
+    CHECK(strcmp(reply, "OK\n") == 0);
+    CHECK_EQ(fusion.config_count, 1);
+    CHECK_EQ(fusion.configs[0].layout, FUSION_LAYOUT_NINTENDO);
+
+    client_command(control, client, "FUSION LAYOUT 2020:3001:mcu WAT\n", reply,
+                   sizeof(reply));
+    CHECK(strncmp(reply, "ERR ", 4) == 0);
+
+    client_command(control, client, "FUSION REMAP 2020:3001:mcu 304->305\n",
+                   reply, sizeof(reply));
+    CHECK(strcmp(reply, "OK\n") == 0);
+    CHECK_EQ(fusion.configs[0].map_count, 1);
+
+    client_command(control, client, "FUSION RESCAN\n", reply, sizeof(reply));
+    CHECK(strcmp(reply, "OK\n") == 0);
+    CHECK(fusion.rescan);
+
+    client_command(control, client, "FUSION NOPE\n", reply, sizeof(reply));
+    CHECK(strncmp(reply, "ERR ", 4) == 0);
+
+    /* Back to the state the rest of this test expects. */
+    client_command(control, client, "FUSION OFF\n", reply, sizeof(reply));
+    CHECK(strcmp(reply, "OK\n") == 0);
+    CHECK(!fusion.enabled);
+    fusion.rescan = false;
+
     close(client);
     server_pump(control, 200);
     server_pump(control, 100);
@@ -675,7 +720,600 @@ static void test_control_without_mcu(void)
     control_destroy(control);
 }
 
+/* --- #138: GamepadFusion ------------------------------------------------- */
+
+static bool has_event(const struct captured *cap, uint16_t type, uint16_t code,
+                      int32_t value)
+{
+    for (int i = 0; i < cap->count && i < (int)(sizeof(cap->ev) / sizeof(cap->ev[0]));
+         i++) {
+        if (cap->ev[i].type == type && cap->ev[i].code == code &&
+            cap->ev[i].value == value)
+            return true;
+    }
+    return false;
+}
+
+static int count_type(const struct captured *cap, uint16_t type)
+{
+    int count = 0;
+
+    for (int i = 0; i < cap->count && i < (int)(sizeof(cap->ev) / sizeof(cap->ev[0]));
+         i++) {
+        if (cap->ev[i].type == type)
+            count++;
+    }
+    return count;
+}
+
+static void flush_into(struct fusion_state *fs, struct captured *cap)
+{
+    memset(cap, 0, sizeof(*cap));
+    fusion_flush(fs, capture, cap);
+}
+
+/* First flush after a topology change reports every axis; call it so the
+ * assertions below only see real deltas. */
+static void flush_prime(struct fusion_state *fs)
+{
+    struct captured cap;
+
+    flush_into(fs, &cap);
+}
+
+static void test_fusion_classify(void)
+{
+    uint8_t keybits[FUSION_BITS_BYTES(KEY_MAX + 1)];
+    uint8_t absbits[FUSION_BITS_BYTES(ABS_MAX + 1)];
+    uint8_t props[FUSION_BITS_BYTES(INPUT_PROP_MAX + 1)];
+    size_t kb = sizeof(keybits);
+    size_t ab = sizeof(absbits);
+    size_t pb = sizeof(props);
+
+    memset(keybits, 0, sizeof(keybits));
+    memset(absbits, 0, sizeof(absbits));
+    memset(props, 0, sizeof(props));
+
+    /* A motion-only node: gyro/accelerometer with ABS_X/Y/Z and no gamepad
+     * button.  It must never be classified as a pad (so it is never opened or
+     * grabbed and Android's sensor path keeps it). */
+    fusion_bits_set(absbits, ABS_X);
+    fusion_bits_set(absbits, ABS_Y);
+    fusion_bits_set(absbits, ABS_Z);
+    fusion_bits_set(props, INPUT_PROP_ACCELEROMETER);
+    CHECK(!fusion_classify(keybits, kb, absbits, ab, props, pb));
+    CHECK(fusion_is_motion_only(keybits, kb, absbits, ab, props, pb));
+
+    /* Same axes, but a gamepad button shows up: now it is a gamepad. */
+    fusion_bits_set(keybits, BTN_SOUTH);
+    CHECK(fusion_classify(keybits, kb, absbits, ab, props, pb));
+    CHECK(!fusion_is_motion_only(keybits, kb, absbits, ab, props, pb));
+
+    /* BTN_GAMEPAD and BTN_A are the same code as BTN_SOUTH on Linux. */
+    memset(keybits, 0, sizeof(keybits));
+    fusion_bits_set(keybits, BTN_GAMEPAD);
+    CHECK(fusion_classify(keybits, kb, absbits, ab, props, pb));
+    memset(keybits, 0, sizeof(keybits));
+    fusion_bits_set(keybits, BTN_TRIGGER);
+    CHECK(fusion_classify(keybits, kb, absbits, ab, props, pb));
+
+    /* Buttons without a single axis are not a gamepad either. */
+    memset(absbits, 0, sizeof(absbits));
+    memset(props, 0, sizeof(props));
+    CHECK(!fusion_classify(keybits, kb, absbits, ab, props, pb));
+
+    /* A key-only node (the power button, a keyboard) is not motion either. */
+    CHECK(!fusion_is_motion_only(keybits, kb, absbits, ab, props, pb));
+
+    CHECK(fusion_bits_test(keybits, BTN_TRIGGER));
+    CHECK(!fusion_bits_test(keybits, BTN_SOUTH));
+}
+
+static void test_fusion_identity(void)
+{
+    char key[FUSION_KEY_MAX];
+
+    /* Our own uinput device, in both identities, must be ignored. */
+    CHECK(fusion_is_self(0x2020, 0x3001, "AshFall RP5 Gamepad"));
+    CHECK(fusion_is_self(0x045e, 0x028e, "AshFall Fusion Controller"));
+    CHECK(fusion_is_self(0x045e, 0x028e, ""));
+    /* A real Xbox pad shares 045e:028e but not our name. */
+    CHECK(!fusion_is_self(0x045e, 0x028e, "Microsoft X-Box One pad"));
+    CHECK(!fusion_is_self(0x0b05, 0x1b21, "8BitDo Ultimate 2C"));
+
+    fusion_key_format(0x045e, 0x028e, FUSION_CONN_BT, key, sizeof(key));
+    CHECK(strcmp(key, "045e:028e:bt") == 0);
+    fusion_key_format(0x2020, 0x3001, FUSION_CONN_MCU, key, sizeof(key));
+    CHECK(strcmp(key, "2020:3001:mcu") == 0);
+    fusion_key_format(0x0b05, 0x1b21, FUSION_CONN_USB, key, sizeof(key));
+    CHECK(strcmp(key, "0b05:1b21:usb") == 0);
+    CHECK(strcmp(fusion_connection_name(FUSION_CONN_BT), "bt") == 0);
+    CHECK(strcmp(fusion_layout_name(FUSION_LAYOUT_NINTENDO), "NINTENDO") == 0);
+}
+
+static void test_fusion_axis_sources(void)
+{
+    struct fusion_absinfo info[FUSION_ABS_MAX];
+    uint16_t src[FUSION_AXIS_COUNT];
+
+    /* The MCU / Android VirtualGamepad shape: triggers on ABS_BRAKE/ABS_GAS,
+     * right stick on ABS_Z/ABS_RZ. */
+    memset(info, 0, sizeof(info));
+    info[ABS_X].present = true;
+    info[ABS_Y].present = true;
+    info[ABS_Z].present = true;
+    info[ABS_Z].minimum = -32768;
+    info[ABS_Z].maximum = 32767;
+    info[ABS_RZ].present = true;
+    info[ABS_RZ].minimum = -32768;
+    info[ABS_RZ].maximum = 32767;
+    info[ABS_BRAKE].present = true;
+    info[ABS_BRAKE].minimum = 0;
+    info[ABS_BRAKE].maximum = 255;
+    info[ABS_GAS].present = true;
+    info[ABS_HAT0X].present = true;
+    info[ABS_HAT0Y].present = true;
+    fusion_axis_sources(info, src);
+    CHECK_EQ(src[FUSION_AXIS_LX], ABS_X);
+    CHECK_EQ(src[FUSION_AXIS_LY], ABS_Y);
+    CHECK_EQ(src[FUSION_AXIS_L2], ABS_BRAKE);
+    CHECK_EQ(src[FUSION_AXIS_R2], ABS_GAS);
+    CHECK_EQ(src[FUSION_AXIS_RX], ABS_Z);
+    CHECK_EQ(src[FUSION_AXIS_RY], ABS_RZ);
+    CHECK_EQ(src[FUSION_AXIS_HATX], ABS_HAT0X);
+    CHECK_EQ(src[FUSION_AXIS_HATY], ABS_HAT0Y);
+
+    /* The HID Xbox shape (an 8BitDo in XInput mode): triggers on ABS_Z/ABS_RZ
+     * as 0..255, right stick on ABS_RX/ABS_RY.  A resting trigger must not be
+     * read as a deflected right stick - the stock app's most-reported bug. */
+    memset(info, 0, sizeof(info));
+    info[ABS_X].present = true;
+    info[ABS_Y].present = true;
+    info[ABS_Z].present = true;
+    info[ABS_Z].minimum = 0;
+    info[ABS_Z].maximum = 255;
+    info[ABS_RZ].present = true;
+    info[ABS_RZ].minimum = 0;
+    info[ABS_RZ].maximum = 255;
+    info[ABS_RX].present = true;
+    info[ABS_RY].present = true;
+    info[ABS_HAT0X].present = true;
+    info[ABS_HAT0Y].present = true;
+    fusion_axis_sources(info, src);
+    CHECK_EQ(src[FUSION_AXIS_L2], ABS_Z);
+    CHECK_EQ(src[FUSION_AXIS_R2], ABS_RZ);
+    CHECK_EQ(src[FUSION_AXIS_RX], ABS_RX);
+    CHECK_EQ(src[FUSION_AXIS_RY], ABS_RY);
+
+    /* A pad with neither triggers nor a right stick classified as one. */
+    memset(info, 0, sizeof(info));
+    info[ABS_X].present = true;
+    info[ABS_Y].present = true;
+    fusion_axis_sources(info, src);
+    CHECK_EQ(src[FUSION_AXIS_L2], 0);
+    CHECK_EQ(src[FUSION_AXIS_R2], 0);
+    CHECK_EQ(src[FUSION_AXIS_RX], 0);
+    CHECK_EQ(src[FUSION_AXIS_RY], 0);
+}
+
+static void test_fusion_button_union(void)
+{
+    struct fusion_state fs;
+    struct captured cap;
+    int usb;
+    int bt;
+
+    fusion_defaults(&fs);
+    usb = fusion_pad_index(&fs, "0b05:1b21:usb");
+    CHECK_EQ(usb, -1);
+    CHECK(fusion_pad_add(&fs, "0b05:1b21:usb", "8BitDo USB", FUSION_CONN_USB,
+                         1000) != NULL);
+    CHECK(fusion_pad_add(&fs, "0b05:1b21:bt", "8BitDo BT", FUSION_CONN_BT,
+                         1000) != NULL);
+    CHECK_EQ(fs.pad_count, 2);
+    flush_prime(&fs);
+
+    usb = fusion_pad_index(&fs, "0b05:1b21:usb");
+    bt = fusion_pad_index(&fs, "0b05:1b21:bt");
+    CHECK(usb >= 0);
+    CHECK(bt >= 0);
+
+    /* Union: A on one pad, B on the other -> both pressed, one SYN. */
+    fusion_key_event(&fs, usb, BTN_A, 1);
+    fusion_key_event(&fs, bt, BTN_B, 1);
+    flush_into(&fs, &cap);
+    CHECK(has_event(&cap, EV_KEY, BTN_A, 1));
+    CHECK(has_event(&cap, EV_KEY, BTN_B, 1));
+    CHECK_EQ(count_type(&cap, EV_SYN), 1);
+    CHECK_EQ(count_type(&cap, EV_KEY), 2);
+
+    /* Releasing one pad's button must not release the other pad's. */
+    fusion_key_event(&fs, bt, BTN_B, 0);
+    flush_into(&fs, &cap);
+    CHECK(has_event(&cap, EV_KEY, BTN_B, 0));
+    CHECK_EQ(count_type(&cap, EV_KEY), 1);
+
+    /* The same button on both pads stays pressed until both release. */
+    fusion_key_event(&fs, usb, BTN_A, 0);
+    fusion_key_event(&fs, bt, BTN_A, 1);
+    flush_into(&fs, &cap);
+    CHECK_EQ(count_type(&cap, EV_KEY), 0); /* A was already down */
+
+    /* A second flush with no input emits nothing at all. */
+    flush_into(&fs, &cap);
+    CHECK_EQ(cap.count, 0);
+}
+
+static void test_fusion_axis_resolution(void)
+{
+    struct fusion_state fs;
+    struct captured cap;
+    int p0;
+    int p1;
+
+    fusion_defaults(&fs);
+    fusion_pad_add(&fs, "0b05:1b21:usb", "pad 0", FUSION_CONN_USB, 1000);
+    fusion_pad_add(&fs, "0b05:1b21:bt", "pad 1", FUSION_CONN_BT, 1000);
+    flush_prime(&fs);
+    p0 = fusion_pad_index(&fs, "0b05:1b21:usb");
+    p1 = fusion_pad_index(&fs, "0b05:1b21:bt");
+
+    /* Most recent non-resting value wins. */
+    fusion_abs_event(&fs, p0, FUSION_AXIS_LX, 1000, 2000);
+    fusion_abs_event(&fs, p1, FUSION_AXIS_LX, 2000, 2001);
+    flush_into(&fs, &cap);
+    CHECK(has_event(&cap, EV_ABS, ABS_X, 2000));
+
+    fusion_abs_event(&fs, p0, FUSION_AXIS_LX, 3000, 2002);
+    flush_into(&fs, &cap);
+    CHECK(has_event(&cap, EV_ABS, ABS_X, 3000));
+
+    /* p0 returns to rest: p1's older deflection is still the newest
+     * *non-resting* value, so the merge must fall back to it. */
+    fusion_abs_event(&fs, p0, FUSION_AXIS_LX, 0, 2003);
+    flush_into(&fs, &cap);
+    CHECK(has_event(&cap, EV_ABS, ABS_X, 2000));
+
+    /* Nothing deflected any more -> rest. */
+    fusion_abs_event(&fs, p1, FUSION_AXIS_LX, 0, 2004);
+    flush_into(&fs, &cap);
+    CHECK(has_event(&cap, EV_ABS, ABS_X, 0));
+
+    /* Triggers are the maximum of the pads, not the newest. */
+    fusion_abs_event(&fs, p0, FUSION_AXIS_L2, 100, 2005);
+    fusion_abs_event(&fs, p1, FUSION_AXIS_L2, 200, 2006);
+    flush_into(&fs, &cap);
+    CHECK(has_event(&cap, EV_ABS, ABS_BRAKE, 200));
+
+    fusion_abs_event(&fs, p1, FUSION_AXIS_L2, 50, 2007);
+    flush_into(&fs, &cap);
+    CHECK(has_event(&cap, EV_ABS, ABS_BRAKE, 100));
+
+    /* Range clamping: a wild pad value cannot break the advertised range. */
+    fusion_abs_event(&fs, p0, FUSION_AXIS_L2, 9999, 2008);
+    fusion_abs_event(&fs, p0, FUSION_AXIS_LX, 99999, 2009);
+    fusion_abs_event(&fs, p0, FUSION_AXIS_HATX, 7, 2010);
+    flush_into(&fs, &cap);
+    CHECK(has_event(&cap, EV_ABS, ABS_BRAKE, 255));
+    CHECK(has_event(&cap, EV_ABS, ABS_X, 32767));
+    CHECK(has_event(&cap, EV_ABS, ABS_HAT0X, 1));
+}
+
+static void test_fusion_axis_scaling(void)
+{
+    struct fusion_state fs;
+    struct captured cap;
+    int pad;
+
+    fusion_defaults(&fs);
+    fusion_pad_add(&fs, "0b05:1b21:bt", "bt pad", FUSION_CONN_BT, 1000);
+    pad = fusion_pad_index(&fs, "0b05:1b21:bt");
+    CHECK(pad >= 0);
+    /* A pad that does not speak the uinput range: -127..127 sticks and
+     * 0..1023 triggers.  Clamping would give ~0.4 % of stick travel and a
+     * full-scale trigger at the first touch. */
+    fusion_pad_set_axis_range(&fs, pad, FUSION_AXIS_LX, -127, 127);
+    fusion_pad_set_axis_range(&fs, pad, FUSION_AXIS_L2, 0, 1023);
+    flush_prime(&fs);
+
+    fusion_abs_event(&fs, pad, FUSION_AXIS_LX, 127, 2000);
+    fusion_abs_event(&fs, pad, FUSION_AXIS_L2, 1023, 2001);
+    flush_into(&fs, &cap);
+    CHECK(has_event(&cap, EV_ABS, ABS_X, 32767));
+    CHECK(has_event(&cap, EV_ABS, ABS_BRAKE, 255));
+
+    fusion_abs_event(&fs, pad, FUSION_AXIS_LX, -127, 2002);
+    fusion_abs_event(&fs, pad, FUSION_AXIS_L2, 0, 2003);
+    flush_into(&fs, &cap);
+    CHECK(has_event(&cap, EV_ABS, ABS_X, -32768));
+    CHECK(has_event(&cap, EV_ABS, ABS_BRAKE, 0));
+
+    /* Rest maps to rest, so the merge's "non-resting" rule still works. */
+    fusion_abs_event(&fs, pad, FUSION_AXIS_LX, 0, 2004);
+    flush_into(&fs, &cap);
+    CHECK(has_event(&cap, EV_ABS, ABS_X, 0));
+
+    /* An identity pad is passed through unscaled (no rounding drift). */
+    fusion_pad_set_axis_range(&fs, pad, FUSION_AXIS_LY, -32768, 32767);
+    fusion_abs_event(&fs, pad, FUSION_AXIS_LY, 12345, 2005);
+    flush_into(&fs, &cap);
+    CHECK(has_event(&cap, EV_ABS, ABS_Y, 12345));
+
+    /* last_seen drives the FUSION STATUS age for key-only activity too. */
+    fs.pads[pad].last_seen_ms = 0;
+    fusion_key_event(&fs, pad, BTN_A, 1);
+    CHECK(fs.pads[pad].last_seen_ms > 0);
+}
+
+static void test_fusion_remap(void)
+{
+    struct fusion_state fs;
+    struct captured cap;
+    struct fusion_remap map[FUSION_MAX_REMAP];
+    int pad;
+
+    fusion_defaults(&fs);
+    fusion_pad_add(&fs, "0b05:1b21:usb", "pad", FUSION_CONN_USB, 1000);
+    pad = fusion_pad_index(&fs, "0b05:1b21:usb");
+    flush_prime(&fs);
+
+    /* DEFAULT/XBOX are identity. */
+    CHECK_EQ(fusion_layout_code(FUSION_LAYOUT_DEFAULT, BTN_A), BTN_A);
+    CHECK_EQ(fusion_layout_code(FUSION_LAYOUT_XBOX, BTN_A), BTN_A);
+    CHECK_EQ(fusion_layout_code(FUSION_LAYOUT_NINTENDO, BTN_A), BTN_B);
+    CHECK_EQ(fusion_layout_code(FUSION_LAYOUT_NINTENDO, BTN_B), BTN_A);
+    CHECK_EQ(fusion_layout_code(FUSION_LAYOUT_NINTENDO, BTN_X), BTN_Y);
+    CHECK_EQ(fusion_layout_code(FUSION_LAYOUT_NINTENDO, BTN_Y), BTN_X);
+    CHECK_EQ(fusion_layout_code(FUSION_LAYOUT_SWAP_AB, BTN_X), BTN_X);
+    CHECK_EQ(fusion_layout_code(FUSION_LAYOUT_SWAP_XY, BTN_A), BTN_A);
+    CHECK_EQ(fusion_layout_code(FUSION_LAYOUT_SWAP_XY, BTN_Y), BTN_X);
+
+    /* NINTENDO swaps both face-button pairs before the merge. */
+    fusion_key_event(&fs, pad, BTN_A, 1);
+    flush_into(&fs, &cap);
+    CHECK(has_event(&cap, EV_KEY, BTN_A, 1));
+
+    CHECK(fusion_set_layout(&fs, "0b05:1b21:usb", FUSION_LAYOUT_NINTENDO));
+    flush_into(&fs, &cap);
+    CHECK(has_event(&cap, EV_KEY, BTN_A, 0));
+    CHECK(has_event(&cap, EV_KEY, BTN_B, 1));
+
+    /* SWAP_XY only touches X/Y. */
+    CHECK(fusion_set_layout(&fs, "0b05:1b21:usb", FUSION_LAYOUT_SWAP_XY));
+    fusion_key_event(&fs, pad, BTN_X, 1);
+    flush_into(&fs, &cap);
+    CHECK(has_event(&cap, EV_KEY, BTN_Y, 1));
+
+    /* Custom from->to map (304 = BTN_A, 305 = BTN_B). */
+    CHECK(fusion_set_layout(&fs, "0b05:1b21:usb", FUSION_LAYOUT_CUSTOM));
+    CHECK(fusion_set_remap(&fs, "0b05:1b21:usb", "304->305,305->304"));
+    CHECK_EQ(fs.config_count, 1);
+    CHECK_EQ(fs.configs[0].map_count, 2);
+    CHECK_EQ(fusion_map_code(&fs.pads[pad], BTN_A), BTN_B);
+    CHECK_EQ(fusion_map_code(&fs.pads[pad], BTN_B), BTN_A);
+    flush_into(&fs, &cap);
+    CHECK(has_event(&cap, EV_KEY, BTN_A, 0));
+    CHECK(has_event(&cap, EV_KEY, BTN_B, 1));
+
+    /* A pad that has no custom map for a code keeps it. */
+    CHECK_EQ(fusion_map_code(&fs.pads[pad], BTN_START), BTN_START);
+
+    /* Garbage maps are ignored, never fatal. */
+    CHECK_EQ(fusion_parse_remap_list("foo->bar", map, FUSION_MAX_REMAP), 0);
+    CHECK_EQ(fusion_parse_remap_list("304->", map, FUSION_MAX_REMAP), 0);
+    CHECK_EQ(fusion_parse_remap_list("304->305,", map, FUSION_MAX_REMAP), 1);
+    CHECK_EQ(fusion_parse_remap_list("0x130->0x131", map, FUSION_MAX_REMAP), 1);
+    CHECK_EQ(map[0].from, BTN_A);
+    CHECK_EQ(map[0].to, BTN_B);
+    CHECK_EQ(fusion_parse_remap_list("304->304", map, FUSION_MAX_REMAP), 0);
+    CHECK_EQ(fusion_parse_remap_list("99999->305", map, FUSION_MAX_REMAP), 0);
+}
+
+static void test_fusion_topology_and_grab(void)
+{
+    struct fusion_state fs;
+    struct captured cap;
+    int pad;
+
+    fusion_defaults(&fs);
+    fusion_pad_add(&fs, "0b05:1b21:usb", "pad", FUSION_CONN_USB, 1000);
+    pad = fusion_pad_index(&fs, "0b05:1b21:usb");
+    flush_prime(&fs);
+
+    fusion_key_event(&fs, pad, BTN_A, 1);
+    fusion_abs_event(&fs, pad, FUSION_AXIS_LX, 12000, 2000);
+    fusion_abs_event(&fs, pad, FUSION_AXIS_L2, 100, 2001);
+    flush_into(&fs, &cap);
+    CHECK(has_event(&cap, EV_KEY, BTN_A, 1));
+    CHECK(has_event(&cap, EV_ABS, ABS_X, 12000));
+
+    /* GRAB ON / fusion off: release everything still reported, one SYN. */
+    memset(&cap, 0, sizeof(cap));
+    CHECK(fusion_release(&fs, capture, &cap) > 0);
+    CHECK(has_event(&cap, EV_KEY, BTN_A, 0));
+    CHECK(has_event(&cap, EV_ABS, ABS_X, 0));
+    CHECK(has_event(&cap, EV_ABS, ABS_BRAKE, 0));
+    CHECK_EQ(count_type(&cap, EV_SYN), 1);
+    /* Nothing is left reported, so a second release emits nothing. */
+    flush_into(&fs, &cap); /* also DIRTY-marks every axis again */
+    CHECK(has_event(&cap, EV_ABS, ABS_X, 12000));
+
+    /* A topology change re-reports the full state: the uinput device was
+     * (re)created, so keys and axes are sent from scratch. */
+    fusion_reset_reported(&fs);
+    flush_into(&fs, &cap);
+    CHECK(has_event(&cap, EV_KEY, BTN_A, 1));
+    CHECK(has_event(&cap, EV_ABS, ABS_X, 12000));
+    CHECK(has_event(&cap, EV_ABS, ABS_BRAKE, 100));
+    CHECK_EQ(count_type(&cap, EV_ABS), FUSION_AXIS_COUNT);
+    CHECK_EQ(count_type(&cap, EV_SYN), 1);
+
+    /* Removing the pad releases its keys while another pad's stay. */
+    fusion_pad_add(&fs, "0b05:1b21:bt", "pad 2", FUSION_CONN_BT, 1000);
+    {
+        int other = fusion_pad_index(&fs, "0b05:1b21:bt");
+
+        fusion_key_event(&fs, other, BTN_B, 1);
+    }
+    flush_prime(&fs);
+    CHECK(fusion_pad_remove(&fs, "0b05:1b21:usb"));
+    flush_into(&fs, &cap);
+    CHECK(has_event(&cap, EV_KEY, BTN_A, 0));
+    CHECK(!has_event(&cap, EV_KEY, BTN_B, 0));
+    CHECK_EQ(fs.pad_count, 1);
+
+    /* A refresh alone re-sends the axes but no key deltas. */
+    fusion_refresh(&fs);
+    flush_into(&fs, &cap);
+    CHECK_EQ(count_type(&cap, EV_ABS), FUSION_AXIS_COUNT);
+    CHECK_EQ(count_type(&cap, EV_KEY), 0);
+
+    fusion_clear_pads(&fs);
+    CHECK_EQ(fs.pad_count, 0);
+}
+
+static void test_fusion_settings(void)
+{
+    struct fusion_state fs;
+    struct fusion_pad_config parsed[FUSION_MAX_PADS];
+
+    unsetenv(PROP_FUSION);
+    unsetenv(PROP_FUSION_LAYOUTS);
+    unsetenv(PROP_FUSION_REMAP);
+    fusion_defaults(&fs);
+    fusion_settings_read(&fs);
+    CHECK(!fs.enabled); /* off by default (#138 / docs/phase6.md §9.7) */
+    CHECK_EQ(fs.config_count, 0);
+
+    setenv(PROP_FUSION, "1", 1);
+    fusion_settings_read(&fs);
+    CHECK(fs.enabled);
+
+    /* Garbage falls back to the default instead of crashing. */
+    setenv(PROP_FUSION, "-1", 1);
+    fusion_settings_read(&fs);
+    CHECK(!fs.enabled);
+    setenv(PROP_FUSION, "yes", 1);
+    fusion_settings_read(&fs);
+    CHECK(!fs.enabled);
+    setenv(PROP_FUSION, "1", 1);
+
+    /* name=LAYOUT;name=LAYOUT, space-free pad keys. */
+    CHECK_EQ(fusion_parse_layouts("0b05:1b21:usb=NINTENDO", parsed,
+                                  FUSION_MAX_PADS),
+             1);
+    CHECK(strcmp(parsed[0].key, "0b05:1b21:usb") == 0);
+    CHECK_EQ(parsed[0].layout, FUSION_LAYOUT_NINTENDO);
+    CHECK_EQ(fusion_parse_layouts("a:1:usb=NINTENDO;bad;b:2:bt=XBOX", parsed,
+                                  FUSION_MAX_PADS),
+             2);
+    CHECK_EQ(parsed[1].layout, FUSION_LAYOUT_XBOX);
+    /* Unknown modes and malformed keys are skipped. */
+    CHECK_EQ(fusion_parse_layouts("a:1:usb=WAT", parsed, FUSION_MAX_PADS), 0);
+    CHECK_EQ(fusion_parse_layouts("a b=NINTENDO", parsed, FUSION_MAX_PADS), 0);
+    CHECK_EQ(fusion_parse_layouts("=NINTENDO", parsed, FUSION_MAX_PADS), 0);
+
+    /* name=304->305,305->304;... */
+    CHECK_EQ(fusion_parse_remap("a:1:usb=304->305,305->304", parsed,
+                                FUSION_MAX_PADS),
+             1);
+    CHECK_EQ(parsed[0].map_count, 2);
+    CHECK_EQ(parsed[0].map[1].from, BTN_B);
+    CHECK_EQ(fusion_parse_remap("a:1:usb=garbage", parsed, FUSION_MAX_PADS), 0);
+    /* A malformed entry is skipped without shifting the valid ones. */
+    memset(parsed, 0, sizeof(parsed));
+    CHECK_EQ(fusion_parse_remap("a:1:usb=;b:2:usb=304->305", parsed,
+                                FUSION_MAX_PADS),
+             1);
+    CHECK(strcmp(parsed[0].key, "b:2:usb") == 0);
+    CHECK_EQ(parsed[0].map_count, 1);
+
+    /* Live: a configured pad picks its layout and custom map up on arrival.
+     * Both properties name the same pad and must merge into one entry. */
+    setenv(PROP_FUSION_LAYOUTS, "0b05:1b21:usb=NINTENDO", 1);
+    setenv(PROP_FUSION_REMAP, "0b05:1b21:usb=304->305", 1);
+    fusion_settings_read(&fs);
+    CHECK_EQ(fs.config_count, 1);
+    fusion_pad_add(&fs, "0b05:1b21:usb", "pad", FUSION_CONN_USB, 1000);
+    {
+        int pad = fusion_pad_index(&fs, "0b05:1b21:usb");
+
+        CHECK(pad >= 0);
+        CHECK_EQ(fs.pads[pad].layout, FUSION_LAYOUT_NINTENDO);
+        CHECK_EQ(fs.pads[pad].map_count, 1);
+    }
+
+    /* Only non-default entries are serialised, one per pad. */
+    {
+        char layouts[256];
+        char remap[256];
+
+        fusion_set_layout(&fs, "2020:3001:mcu", FUSION_LAYOUT_SWAP_AB);
+        fusion_format_settings(&fs, layouts, sizeof(layouts), remap,
+                              sizeof(remap));
+        CHECK(strstr(layouts, "0b05:1b21:usb=NINTENDO") != NULL);
+        CHECK(strstr(layouts, "2020:3001:mcu=SWAP_AB") != NULL);
+        CHECK(strstr(remap, "0b05:1b21:usb=304->305") != NULL);
+
+        /* A default layout is not serialised at all. */
+        fusion_set_layout(&fs, "0b05:1b21:usb", FUSION_LAYOUT_DEFAULT);
+        fusion_format_settings(&fs, layouts, sizeof(layouts), remap,
+                              sizeof(remap));
+        CHECK(strstr(layouts, "0b05:1b21:usb") == NULL);
+        CHECK(strstr(layouts, "2020:3001:mcu=SWAP_AB") != NULL);
+    }
+
+    /* The app owns the properties: a poll with unchanged text must not undo a
+     * live FUSION command. */
+    CHECK(fusion_set_layout(&fs, "2020:3001:mcu", FUSION_LAYOUT_SWAP_XY));
+    fusion_settings_read(&fs);
+    CHECK_EQ(fusion_pad_index(&fs, "2020:3001:mcu") >= 0, 0);
+    CHECK_EQ(fs.config_count, 2);
+    CHECK_EQ(fs.configs[0].layout, FUSION_LAYOUT_DEFAULT);
+    CHECK_EQ(fs.configs[1].layout, FUSION_LAYOUT_SWAP_XY);
+
+    /* Bad keys/layouts are rejected, not applied. */
+    CHECK(!fusion_set_layout(&fs, "", FUSION_LAYOUT_XBOX));
+    CHECK(!fusion_set_layout(&fs, "x", FUSION_LAYOUT_COUNT));
+    CHECK(!fusion_set_remap(&fs, "", "304->305"));
+
+    unsetenv(PROP_FUSION);
+    unsetenv(PROP_FUSION_LAYOUTS);
+    unsetenv(PROP_FUSION_REMAP);
+}
+
+static void test_fusion_status(void)
+{
+    struct fusion_state fs;
+    char text[1024];
+
+    fusion_defaults(&fs);
+    CHECK(fusion_status_format(&fs, 1000, text, sizeof(text)) > 0);
+    CHECK(strncmp(text, "OK FUSION 0 PADS 0\n", 19) == 0);
+
+    fs.enabled = true;
+    fusion_pad_add(&fs, "2020:3001:mcu", "RP5 internal (MCU)",
+                   FUSION_CONN_MCU, 1000);
+    fusion_pad_add(&fs, "0b05:1b21:usb", "8BitDo Ultimate 2C",
+                   FUSION_CONN_USB, 500);
+    fusion_set_layout(&fs, "0b05:1b21:usb", FUSION_LAYOUT_NINTENDO);
+    CHECK(fusion_status_format(&fs, 1500, text, sizeof(text)) > 0);
+    CHECK(strncmp(text, "OK FUSION 1 PADS 2\n", 19) == 0);
+    CHECK(strstr(text, "PAD 2020:3001:mcu DEFAULT 500 RP5 internal (MCU)\n") !=
+          NULL);
+    /* The name is the rest of the line, spaces included. */
+    CHECK(strstr(text, "PAD 0b05:1b21:usb NINTENDO 1000 8BitDo Ultimate 2C\n") !=
+          NULL);
+
+    /* A kernel-provided name cannot break the framing. */
+    memset(&fs.pads[0].name, 0, sizeof(fs.pads[0].name));
+    snprintf(fs.pads[0].name, sizeof(fs.pads[0].name), "bad\nname");
+    fusion_status_format(&fs, 1000, text, sizeof(text));
+    CHECK(strstr(text, "bad name") != NULL);
+}
+
 /* --- #74: out-of-range deadzone properties use the contract default ------ */
+
 static void test_deadzone_props(void)
 {
     struct deadzones dz;
@@ -728,6 +1366,16 @@ int main(void)
     test_session_release();
     test_control_without_mcu();
     test_deadzone_props();
+    test_fusion_classify();
+    test_fusion_identity();
+    test_fusion_axis_sources();
+    test_fusion_button_union();
+    test_fusion_axis_resolution();
+    test_fusion_axis_scaling();
+    test_fusion_remap();
+    test_fusion_topology_and_grab();
+    test_fusion_settings();
+    test_fusion_status();
 
     {
         char cmd[PATH_MAX + 32];

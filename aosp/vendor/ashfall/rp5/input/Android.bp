@@ -1,14 +1,16 @@
-// AshFall RP5 input extensions (calibration, deadzones, control socket).
+// AshFall RP5 input extensions (calibration, deadzones, control socket,
+// GamepadFusion).
 //
-// The daemon's mapping/protocol code is built for the host with
-// -DASHFALL_HOST; this target only pulls in the MCU/uinput loop check that the
-// shared sources are warning-free on a second architecture.
+// The daemon's mapping/protocol/fusion code is built for the host with
+// -DASHFALL_HOST; this target only pulls in the MCU/uinput/evdev loop check
+// that the shared sources are warning-free on a second architecture.
 cc_binary {
     name: "ashfall-rp5-input",
     srcs: [
         "ashfall_rp5_input.c",
         "calib.c",
         "control.c",
+        "fusion.c",
         "input.c",
         "mapping.c",
         "plat.c",
