@@ -4,9 +4,8 @@ Settings UI for the PlayTime indicator (**#137** §4, wave-2 contract
 `docs/phase6.md` §9.4). This is the project's first `packages/apps/Settings`
 patch, so the scope is deliberately small: one host row, one sub-screen, one
 new `res/xml` file, strings, and nothing else. The status bar element and the
-estimator are SystemUI's (`patches/frameworks/base/`, `docs/playtime.md`); the
-power telemetry is `ashfall-hwd`'s (`docs/rp5/hw.md`). Charging control (#140)
-lands on the same page as a second, sequential patch.
+estimator are SystemUI's (`patches/frameworks/base/`, `docs/playtime.md`).
+Charging control (#140) lands on the same page as a second, sequential patch.
 
 ## 1. Patch
 
@@ -32,8 +31,9 @@ No new activity or manifest entry (`SubSettings` hosts the fragment), no APK,
 no launcher entry, no QS tile, no service, no reflection.
 
 Settings is platform-signed with `android.uid.system` and runs as `system_app`:
-writes use the existing `set_prop(system_app, ashfall_prop)` and reads the
-existing `get_prop(system_app, ashfall_status_prop)`. No policy change.
+the writes use the existing `set_prop(system_app, ashfall_prop)`. This page no
+longer reads any `ashfall.status.*` property (see §4), so the battery side needs
+no new SELinux rule at all.
 
 ## 2. Which battery page actually renders (measured, not assumed)
 
@@ -92,7 +92,7 @@ values.
 | Charging cycle | switch | `persist.ashfall.batt.chg_cycle` | `0` \| `1` |
 | Cycle interval | slider 0.5–5 s | `persist.ashfall.batt.chg_cycle_ms` | `500`..`5000` ms, 100 ms steps |
 | Meters to cycle | multi-select, 4 | `persist.ashfall.batt.chg_meters` | 2–3 of `TIME`, `PERCENT`, `WATTS`, `VOLTS`, written in that order |
-| Live values | non-selectable | read only | `ashfall.status.power.*` |
+| Live values | non-selectable | read only (no property) | `BatteryManager` (§4) |
 
 The cycle-interval slider stores steps `0`..`45` and writes
 `500 + step × 100`; a stored value that is not a multiple of 100 is displayed
@@ -101,28 +101,43 @@ slider. The meter list is serialised in the canonical `TIME,PERCENT[,WATTS,VOLTS
 order (not the `Set` iteration order) so SystemUI can parse it positionally, and
 a selection outside 2–3 entries is rejected with a toast.
 
-## 4. Live read-out
+## 4. Live telemetry and the read-out
 
-Non-selectable row, refreshed every 2 s while the page is resumed (the
-`ashfall-hwd` tick) and immediately on resume:
+**Source: the framework `BatteryManager`, not `ashfall.status.*`.** There is no
+battery sampler in `ashfall-hwd`: a coredomain cannot read `sysfs_batteryinfo`
+(platform neverallow) and the RP5's power-supply nodes are vendor-labeled, so
+the daemon must not open them. The page reads the same values the platform
+already exposes to Settings.
+
+| Value | Source | Mapping | Unavailable |
+|---|---|---|---|
+| `current_ma` | `BatteryManager.getIntProperty(BATTERY_PROPERTY_CURRENT_NOW)` | µA, signed → `abs(value) / 1000` | `Integer.MIN_VALUE` (unsupported), or outside `1..10000 mA` |
+| `voltage_mv` | sticky `ACTION_BATTERY_CHANGED`, `EXTRA_VOLTAGE` | mV as is | outside `2500..5500 mV` |
+| `level` | sticky broadcast, `EXTRA_LEVEL / EXTRA_SCALE` | percent, rounded, capped at 100 | `EXTRA_LEVEL < 0` or `EXTRA_SCALE <= 0` |
+| `charging` | sticky broadcast, `EXTRA_STATUS` | `CHARGING` or `FULL` | anything else counts as discharging |
+| `charge_mah` | `getIntProperty(BATTERY_PROPERTY_CHARGE_COUNTER)` | µAh → `/ 1000` | negative (no fuel-gauge counter), outside `0..100000 mAh` |
+| `capacity_mah` | `PowerProfile(context).getBatteryCapacity()` | design capacity, mAh | `<= 0` (profile does not declare it) |
+
+The sticky broadcast is read with `registerReceiver(null, filter)`, the same way
+`BatteryInfo` does; the two battery properties are read once per refresh. The
+bounds are the ones SystemUI applies, so the page and the status bar agree on
+what "unknown" is, and every field is independent: no value is fabricated from
+another.
+
+Non-selectable read-out row, refreshed every 2 s while the page is resumed and
+immediately on resume:
 
 ```
 4.8 W · 3.85 V · 5120 mAh · 72 %
           -      -       -        each field independently when unavailable
 ```
 
-| Field | Source | Unavailable |
-|---|---|---|
-| Watts | `ashfall.status.power.current_ma × voltage_mv / 10^6` | outside the telemetry bounds below |
-| Volts | `ashfall.status.power.voltage_mv / 1000`, `%.2f` | outside the telemetry bounds below |
-| mAh | `ashfall.status.power.capacity_mah` (design capacity: the value the estimate uses while Battery capacity = auto) | `-1` |
-| Percent | `ashfall.status.power.level` | `-1` |
-
-The page never polls a second source: everything is `ashfall.status.power.*`,
-`-` when the daemon has not published a value (no daemon on the emulator). The
-same bounds SystemUI applies are applied here, so the page and the status bar
-agree on what "unknown" is: `1..10000 mA`, `2500..5500 mV`, `0..100 %`,
-`0..100000 mAh`; anything else is shown as `-`.
+Watts are `current_ma × voltage_mv / 10^6`; volts are `voltage_mv / 1000` at
+`%.2f`; mAh is the design capacity above (the value the estimate uses while
+Battery capacity = auto); percent is `level`. A device that does not report
+`CURRENT_NOW` (or `CHARGE_COUNTER`) shows `-` for the affected fields and `-`
+for the summary time, and the page keeps working: there is nothing to poll and
+nothing to wait for.
 
 ## 5. Defaults, validation and failure modes
 
@@ -161,8 +176,8 @@ Failure modes:
   fabricated.
 - The capacity dialog cannot be confirmed with text outside `0..20000`; the
   dialog validator disables OK, and a programmatic bad value becomes `0` (auto).
-- No daemon: the summary is `Off` or `--`, the read-out is `-`, the rows still
-  read and write.
+- No fuel gauge / no `CURRENT_NOW`: the summary is `Off` or `--`, the affected
+  read-out fields are `-`, and the rows still read and write.
 
 ## 6. Native behaviour
 
@@ -206,7 +221,7 @@ xmllint --noout res/xml/playtime_settings.xml res/values/strings.xml
 `ashfall_gsi_arm64-userdebug` tree; the patch is part of the integration build,
 no Settings-local build was run by the worker.
 
-**Emulator** (`Retroid_Pocket_5` AVD, no daemon, no device):
+**Emulator** (`Retroid_Pocket_5` AVD, no device):
 
 ```bash
 adb root && adb remount
@@ -218,24 +233,28 @@ adb shell am start -a android.intent.action.POWER_USAGE_SUMMARY
 
 - The row reads `Off`; open it: every row is visible, D-pad reaches every row,
   the sliders move with left/right, the capacity dialog opens with the numeric
-  keypad, the read-out shows `- · - · - · -`.
+  keypad, and the read-out shows the emulator's virtual battery (the AVD reports
+  `CURRENT_NOW` as `0`, so the watts field is `-` and volts/percent are real).
 - Rotate to landscape at 1920x1080: no clipped row, category headers intact,
   the read-out row wraps without ellipsis.
 - Day/night and pure black: only Settings theme colours, no hard-coded colour.
 - With `adb root; adb shell setprop persist.ashfall.batt.interval 5` (and the
   other mock values) the rows open on the stored values; with
   `setprop persist.ashfall.batt.window 7` the window row shows `5 min`
-  (fallback) instead of a blank summary.
+  (fallback) instead of a blank summary. No daemon is needed for any of this.
 
 **Device** (orchestrator, after the integration flash): the row shows a live
-estimate, opening the sub-screen and changing Placement/Detail updates the
-status bar without a SystemUI restart; values survive reboot; `logcat | grep
-'Failed to set persist.ashfall'` is empty (the `system_app` `set_prop` rule
-works); `dumpsys package com.android.settings | grep userId` reports
-`userId=1000`.
+estimate from the real fuel gauge (`dumpsys battery` is the reference: the
+read-out's volts and percent must match it, and watts must be within rounding of
+`abs(current now) × voltage`), opening the sub-screen and changing
+Placement/Detail updates the status bar without a SystemUI restart; values
+survive reboot; `logcat | grep 'Failed to set persist.ashfall'` is empty (the
+`system_app` `set_prop` rule works); `dumpsys package com.android.settings |
+grep userId` reports `userId=1000`. `logcat` must also be free of
+`avc: denied` for `Settings` on the `ashfall_prop` type.
 
 **Acceptance** (issue #137 DoD, Settings part): the row with a live summary
 opens the sub-screen; every row applies live; values survive reboot; invalid
-values fall back to the documented defaults; the read-out shows `-` without the
-daemon; the page follows day/night/pure black, D-pad and landscape; no native
-battery behaviour changes.
+values fall back to the documented defaults; the read-out shows `-` per field
+when the framework does not report it; the page follows day/night/pure black,
+D-pad and landscape; no native battery behaviour changes.

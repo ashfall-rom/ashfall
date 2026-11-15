@@ -1,4 +1,4 @@
-From 4d0c4065f71d25de648770c753d95f52053b6c6b Mon Sep 17 00:00:00 2001
+From 92cd9d5cbccca0bca26e3414dfed772ea98e5d4f Mon Sep 17 00:00:00 2001
 From: AshFall UI <ui@ashfall.local>
 Date: Sun, 15 Nov 2026 16:24:36 +0000
 Subject: [PATCH] Settings: PlayTime indicator page on Battery
@@ -10,12 +10,17 @@ AshFall #137: the Settings side of the native PlayTime indicator. One row on
 Settings > Battery with a live estimate (2h 45m · 5.4W, or Off) opening a
 PlayTimeSettings sub-screen with the placement, detail, time format, sample
 window/interval, charging symbol/cycle, tap-cycle, font size and battery
-capacity rows, plus a non-selectable live read-out from the ashfall-hwd power
-telemetry.
+capacity rows, plus a non-selectable live read-out.
 
 Values are stored in persist.ashfall.batt.* as the wave-2 contract fixes them
 (docs/phase6.md §9.3), SystemUI owns the defaults, and an unset or malformed
 property falls back to the documented default instead of failing the page.
+
+The live values come from the framework BatteryManager (the sticky
+ACTION_BATTERY_CHANGED broadcast plus CURRENT_NOW / CHARGE_COUNTER and the
+power profile), not from ashfall.status.*: there is no battery sampler in
+ashfall-hwd, because a coredomain cannot read sysfs_batteryinfo (platform
+neverallow) and the RP5 power-supply nodes are vendor-labeled.
 
 The row is declared in res/xml/power_usage_summary.xml because that is the
 battery page that renders in this tree: the metadata screens
@@ -23,14 +28,14 @@ battery page that renders in this tree: the metadata screens
 catalyst_power_usage_summary_screen and catalyst_migration_26q3 aconfig flags,
 which are disabled.
 ---
- res/values/strings.xml                        | 159 ++++++++
- res/xml/playtime_settings.xml                 | 145 +++++++
+ res/values/strings.xml                        | 159 +++++++
+ res/xml/playtime_settings.xml                 | 145 ++++++
  res/xml/power_usage_summary.xml               |  11 +
  .../playtime/PlayTimeCapacityPreference.java  |  82 ++++
- .../playtime/PlayTimeProperties.java          | 347 +++++++++++++++++
- .../fuelgauge/playtime/PlayTimeSettings.java  | 363 ++++++++++++++++++
- .../playtime/PlayTimeSummaryController.java   |  94 +++++
- 7 files changed, 1201 insertions(+)
+ .../playtime/PlayTimeProperties.java          | 433 ++++++++++++++++++
+ .../fuelgauge/playtime/PlayTimeSettings.java  | 363 +++++++++++++++
+ .../playtime/PlayTimeSummaryController.java   |  95 ++++
+ 7 files changed, 1288 insertions(+)
  create mode 100644 res/xml/playtime_settings.xml
  create mode 100644 src/com/android/settings/fuelgauge/playtime/PlayTimeCapacityPreference.java
  create mode 100644 src/com/android/settings/fuelgauge/playtime/PlayTimeProperties.java
@@ -468,10 +473,10 @@ index 00000000000..6d3ed6a04d3
 +}
 diff --git a/src/com/android/settings/fuelgauge/playtime/PlayTimeProperties.java b/src/com/android/settings/fuelgauge/playtime/PlayTimeProperties.java
 new file mode 100644
-index 00000000000..7771b6b6b69
+index 00000000000..9330c7aefd2
 --- /dev/null
 +++ b/src/com/android/settings/fuelgauge/playtime/PlayTimeProperties.java
-@@ -0,0 +1,347 @@
+@@ -0,0 +1,433 @@
 +/*
 + * Copyright (C) 2026 The Android Open Source Project
 + *
@@ -491,10 +496,14 @@ index 00000000000..7771b6b6b69
 +package com.android.settings.fuelgauge.playtime;
 +
 +import android.content.Context;
++import android.content.Intent;
++import android.content.IntentFilter;
++import android.os.BatteryManager;
 +import android.os.SystemProperties;
 +import android.text.TextUtils;
 +import android.util.Log;
 +
++import com.android.internal.os.PowerProfile;
 +import com.android.settings.R;
 +
 +import java.util.ArrayList;
@@ -509,6 +518,11 @@ index 00000000000..7771b6b6b69
 + * clamping, so an unset or malformed value is shown as the documented default and is never written
 + * back by this page, and a rejected property write is logged instead of failing the page
 + * (docs/settings-battery.md, docs/phase6.md §9.3).
++ *
++ * <p>The live values come from the framework's {@link BatteryManager} - the sticky {@code
++ * ACTION_BATTERY_CHANGED} broadcast plus {@code BATTERY_PROPERTY_CURRENT_NOW} and {@code
++ * BATTERY_PROPERTY_CHARGE_COUNTER} - not from {@code ashfall.status.*}: there is no battery sampler
++ * in {@code ashfall-hwd} (a coredomain cannot read the RP5's vendor-labeled power-supply nodes).
 + */
 +public final class PlayTimeProperties {
 +
@@ -529,15 +543,6 @@ index 00000000000..7771b6b6b69
 +    public static final String KEY_TAP_CYCLE = "persist.ashfall.batt.tap";
 +    public static final String KEY_FONT_SIZE_SP = "persist.ashfall.batt.size_sp";
 +    public static final String KEY_CAPACITY_MAH = "persist.ashfall.batt.capacity_mah";
-+
-+    /** Power telemetry published by ashfall-hwd. */
-+    private static final String STATUS_CURRENT_MA = "ashfall.status.power.current_ma";
-+
-+    private static final String STATUS_VOLTAGE_MV = "ashfall.status.power.voltage_mv";
-+    private static final String STATUS_LEVEL = "ashfall.status.power.level";
-+    private static final String STATUS_CHARGING = "ashfall.status.power.charging";
-+    private static final String STATUS_CHARGE_MAH = "ashfall.status.power.charge_mah";
-+    private static final String STATUS_CAPACITY_MAH = "ashfall.status.power.capacity_mah";
 +
 +    /**
 +     * Defaults shown when a property is unset or invalid. SystemUI is the owner of these values
@@ -582,6 +587,10 @@ index 00000000000..7771b6b6b69
 +    private static final int MIN_VOLTAGE_MV = 2500;
 +    private static final int MAX_VOLTAGE_MV = 5500;
 +    private static final int MAX_CHARGE_MAH = 100000;
++    private static final int MAX_LEVEL = 100;
++
++    private static int sCapacityMah = -1;
++    private static boolean sCapacityRead;
 +
 +    private static final long MINUTES_PER_HOUR = 60;
 +    private static final long MINUTES_PER_DAY = 24 * MINUTES_PER_HOUR;
@@ -678,11 +687,9 @@ index 00000000000..7771b6b6b69
 +        if (!getBoolean(KEY_SHOW, DEFAULT_SHOW)) {
 +            return context.getString(R.string.playtime_summary_off);
 +        }
-+        final int currentMa = getCurrentMa();
-+        final int voltageMv = getVoltageMv();
-+        final boolean charging = getBoolean(STATUS_CHARGING, false);
-+        final String time = formatRemainingTime(context, currentMa, charging);
-+        final String watts = formatWatts(currentMa, voltageMv);
++        final Telemetry telemetry = readTelemetry(context);
++        final String time = formatRemainingTime(context, telemetry);
++        final String watts = formatWatts(telemetry.currentMa, telemetry.voltageMv);
 +        final String value =
 +                watts == null
 +                        ? time
@@ -690,7 +697,7 @@ index 00000000000..7771b6b6b69
 +                                R.string.playtime_summary,
 +                                time,
 +                                context.getString(R.string.playtime_watts, watts));
-+        return charging
++        return telemetry.charging
 +                ? context.getString(
 +                        R.string.playtime_charging_summary, chargingSymbol(context), value)
 +                : value;
@@ -698,60 +705,144 @@ index 00000000000..7771b6b6b69
 +
 +    /**
 +     * Live read-out for the non-selectable row: {@code 4.8 W · 3.85 V · 5120 mAh · 72 %}. Fields
-+     * the daemon did not publish are shown as {@code -}.
++     * the framework does not report are shown as {@code -}.
 +     */
 +    public static CharSequence buildReadout(Context context) {
 +        final String unavailable = context.getString(R.string.playtime_unavailable);
-+        final int currentMa = getCurrentMa();
-+        final int voltageMv = getVoltageMv();
-+        final int level = getInt(STATUS_LEVEL, -1, 0, 100);
-+        final int capacityMah = getInt(STATUS_CAPACITY_MAH, -1, 0, MAX_CHARGE_MAH);
-+        final String watts = formatWatts(currentMa, voltageMv);
++        final Telemetry telemetry = readTelemetry(context);
++        final String watts = formatWatts(telemetry.currentMa, telemetry.voltageMv);
 +        return context.getString(
 +                R.string.playtime_readout_format,
 +                watts == null
 +                        ? unavailable
 +                        : context.getString(R.string.playtime_readout_watts, watts),
-+                voltageMv <= 0
++                telemetry.voltageMv < 0
 +                        ? unavailable
 +                        : context.getString(
-+                                R.string.playtime_readout_volts, formatVolts(voltageMv)),
-+                capacityMah < 0
++                                R.string.playtime_readout_volts,
++                                formatVolts(telemetry.voltageMv)),
++                telemetry.capacityMah < 0
 +                        ? unavailable
-+                        : context.getString(R.string.playtime_readout_charge, capacityMah),
-+                level < 0
++                        : context.getString(
++                                R.string.playtime_readout_charge, telemetry.capacityMah),
++                telemetry.level < 0
 +                        ? unavailable
-+                        : context.getString(R.string.playtime_readout_level, level));
++                        : context.getString(R.string.playtime_readout_level, telemetry.level));
 +    }
 +
-+    private static int getCurrentMa() {
-+        return getInt(STATUS_CURRENT_MA, -1, MIN_CURRENT_MA, MAX_CURRENT_MA);
++    /** One framework battery sample; every field is {@code -1}/false when it is unavailable. */
++    private static final class Telemetry {
++        int currentMa = -1;
++        int voltageMv = -1;
++        int level = -1;
++        int chargeMah = -1;
++        int capacityMah = -1;
++        boolean charging;
 +    }
 +
-+    private static int getVoltageMv() {
-+        return getInt(STATUS_VOLTAGE_MV, -1, MIN_VOLTAGE_MV, MAX_VOLTAGE_MV);
++    /**
++     * Reads one sample the way SystemUI does: the sticky {@code ACTION_BATTERY_CHANGED} broadcast
++     * for voltage, level and status, {@code BATTERY_PROPERTY_CURRENT_NOW} (µA, absolute value) for
++     * the draw, {@code BATTERY_PROPERTY_CHARGE_COUNTER} (µAh) for the remaining charge and the
++     * power profile for the design capacity.
++     */
++    private static Telemetry readTelemetry(Context context) {
++        final Telemetry telemetry = new Telemetry();
++        final Intent battery =
++                context.registerReceiver(null, new IntentFilter(Intent.ACTION_BATTERY_CHANGED));
++        if (battery != null) {
++            telemetry.voltageMv =
++                    inRange(
++                            battery.getIntExtra(BatteryManager.EXTRA_VOLTAGE, -1),
++                            MIN_VOLTAGE_MV,
++                            MAX_VOLTAGE_MV);
++            final int rawLevel = battery.getIntExtra(BatteryManager.EXTRA_LEVEL, -1);
++            final int scale = battery.getIntExtra(BatteryManager.EXTRA_SCALE, -1);
++            if (rawLevel >= 0 && scale > 0) {
++                telemetry.level =
++                        Math.min(
++                                MAX_LEVEL,
++                                Math.round((float) rawLevel * MAX_LEVEL / scale));
++            }
++            final int status =
++                    battery.getIntExtra(
++                            BatteryManager.EXTRA_STATUS, BatteryManager.BATTERY_STATUS_UNKNOWN);
++            telemetry.charging =
++                    status == BatteryManager.BATTERY_STATUS_CHARGING
++                            || status == BatteryManager.BATTERY_STATUS_FULL;
++        }
++        final BatteryManager batteryManager =
++                context.getSystemService(BatteryManager.class);
++        if (batteryManager != null) {
++            telemetry.currentMa = readCurrentMa(batteryManager);
++            telemetry.chargeMah = readChargeMah(batteryManager);
++        }
++        telemetry.capacityMah = readCapacityMah(context);
++        return telemetry;
 +    }
 +
-+    private static String formatRemainingTime(Context context, int currentMa, boolean charging) {
-+        if (currentMa <= 0) {
++    /** {@code CURRENT_NOW} is µA and signed; the indicator shows the magnitude in mA. */
++    private static int readCurrentMa(BatteryManager batteryManager) {
++        final int microAmps =
++                batteryManager.getIntProperty(BatteryManager.BATTERY_PROPERTY_CURRENT_NOW);
++        if (microAmps == Integer.MIN_VALUE) {
++            return -1;
++        }
++        return inRange(Math.abs(microAmps) / 1000, MIN_CURRENT_MA, MAX_CURRENT_MA);
++    }
++
++    /** {@code CHARGE_COUNTER} is µAh; negative means the fuel gauge has no counter. */
++    private static int readChargeMah(BatteryManager batteryManager) {
++        final int microAmpHours =
++                batteryManager.getIntProperty(BatteryManager.BATTERY_PROPERTY_CHARGE_COUNTER);
++        if (microAmpHours < 0) {
++            return -1;
++        }
++        return inRange(microAmpHours / 1000, 0, MAX_CHARGE_MAH);
++    }
++
++    /**
++     * Design capacity from the power profile, mAh; {@code -1} when it is not declared. The profile
++     * is a static resource, so it is parsed once per process instead of on every refresh.
++     */
++    private static int readCapacityMah(Context context) {
++        if (!sCapacityRead) {
++            sCapacityRead = true;
++            final double capacityMah = new PowerProfile(context).getBatteryCapacity();
++            sCapacityMah =
++                    capacityMah <= 0 || capacityMah > MAX_CHARGE_MAH
++                            ? -1
++                            : (int) Math.round(capacityMah);
++        }
++        return sCapacityMah;
++    }
++
++    private static int inRange(int value, int min, int max) {
++        return value < min || value > max ? -1 : value;
++    }
++
++    private static String formatRemainingTime(Context context, Telemetry telemetry) {
++        if (telemetry.currentMa <= 0) {
 +            return context.getString(R.string.playtime_unavailable);
 +        }
-+        final int chargeMah = getInt(STATUS_CHARGE_MAH, -1, 0, MAX_CHARGE_MAH);
-+        final int capacityMah = getInt(STATUS_CAPACITY_MAH, -1, 0, MAX_CHARGE_MAH);
 +        final long minutes;
-+        if (charging) {
-+            if (chargeMah < 0 || capacityMah <= 0) {
++        if (telemetry.charging) {
++            if (telemetry.chargeMah < 0 || telemetry.capacityMah <= 0) {
 +                return context.getString(R.string.playtime_unavailable);
 +            }
-+            if (chargeMah >= capacityMah) {
++            if (telemetry.chargeMah >= telemetry.capacityMah) {
 +                return context.getString(R.string.playtime_full);
 +            }
-+            minutes = (long) (capacityMah - chargeMah) * MINUTES_PER_HOUR / currentMa;
++            minutes =
++                    (long) (telemetry.capacityMah - telemetry.chargeMah)
++                            * MINUTES_PER_HOUR
++                            / telemetry.currentMa;
 +        } else {
-+            if (chargeMah <= 0) {
++            if (telemetry.chargeMah <= 0) {
 +                return context.getString(R.string.playtime_unavailable);
 +            }
-+            minutes = (long) chargeMah * MINUTES_PER_HOUR / currentMa;
++            minutes =
++                    (long) telemetry.chargeMah * MINUTES_PER_HOUR / telemetry.currentMa;
 +        }
 +        return formatMinutes(context, minutes);
 +    }
@@ -1190,10 +1281,10 @@ index 00000000000..c03a7976287
 +}
 diff --git a/src/com/android/settings/fuelgauge/playtime/PlayTimeSummaryController.java b/src/com/android/settings/fuelgauge/playtime/PlayTimeSummaryController.java
 new file mode 100644
-index 00000000000..0c1b338c747
+index 00000000000..6b5ea272f79
 --- /dev/null
 +++ b/src/com/android/settings/fuelgauge/playtime/PlayTimeSummaryController.java
-@@ -0,0 +1,94 @@
+@@ -0,0 +1,95 @@
 +/*
 + * Copyright (C) 2026 The Android Open Source Project
 + *
@@ -1225,8 +1316,9 @@ index 00000000000..0c1b338c747
 +import com.android.settingslib.core.lifecycle.events.OnStop;
 +
 +/**
-+ * Summary of the PlayTime indicator row on Settings &gt; Battery: the live estimate from {@code
-+ * ashfall.status.power.*}, or "Off". The row itself opens {@link PlayTimeSettings}.
++ * Summary of the PlayTime indicator row on Settings &gt; Battery: the live estimate from the
++ * framework {@link android.os.BatteryManager}, or "Off". The row itself opens {@link
++ * PlayTimeSettings}.
 + *
 + * <p>The estimate is refreshed on the ashfall-hwd tick while the page is started so the summary
 + * keeps ticking next to the status bar, and the timer is removed as soon as it is not.
@@ -1234,7 +1326,7 @@ index 00000000000..0c1b338c747
 +public class PlayTimeSummaryController extends BasePreferenceController
 +        implements LifecycleObserver, OnStart, OnStop {
 +
-+    /** ashfall-hwd publishes on a 2 s tick (docs/phase6.md §9.3). */
++    /** The estimate moves with the battery state; 2 s is the SystemUI sample interval. */
 +    private static final int REFRESH_MS = 2000;
 +
 +    private final Handler mHandler = new Handler(Looper.getMainLooper());
