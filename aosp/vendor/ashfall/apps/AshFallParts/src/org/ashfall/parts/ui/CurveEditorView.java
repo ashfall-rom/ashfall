@@ -21,6 +21,7 @@ import android.graphics.Canvas;
 import android.graphics.DashPathEffect;
 import android.graphics.Paint;
 import android.graphics.Path;
+import android.graphics.Rect;
 import android.graphics.RectF;
 import android.util.AttributeSet;
 import android.view.KeyEvent;
@@ -66,6 +67,18 @@ public class CurveEditorView extends View {
     private Listener mListener;
     private int mDragging = -1;
 
+    /** The draggable areas: a touch-radius square around every curve point. */
+    private final GestureExclusion.TouchArea mTouchArea = (view, out) -> {
+        final float radius = Ui.dp(view.getContext(), TOUCH_RADIUS_DP);
+        for (int i = 0; i < mCurve.size(); i++) {
+            final float x = xForTemp(mCurve.temp(i));
+            final float y = yForPct(mCurve.pct(i));
+            out.add(new Rect(Math.round(x - radius), Math.round(y - radius),
+                    Math.round(x + radius), Math.round(y + radius)));
+        }
+    };
+    private GestureExclusion mGestureExclusion;
+
     public CurveEditorView(Context context) {
         this(context, null);
     }
@@ -101,6 +114,12 @@ public class CurveEditorView extends View {
         mFocus.setStyle(Paint.Style.STROKE);
         mFocus.setStrokeWidth(2 * density);
         mFocus.setPathEffect(new DashPathEffect(new float[] {8 * density, 6 * density}, 0));
+
+        // Dragging a point near either window edge must not turn into a system
+        // back/recents gesture (#156 §11).  Only the points are excluded, so
+        // the rest of the page keeps the normal system gestures.
+        mGestureExclusion = GestureExclusion.attach(this,
+                GestureExclusion.EDGE_LEFT | GestureExclusion.EDGE_RIGHT, mTouchArea);
     }
 
     private int themeColor(int attr, int fallback) {
@@ -122,6 +141,7 @@ public class CurveEditorView extends View {
         }
         invalidate();
         dispatchSelection();
+        refreshExclusion();
     }
 
     public Curve getCurve() {
@@ -138,13 +158,30 @@ public class CurveEditorView extends View {
     }
 
     @Override
-    protected void onDraw(Canvas canvas) {
-        super.onDraw(canvas);
+    protected void onSizeChanged(int width, int height, int oldWidth, int oldHeight) {
+        super.onSizeChanged(width, height, oldWidth, oldHeight);
+        updatePlot();
+        refreshExclusion();
+    }
+
+    /**
+     * Recomputes the plot rect.  The touch handling, the drawing and the
+     * gesture exclusion all read it, so it is kept valid before the first draw.
+     */
+    private void updatePlot() {
         final float padLeft = Ui.dp(getContext(), 40);
-        final float padRight = Ui.dp(getContext(), 16);
+        // The gesture inset keeps the rightmost point out of the system
+        // back/recents strip even before the exclusion below applies.
+        final float padRight = Ui.dp(getContext(), 16 + GestureExclusion.EDGE_INSET_DP);
         final float padTop = Ui.dp(getContext(), 12);
         final float padBottom = Ui.dp(getContext(), 28);
         mPlot.set(padLeft, padTop, getWidth() - padRight, getHeight() - padBottom);
+    }
+
+    @Override
+    protected void onDraw(Canvas canvas) {
+        super.onDraw(canvas);
+        updatePlot();
 
         if (isFocused()) {
             final float inset = Ui.dp(getContext(), 2);
@@ -381,8 +418,16 @@ public class CurveEditorView extends View {
         mSelected = Math.max(0, Math.min(selected, curve.size() - 1));
         invalidate();
         dispatchSelection();
+        refreshExclusion();
         if (mListener != null) {
             mListener.onCurveChanged(curve);
+        }
+    }
+
+    /** The points moved without a layout, so re-publish the edge exclusions. */
+    private void refreshExclusion() {
+        if (mGestureExclusion != null) {
+            mGestureExclusion.refresh();
         }
     }
 

@@ -140,6 +140,18 @@ public class SliderPreference extends Preference {
             seekBar.setEnabled(isEnabled());
             seekBar.setMax(mMax - mMin);
             seekBar.setProgress(Math.max(0, Math.min(mMax - mMin, mValue - mMin)));
+            // A thumb parked at either end sits in the system back/recents
+            // strip.  Keep it a little off the very edge and exclude the
+            // slider from the strip while it is dragged (#156 §11); the rest
+            // of the page keeps the normal system gestures.
+            GestureExclusion.attach(seekBar,
+                    GestureExclusion.EDGE_LEFT | GestureExclusion.EDGE_RIGHT);
+            final int inset = GestureExclusion.insetPx(seekBar.getContext());
+            if (seekBar.getPaddingStart() < inset || seekBar.getPaddingEnd() < inset) {
+                seekBar.setPaddingRelative(Math.max(inset, seekBar.getPaddingStart()),
+                        seekBar.getPaddingTop(), Math.max(inset, seekBar.getPaddingEnd()),
+                        seekBar.getPaddingBottom());
+            }
             seekBar.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
                 @Override
                 public void onProgressChanged(SeekBar bar, int progress, boolean fromUser) {

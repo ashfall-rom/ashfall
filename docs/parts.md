@@ -351,6 +351,40 @@ The UI target selector maps onto the daemon's `led.sync`:
   ranges show an inline error with “Try again”.  Closing the socket on pause or
   on the review step is not treated as an error.
 
+### 2.5 Touch at the screen edges (#156 §11)
+
+Dragging a curve point or a slider thumb that sits at the left/right edge used
+to lose the drag to the system back/recents gestures.  `ui/GestureExclusion`
+fixes that for the whole app:
+
+* `GestureExclusion.attach(view, edges[, TouchArea])` installs one layout, one
+  attach and one scroll listener per view (a weak registry, so recycled
+  preference rows do not stack listeners) and publishes
+  `View.setSystemGestureExclusionRects` (API 29+; a no-op below) with the part
+  of the view's own touchable areas that overlaps a **48 dp** band at the
+  requested window edges.  The rects use the view's own post-layout
+  coordinates (the framework maps them into the window), so they are recomputed
+  on every layout, size and scroll change and cleared when the view detaches;
+  equal rects are not re-published.
+* Only the edge band of the handle is claimed, never the whole page: the rest
+  of the window keeps the normal system gestures.  The platform honours at most
+  **200 dp** per edge (bottom-up), so each edge request is merged and trimmed to
+  that budget in the same order instead of being silently dropped.
+* Handles are also kept **12 dp** (`GestureExclusion.EDGE_INSET_DP`) off the
+  very edge, so a back swipe that starts on the handle itself is unlikely to
+  begin inside the gesture strip at all: `SliderPreference` pads its SeekBar by
+  that inset (a 12 dp padding, on top of the row inset, puts the thumb a thumb
+  radius inside the row) and `CurveEditorView` adds it to the plot's right
+  padding.
+* `CurveEditorView` supplies a `TouchArea` with one touch-radius square (32 dp)
+  around **every curve point** - the exact area `findPoint()` accepts a drag in -
+  and refreshes it whenever the curve changes, so the labels, the grid and the
+  page below the graph never claim an edge; `SliderPreference` excludes every
+  SeekBar in the app (Fan, Lighting, Controller).
+* D-pad and touch handling are untouched: the helper only publishes rects and
+  never intercepts keys or touches.  `adb shell setprop log.tag.AshFallGesture
+  DEBUG` logs each published set (`AshFallGesture: SeekBar edges=3 rects=…`).
+
 ## 3. Quick Settings tiles
 
 | Tile | Label | Subtitle | State |
