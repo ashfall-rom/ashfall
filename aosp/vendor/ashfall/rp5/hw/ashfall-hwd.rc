@@ -12,3 +12,13 @@ service ashfall-hwd /system/bin/ashfall-hwd
     # backend, thermal watch set, first fan decision) would be lost.  Mirror
     # them into the kernel log instead of losing them.
     stdio_to_kmsg
+
+# Swap file (phase 6, #141): create /data/ashfall with its file_contexts label
+# before the daemon runs.  A directory created by the daemon at runtime would
+# inherit the /data label, and the swapfile created inside it would inherit that
+# too; creating it here (and restoring the label) keeps ashfall_swap_file on the
+# directory and everything under it, including a swapfile left from the last
+# boot.  0700 root: the daemon is the only user (it runs as root for swapon).
+on post-fs-data
+    mkdir /data/ashfall 0700 root root
+    restorecon_recursive /data/ashfall

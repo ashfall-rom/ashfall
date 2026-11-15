@@ -304,10 +304,17 @@ int fan_apply_pct(fan_state *state, int pct, int64_t now_ms)
         state->pending_pct = pct;
         if (now_ms < state->kick_until_ms) {
             /* The hardware is still at the kick level; report what is
-             * actually applied, not the requested target. */
-            return state->out_pct;
+             * actually applied, not the requested target.  Exception: when
+             * persist.ashfall.fan.max_pct was lowered while the kick window
+             * is open, the stored level can exceed the new cap (#129).  Drop
+             * the kick now and fall through to write the already limited
+             * target, so "never above max_pct" holds for the whole window. */
+            if (state->safety || state->out_pct <= state->settings.max_pct)
+                return state->out_pct;
+            state->kick_until_ms = 0;
+        } else {
+            state->kick_until_ms = 0;
         }
-        state->kick_until_ms = 0;
     }
 
     duty = fan_pct_to_duty(pct);

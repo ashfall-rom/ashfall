@@ -5,10 +5,13 @@
  *
  * SPDX-License-Identifier: Apache-2.0
  */
+#include "cpu.h"
 #include "fan.h"
 #include "gpu.h"
 #include "led.h"
+#include "mem.h"
 #include "plat.h"
+#include "power.h"
 #include "thermal.h"
 #include "throttle.h"
 
@@ -116,6 +119,61 @@ static int read_int(const char *relative)
     return atoi(buf);
 }
 
+static long long read_ll(const char *relative)
+{
+    char buf[64];
+
+    if (read_file(relative, buf, sizeof(buf)) < 0)
+        return LLONG_MIN;
+    return strtoll(buf, NULL, 10);
+}
+
+static long long file_size(const char *relative)
+{
+    char path[PATH_MAX];
+    struct stat st;
+
+    plat_resolve(relative, path, sizeof(path));
+    if (stat(path, &st) != 0)
+        return -1;
+    return (long long)st.st_size;
+}
+
+static bool file_is(const char *relative, const char *expected)
+{
+    char buf[64];
+
+    return read_file(relative, buf, sizeof(buf)) == 0 && !strcmp(buf, expected);
+}
+
+#define FAKE_CPUFREQ "/sys/devices/system/cpu/cpufreq"
+#define FAKE_POWER_SUPPLY "/sys/class/power_supply"
+
+static void make_cpu_policy(const char *name, const char *cpus,
+                            const char *freqs, const char *cur_khz)
+{
+    char dir[128];
+    char file[160];
+    char top[32];
+    size_t n = strcspn(freqs, " \n");
+
+    snprintf(dir, sizeof(dir), FAKE_CPUFREQ "/%s", name);
+    mkdir_p(dir);
+    snprintf(file, sizeof(file), "%s/affected_cpus", dir);
+    write_file(file, cpus);
+    snprintf(file, sizeof(file), "%s/scaling_available_frequencies", dir);
+    write_file(file, freqs);
+    snprintf(file, sizeof(file), "%s/scaling_available_governors", dir);
+    write_file(file, "walt conservative powersave performance schedutil\n");
+    snprintf(file, sizeof(file), "%s/scaling_governor", dir);
+    write_file(file, "walt\n");
+    snprintf(file, sizeof(file), "%s/scaling_cur_freq", dir);
+    write_file(file, cur_khz);
+    snprintf(top, sizeof(top), "%.*s\n", (int)n, freqs);
+    snprintf(file, sizeof(file), "%s/scaling_max_freq", dir);
+    write_file(file, top);
+}
+
 static int make_sysfs(void)
 {
     char template[] = "/tmp/ashfall-hw-test.XXXXXX";
@@ -145,6 +203,44 @@ static int make_sysfs(void)
     write_file(FAKE_KGSL_DEV "/kgsl/kgsl-3d0/gpu_available_frequencies",
                "670000000 587000000 525000000 490000000 441600000 400000000 "
                "305000000\n");
+
+    /* Battery telemetry (phase 6, #124/#137): `battery` carries current,
+     * voltage, level and status; `bms` carries the charge counters. */
+    mkdir_p(FAKE_POWER_SUPPLY "/battery");
+    write_file(FAKE_POWER_SUPPLY "/battery/type", "Battery\n");
+    write_file(FAKE_POWER_SUPPLY "/battery/current_now", "850000\n");
+    write_file(FAKE_POWER_SUPPLY "/battery/voltage_now", "3850000\n");
+    write_file(FAKE_POWER_SUPPLY "/battery/capacity", "72\n");
+    write_file(FAKE_POWER_SUPPLY "/battery/status", "Discharging\n");
+    mkdir_p(FAKE_POWER_SUPPLY "/bms");
+    write_file(FAKE_POWER_SUPPLY "/bms/type", "Battery\n");
+    write_file(FAKE_POWER_SUPPLY "/bms/charge_counter", "4100000\n");
+    write_file(FAKE_POWER_SUPPLY "/bms/charge_full_design", "5120000\n");
+
+    /* CPU frequency policies (phase 6, #124), kona layout and steps. */
+    make_cpu_policy("policy0", "0 1 2 3\n",
+                    "1804800 1478400 1171200 691200 300000\n", "1478400\n");
+    make_cpu_policy("policy4", "4 5 6\n",
+                    "2419200 1958400 1478400 902400 710400 300000\n",
+                    "1958400\n");
+    make_cpu_policy("policy7", "7\n",
+                    "2841600 2419200 1958400 1516800 1171200 940800 844800\n",
+                    "1958400\n");
+
+    /* Memory (phase 6, #141): 8 GB unit, zram module loaded, 0 MB applied. */
+    mkdir_p("/proc");
+    write_file("/proc/meminfo",
+               "MemTotal:        8192000 kB\nMemFree:         4096000 kB\n"
+               "SwapTotal:             0 kB\nSwapFree:              0 kB\n");
+    mkdir_p("/sys/block/zram0");
+    write_file("/sys/block/zram0/disksize", "0\n");
+    write_file("/sys/block/zram0/reset", "0\n");
+    write_file("/sys/block/zram0/comp_algorithm", "lzo\n");
+    write_file("/sys/block/zram0/comp_available", "lzo lzo-rle lz4\n");
+    write_file("/sys/block/zram0/mm_stat", "0 0 0 0 0 0 0\n");
+    mkdir_p("/dev/block");
+    write_file("/dev/block/zram0", "");
+    mkdir_p("/data");
 
     mkdir_p("/sys/class/thermal/thermal_zone0");
     mkdir_p("/sys/class/thermal/thermal_zone1");
@@ -1301,6 +1397,294 @@ static void test_gpu(void)
     remove_rel(FAKE_KGSL_LEGACY);
 }
 
+/* --- phase 6: battery/power telemetry (#124 + #137) ---------------------- */
+
+static void test_power(void)
+{
+    power_state power;
+    power_sample sample;
+
+    power_state_init(&power);
+    CHECK_EQ(power_sample_read(&power, &sample), 0);
+    CHECK_EQ(sample.current_ma, 850);
+    CHECK_EQ(sample.voltage_mv, 3850);
+    CHECK_EQ(sample.level, 72);
+    CHECK_EQ(sample.charging, 0);
+    CHECK_EQ(sample.charge_mah, 4100);
+    CHECK_EQ(sample.capacity_mah, 5120);
+    CHECK_EQ(sample.power_mw, 3272); /* 850 mA * 3850 mV / 1000 */
+
+    /* Charging: the battery-side wattage is meaningless -> -1. */
+    write_file(FAKE_POWER_SUPPLY "/battery/status", "Charging\n");
+    CHECK_EQ(power_sample_read(&power, &sample), 0);
+    CHECK_EQ(sample.charging, 1);
+    CHECK_EQ(sample.power_mw, -1);
+
+    /* 0, -1 and an implausible current are unknown, never a number. */
+    write_file(FAKE_POWER_SUPPLY "/battery/status", "Discharging\n");
+    write_file(FAKE_POWER_SUPPLY "/battery/current_now", "0\n");
+    CHECK_EQ(power_sample_read(&power, &sample), 0);
+    CHECK_EQ(sample.current_ma, -1);
+    CHECK_EQ(sample.power_mw, -1);
+    write_file(FAKE_POWER_SUPPLY "/battery/current_now", "-1\n");
+    CHECK_EQ(power_sample_read(&power, &sample), 0);
+    CHECK_EQ(sample.current_ma, -1);
+    write_file(FAKE_POWER_SUPPLY "/battery/current_now", "25000000\n");
+    CHECK_EQ(power_sample_read(&power, &sample), 0);
+    CHECK_EQ(sample.current_ma, -1);
+    CHECK_EQ(sample.power_mw, -1);
+    /* Out-of-range voltage (120 mV) is unknown too. */
+    write_file(FAKE_POWER_SUPPLY "/battery/current_now", "850000\n");
+    write_file(FAKE_POWER_SUPPLY "/battery/voltage_now", "120000\n");
+    CHECK_EQ(power_sample_read(&power, &sample), 0);
+    CHECK_EQ(sample.voltage_mv, -1);
+    CHECK_EQ(sample.power_mw, -1);
+    write_file(FAKE_POWER_SUPPLY "/battery/voltage_now", "3850000\n");
+
+    /* Unit helpers: uA/uV/uAh nodes and mA/mV/mAh nodes. */
+    CHECK_EQ(power_ua_to_ma(850000), 850);
+    CHECK_EQ(power_ua_to_ma(850), 850);
+    CHECK_EQ(power_ua_to_ma(0), -1);
+    CHECK_EQ(power_ua_to_ma(-1), -1);
+    CHECK_EQ(power_uv_to_mv(3850000), 3850);
+    CHECK_EQ(power_uv_to_mv(3850), 3850);
+    CHECK_EQ(power_uv_to_mv(1000), -1);
+    CHECK_EQ(power_mah_from_node(5120000), 5120);
+
+    /* Runtime discovery: with no `battery` device the fuel gauge is used. */
+    remove_rel(FAKE_POWER_SUPPLY "/battery");
+    write_file(FAKE_POWER_SUPPLY "/bms/current_now", "900000\n");
+    write_file(FAKE_POWER_SUPPLY "/bms/voltage_now", "3800000\n");
+    power_state_init(&power);
+    CHECK_EQ(power_sample_read(&power, &sample), 0);
+    CHECK_EQ(sample.current_ma, 900);
+    CHECK_EQ(sample.voltage_mv, 3800);
+    CHECK_EQ(sample.power_mw, 3420);
+    CHECK_EQ(sample.level, -1);      /* no capacity node on bms */
+    CHECK_EQ(sample.charge_mah, 4100);
+    CHECK_EQ(sample.charging, -1);   /* no status node on bms */
+
+    /* No battery at all: -1 everywhere, logged no-op, no crash. */
+    remove_rel(FAKE_POWER_SUPPLY);
+    power_state_init(&power);
+    CHECK_EQ(power_sample_read(&power, &sample), -1);
+    CHECK_EQ(sample.current_ma, -1);
+    CHECK_EQ(sample.power_mw, -1);
+    mkdir_p(FAKE_POWER_SUPPLY);
+}
+
+/* --- phase 6: CPU caps and governor (#124) ------------------------------- */
+
+static void test_cpu(void)
+{
+    cpu_state cpu;
+    const char *silver_max = FAKE_CPUFREQ "/policy0/scaling_max_freq";
+    const char *gold_max = FAKE_CPUFREQ "/policy4/scaling_max_freq";
+    const char *prime_max = FAKE_CPUFREQ "/policy7/scaling_max_freq";
+
+    CHECK_EQ(cpu_cluster_from_cpu(0), CPU_CLUSTER_SILVER);
+    CHECK_EQ(cpu_cluster_from_cpu(3), CPU_CLUSTER_SILVER);
+    CHECK_EQ(cpu_cluster_from_cpu(4), CPU_CLUSTER_GOLD);
+    CHECK_EQ(cpu_cluster_from_cpu(6), CPU_CLUSTER_GOLD);
+    CHECK_EQ(cpu_cluster_from_cpu(7), CPU_CLUSTER_PRIME);
+
+    cpu_state_init(&cpu);
+    CHECK_EQ(cpu_apply(&cpu, 0, 0, 0, "schedutil"), 0);
+    CHECK_EQ(read_int(silver_max), 1804800);
+    CHECK_EQ(read_int(gold_max), 2419200);
+    CHECK_EQ(read_int(prime_max), 2841600);
+    CHECK(file_is(FAKE_CPUFREQ "/policy0/scaling_governor", "schedutil"));
+    CHECK(file_is(FAKE_CPUFREQ "/policy7/scaling_governor", "schedutil"));
+    CHECK_EQ(cpu_status_mhz(&cpu, CPU_CLUSTER_SILVER), 1478);
+    CHECK_EQ(cpu_status_mhz(&cpu, CPU_CLUSTER_GOLD), 1958);
+    CHECK_EQ(cpu_status_mhz(&cpu, CPU_CLUSTER_PRIME), 1958);
+
+    /* #124 Low power preset: the exact rounded steps must be selectable. */
+    CHECK_EQ(cpu_apply(&cpu, 1171, 1478, 1632, "conservative"), 0);
+    CHECK_EQ(read_int(silver_max), 1171200);
+    CHECK_EQ(read_int(gold_max), 1478400);
+    CHECK_EQ(read_int(prime_max), 1516800);
+    CHECK(file_is(FAKE_CPUFREQ "/policy0/scaling_governor", "conservative"));
+
+    /* Between steps: the highest available step <= the request. */
+    CHECK_EQ(cpu_apply(&cpu, 1500, 2000, 2500, "schedutil"), 0);
+    CHECK_EQ(read_int(silver_max), 1478400);
+    CHECK_EQ(read_int(gold_max), 1958400);
+    CHECK_EQ(read_int(prime_max), 2419200);
+    /* Below the lowest step: the lowest step. */
+    CHECK_EQ(cpu_apply(&cpu, 100, 100, 100, "schedutil"), 0);
+    CHECK_EQ(read_int(silver_max), 300000);
+
+    /* Governor validation: only the documented three, unknown -> schedutil. */
+    CHECK(!strcmp(cpu_validate_governor("conservative",
+                                        "walt conservative powersave schedutil"),
+                  "conservative"));
+    CHECK(!strcmp(cpu_validate_governor("powersave", "schedutil powersave"),
+                  "powersave"));
+    CHECK(!strcmp(cpu_validate_governor("walt", "walt powersave schedutil"),
+                  "schedutil"));
+    CHECK(!strcmp(cpu_validate_governor("performance",
+                                        "performance powersave"),
+                  "powersave"));
+    CHECK(!strcmp(cpu_validate_governor(NULL, "schedutil conservative"),
+                  "schedutil"));
+    CHECK_EQ(cpu_apply(&cpu, 0, 0, 0, "walt"), 0);
+    CHECK(file_is(FAKE_CPUFREQ "/policy0/scaling_governor", "schedutil"));
+    CHECK(!strcmp(cpu_governor_name(&cpu), "schedutil"));
+
+    /* Missing cpufreq is a logged no-op with -1 status, not a crash. */
+    remove_rel(FAKE_CPUFREQ);
+    cpu_state_init(&cpu);
+    CHECK_EQ(cpu_apply(&cpu, 0, 0, 0, "schedutil"), -1);
+    CHECK_EQ(cpu_status_mhz(&cpu, CPU_CLUSTER_SILVER), -1);
+}
+
+/* --- phase 6: zram and swapfile (#141) ----------------------------------- */
+
+static void test_mem(void)
+{
+    mem_state mem;
+    int free_mb;
+    int limit;
+    int used;
+    int saved;
+    int total;
+    int swap_used;
+
+    mem_state_init(&mem);
+    CHECK_EQ(mem.mem_total_mb, 8000);
+    CHECK(mem.zram_supported);
+    CHECK_EQ(mem.zram_mb, 0);
+
+    /* zram is clamped to MemTotal/2, never to a fixed 4096. */
+    CHECK_EQ(mem_clamp_zram(&mem, 8000), 4000);
+    CHECK_EQ(mem_clamp_zram(&mem, MEM_ZRAM_MAX_MB), 4000);
+    CHECK_EQ(mem_clamp_zram(&mem, 512), 512);
+    CHECK_EQ(mem_clamp_zram(&mem, 0), 0);
+    CHECK_EQ(mem_clamp_zram(&mem, -1), 0);
+
+    /* Apply order: reset -> compressor -> disksize -> swapon (nothing to swap
+     * off on a fresh device). */
+    CHECK_EQ(mem_apply_zram(&mem, 4096), 4000);
+    CHECK(!strcmp(mem.trace, "reset,comp,disksize,swapon"));
+    CHECK_EQ(read_ll("/sys/block/zram0/disksize"), 4000LL * 1024 * 1024);
+    {
+        char comp[32];
+
+        CHECK_EQ(read_file("/sys/block/zram0/comp_algorithm", comp,
+                           sizeof(comp)),
+                 0);
+        CHECK(!strcmp(comp, "lz4")); /* lz4 wins when comp_available lists it */
+    }
+
+    /* Idempotent: the same size only re-attaches the device. */
+    CHECK_EQ(mem_apply_zram(&mem, 4000), 4000);
+    CHECK(!strcmp(mem.trace, "swapon"));
+
+    /* Resize/disable: swapoff -> reset, status back to 0. */
+    CHECK_EQ(mem_apply_zram(&mem, 0), 0);
+    CHECK(!strcmp(mem.trace, "swapoff,reset"));
+    CHECK_EQ(mem.zram_mb, 0);
+
+    /* First available compressor when lz4 is not listed. */
+    write_file("/sys/block/zram0/comp_available", "lzo lzo-rle\n");
+    CHECK_EQ(mem_apply_zram(&mem, 2048), 2048);
+    {
+        char comp[32];
+
+        CHECK_EQ(read_file("/sys/block/zram0/comp_algorithm", comp,
+                           sizeof(comp)),
+                 0);
+        CHECK(!strcmp(comp, "lzo"));
+    }
+
+    /* mm_stat: used = compressed size, saved = orig - compressed. */
+    write_file("/sys/block/zram0/mm_stat", "2000000 500000 700000 0 0 0 0\n");
+    CHECK_EQ(mem_status_zram(&mem, &used, &saved), 0);
+    CHECK_EQ(used, 488);
+    CHECK_EQ(saved, 1464);
+
+    /* Missing /dev/block/zram0 (module not loaded): logged no-op, -1 status. */
+    remove_rel("/dev/block/zram0");
+    CHECK_EQ(mem_apply_zram(&mem, 2048), -1);
+    CHECK_EQ(mem.zram_mb, -1);
+    write_file("/dev/block/zram0", "");
+
+    /* Swap: 16384 MB cap and the 2 GiB /data reserve. */
+    free_mb = mem_data_free_mb();
+    CHECK(free_mb > 0);
+    limit = free_mb - MEM_SWAP_RESERVE_MB;
+    if (limit < 0)
+        limit = 0;
+    if (limit > MEM_SWAP_MAX_MB)
+        limit = MEM_SWAP_MAX_MB;
+    CHECK_EQ(mem_clamp_swap(&mem, MEM_SWAP_MAX_MB), limit);
+    CHECK_EQ(mem_clamp_swap(&mem, 0), 0);
+
+    /* Create -> header -> swapon, idempotent re-attach, then disable unlinks
+     * the file and gives the space back. */
+    CHECK_EQ(mem_apply_swap(&mem, 32), 32);
+    CHECK(!strcmp(mem.trace, "create,mkswap,swapon"));
+    CHECK_EQ(file_size(MEM_SWAPFILE), 32LL * 1024 * 1024);
+    CHECK_EQ(mem_apply_swap(&mem, 32), 32);
+    CHECK(!strcmp(mem.trace, "swapon"));
+    CHECK_EQ(mem_apply_swap(&mem, 0), 0);
+    CHECK(!strcmp(mem.trace, "swapoff,unlink"));
+    CHECK_EQ(file_size(MEM_SWAPFILE), -1);
+    CHECK_EQ(mem.swap_mb, 0);
+
+    /* /proc/meminfo SwapTotal/SwapFree. */
+    write_file("/proc/meminfo",
+               "MemTotal:        8192000 kB\n"
+               "SwapTotal:       4096000 kB\nSwapFree:        1024000 kB\n");
+    CHECK_EQ(mem_status_swap(&total, &swap_used), 0);
+    CHECK_EQ(total, 4096000);
+    CHECK_EQ(swap_used, 3072000);
+}
+
+/* --- #129: max_pct lowered while the spin-up kick is open ---------------- */
+
+static void test_kick_max_lowered(void)
+{
+    fan_state fan;
+
+    fan_state_init(&fan);
+    fan.settings.mode = FAN_MODE_MANUAL;
+    fan.settings.manual_pct = 5;
+    fan.settings.min_pct = 5;
+    fan.settings.max_pct = 100;
+    fan.settings.kick = true;
+    fan.settings.kick_pct = FAN_KICK_DEFAULT_PCT;
+
+    CHECK_EQ(fan_control_tick(&fan, 400, 1000, true), FAN_KICK_DEFAULT_PCT);
+    CHECK(fan_kick_pending(&fan, 1000));
+    CHECK_EQ(read_int("/sys/class/gpio5_pwm2/duty"),
+             fan_pct_to_duty(FAN_KICK_DEFAULT_PCT));
+
+    /* The cap goes to 10 inside the 500 ms window: the fan must drop to the
+     * (already limited) target immediately, not stay at the old kick level. */
+    fan.settings.max_pct = 10;
+    CHECK_EQ(fan_control_tick(&fan, 400, 1200, true), 5);
+    CHECK_EQ(fan.out_pct, 5);
+    CHECK_EQ(fan.kick_until_ms, 0);
+    CHECK(!fan_kick_pending(&fan, 1200));
+    CHECK_EQ(read_int("/sys/class/gpio5_pwm2/duty"), fan_pct_to_duty(5));
+
+    /* The kick level is clamped to the new cap from the start: a 5 % target
+     * with max 10 kicks to 10 (never 30), and drops to 5 when it expires. */
+    fan_state_init(&fan);
+    fan.settings.mode = FAN_MODE_MANUAL;
+    fan.settings.manual_pct = 5;
+    fan.settings.min_pct = 5;
+    fan.settings.max_pct = 10;
+    fan.settings.kick = true;
+    fan.settings.kick_pct = FAN_KICK_DEFAULT_PCT;
+    CHECK_EQ(fan_control_tick(&fan, 400, 2000, true), 10);
+    CHECK(fan_kick_pending(&fan, 2000));
+    CHECK_EQ(read_int("/sys/class/gpio5_pwm2/duty"), fan_pct_to_duty(10));
+    CHECK_EQ(fan_control_tick(&fan, 400, 2000 + FAN_KICK_MS + 1, true), 5);
+}
+
 int main(void)
 {
     if (make_sysfs() < 0) {
@@ -1331,6 +1715,10 @@ int main(void)
     test_thermal_watch();
     test_throttle();
     test_gpu();
+    test_power();
+    test_cpu();
+    test_mem();
+    test_kick_max_lowered();
 
     /* best effort cleanup */
     {
