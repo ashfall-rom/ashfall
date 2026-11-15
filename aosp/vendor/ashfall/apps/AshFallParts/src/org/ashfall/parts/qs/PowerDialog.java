@@ -165,7 +165,7 @@ public class PowerDialog extends Dialog {
             return;
         }
         final String unknown = getContext().getString(R.string.power_unknown);
-        final int powerMw = Power.powerMw();
+        final int powerMw = Power.powerMw(getContext());
         final String watts = powerMw < 0
                 ? unknown
                 : getContext().getString(R.string.power_home_watts,
