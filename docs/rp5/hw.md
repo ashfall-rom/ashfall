@@ -60,14 +60,14 @@ stalled state, 5 s per step:
 | 3 700 | 7.4 | 0 | does not start from rest |
 | 3 900 | 7.8 | 1 800 | starts (once) |
 | 4 000 | 8 | 1 500-1 800 | **starts 3/3 from rest**, keeps running |
-| 4 920 | 9.8 | 1 800 | built-in quiet preset |
+| 4 920 | 9.8 | 1 800 | phase 5 built-in quiet preset (2 %, retired in wave 3) |
 | 5 000 | 10 | 2 100 | stock Quiet |
 | 6 000 | 12 | 2 400 | |
 | 8 000 | 16 | 3 300 | |
 | 12 000 | 24 | 4 500 | |
 | 16 000 | 32 | 6 000 | |
 | 20 000 | 40 | 7 200 | |
-| 25 000 | 50 | 8 100-8 700 | stock Sport / built-in balanced preset (25 160 ns) |
+| 25 000 | 50 | 8 100-8 700 | stock Sport |
 | 30 000 | 60 | 10 200 | |
 | 35 000 | 70 | 11 400 | |
 | 40 000 | 80 | 12 600 | |
@@ -94,9 +94,17 @@ Final constants and presets:
 |---|---|---|
 | `FAN_DUTY_MIN_NS` | 4 000 | 1 % output, ~1 800 RPM |
 | `FAN_DUTY_MAX_NS` | 50 000 | 100 % output, ~15 000 RPM |
-| `FAN_PRESET_QUIET_PCT` | 2 | 4 920 ns / ~1 800 RPM (stock Quiet 5 000 ns) |
-| `FAN_PRESET_BALANCED_PCT` | 46 | 25 160 ns / ~8 100 RPM (stock Sport 25 000 ns) |
-| `FAN_PRESET_MAX_PCT` | 100 | 50 000 ns / ~15 000 RPM |
+| `FAN_PRESET_QUIET_PCT` | 15 | 10 900 ns / ~3 900 RPM (interpolated) |
+| `FAN_PRESET_BALANCED_PCT` | 25 | 15 500 ns / ~5 800 RPM (interpolated) |
+| `FAN_PRESET_MAX_PCT` | 50 | 27 000 ns / ~8 500 RPM (interpolated) |
+
+Phase 6 wave 3 (issue #156 item 10) changed the built-in presets from 2/46/100 %
+to 15/25/50 %: the sweep above is still the reference, the values are read off
+it by interpolation.  Quiet is now the everyday silent speed (the old 2 % was
+below the shipped `min_pct=5` and stopped the fan), Balanced sits at ~5 800 RPM
+and the top preset (**displayed as "Performance"** in the app, internal mode id
+still `max`) runs at ~8 500 RPM instead of the 100 % ceiling.  The fan's full
+range stays available through `manual`/`smart`; only the three presets moved.
 
 ## 3. Fan modes
 
@@ -152,7 +160,7 @@ Phase 5 v3 additions (docs/phase5.md §7.1, issue #121):
   two attributes are independent, so a failed duty write can no longer leave
   the fan spinning (`out_pct = -1` makes the next tick retry).
 * **No readable sensor fails safe, never off:** if no zone is readable the fan
-  runs the balanced preset (46 %, ~8 100 RPM), `safety` latches, one warning is
+  runs the balanced preset (25 %, ~5 800 RPM), `safety` latches, one warning is
   logged, and the zones are re-scanned every 2 s until data returns.
 * Smart mode samples every 2 s, smooths with an EMA (`alpha = 0.35`) and applies
   a 3 °C hysteresis on the way down (the target is only lowered once the
@@ -177,16 +185,17 @@ Phase 5 v3 additions (docs/phase5.md §7.1, issue #121):
   written.  `pct == 0` stays `0`; `0 < pct < min_pct` becomes `0` (the fan
   stops completely: `state=0` *and* `duty=0`, never a partial duty);
   `min_pct <= pct <= max_pct` is unchanged; `pct > max_pct` becomes `max_pct`.
-  Every mode (Quiet/Balanced/Max, Manual, Smart, `off`) and the screen-off hold
+  Every mode (Quiet/Balanced/"Performance" (`max`), Manual, Smart, `off`) and the screen-off hold
   are covered, and `ashfall.status.fan.pct` reports the limited value that was
   applied.
 * **The limits never touch thermal protection:** the 90 °C rule and the
   no-sensor fail-safe both latch `safety`, are resolved before the limiter and
   bypass it (`max_pct=40` still gives 100 % at 90 °C).  This exception is not a
   setting and cannot be configured away.
-* **Quiet consequence:** the shipped `min_pct=5` is above the built-in Quiet
-  preset (`2 %`), so **Quiet stops the fan completely** until the low limit is
-  lowered to 0.  Balanced (46 %) and Max (100 %) sit inside the defaults.
+* **Presets and the limits:** every built-in preset (Quiet 15 %, Balanced 25 %,
+  "Performance" 50 %) now sits inside the shipped `min_pct=5`/`max_pct=100`
+  defaults, so none of them is cut off.  A raised `min_pct` above 15 % still
+  stops Quiet completely (`0 < pct < min_pct` -> `state=0`, `duty=0`).
 * **Spin-up kick:** it only runs for a non-zero limited target; a target cut to
   0 writes `state=0` + `duty=0` and cancels a pending kick.  When it does run,
   the level it raises the fan to is itself capped at `max_pct` (never above the
@@ -229,9 +238,9 @@ logged once.  A `min_pct > max_pct` pair is invalid as a pair: both go back to
 |---|---|
 | `off` | rings disabled |
 | `static` | fixed left/right colour |
-| `breathing` | smooth brightness pulse, period `4000 / speed` ms, gamma-corrected |
-| `rainbow` | hue rotation, full turn every `18000 / speed` ms; with `sync=0` the right ring is offset by 120° |
-| `duo` | both sticks fade smoothly between `color_left` and `color_right` (`5000 / speed` ms per direction) |
+| `breathing` | smooth brightness pulse, period `12000 / speed` ms, gamma-corrected |
+| `rainbow` | hue rotation, full turn every `54000 / speed` ms; with `sync=0` the right ring is offset by 120° |
+| `duo` | both sticks fade smoothly between `color_left` and `color_right` (`15000 / speed` ms per direction) |
 
 `sync=1` makes the right side use the left colour.  `brightness` 0..100 scales
 the channels; `speed` 1..10.  Screen state comes from the framework's
@@ -303,8 +312,13 @@ Repeat after a cold boot and with each mode (`static`, `breathing`, `rainbow`,
 
 **Effects (phase 5 v2):**
 
-* Rainbow is three times slower than v1: one full hue turn takes
-  `18000 / speed` ms (was `6000 / speed`).
+* **All three effect periods were multiplied by 3 in phase 6 wave 3** (issue
+  #156 item 13): at the same `persist.ashfall.led.speed` the effects were
+  perceived as 3x too fast against the stock app.  One full hue turn now takes
+  `54000 / speed` ms, breathing `12000 / speed` ms and duo
+  `15000 / speed` ms each way; the slider range stays 1..10, so speed 10 is
+  still the fastest useful value (`5400` ms per rainbow turn).  The 50 fps
+  render (20 ms) keeps every effect step-free at those periods.
 * Breathing interpolates in **perceptual** brightness: the sine is raised to
   the power 2.2 (gamma) with a 2 % floor, and the daemon renders at 50 fps
   (20 ms), so there are no visible steps at speed 5.
@@ -454,7 +468,9 @@ Run on a build that contains `ashfall-hwd` (a manually pushed binary runs as
    `adb shell logcat -s ashfall-hwd` shows the thermal zone list and the LED
    backend (`sn3112` left/right yes).
 2. Fan: `adb shell setprop persist.ashfall.fan.mode max` spins up within 1 s;
-   `quiet` is noticeably slower; `off` stops it.  `ashfall.status.fan.pct`
+   `quiet` (15 %) is noticeably slower, `balanced` (25 %) sits in between and
+   the top preset (`max`, shown as "Performance" in the app) runs at 50 %;
+   `off` stops it.  `ashfall.status.fan.pct`
    follows, `ashfall.status.fan.temp` tracks `cpu-1-*`.
 3. Smart: heat the device (game/benchmark); output rises along the curve and
    drops only ~3 °C later than it rose.  With `ashfall.ui.fan_live=1` the
@@ -470,7 +486,8 @@ Run on a build that contains `ashfall-hwd` (a manually pushed binary runs as
    releases at 80 °C, also with the screen off.
 7. Lighting: `static` with `color_left=FF0000` lights the left ring red,
    `color_right=0000FF` (with `sync=0`) the right one blue; `breathing`,
-   `rainbow` (now 3x slower) and `duo` animate smoothly at speed 5;
+   `breathing`, `rainbow` and `duo` animate smoothly and slowly at speed 5
+   (rainbow: one turn per 10.8 s);
    `brightness 0` is dark; `ashfall.ui.led_override=FF0000:0000FF` shows the
    exact colours regardless of mode and stops the animation.
 8. Performance override: `setprop ashfall.perf.throttle_override 1` ->
@@ -739,7 +756,7 @@ builds `integ/phase5` and hands the RP5 over serially).  The checks to run:
    with the screen and kicks on wake.
 5. LEDs: they are dark with the screen off (no `ashfall.led.screen_off`
    property exists any more) and come back on screen-on after toggling
-   modes; `rainbow` is 3x slower; `breathing` is smooth at speed 5;
+   modes; `rainbow` turns once per 10.8 s at speed 5; `breathing` is smooth;
    `ashfall.ui.led_override=FF0000:0000FF` shows exactly red:blue.
 6. Wake re-apply (#109): the 20-cycle power-button test in §4 -> both rings
    lit after every unlock, one `ashfall-hwd` line per transition, no write

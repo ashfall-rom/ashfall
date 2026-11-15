@@ -420,15 +420,26 @@ static void test_presets(void)
 
     fan_state_init(&fan);
     fan.settings.mode = FAN_MODE_QUIET;
-    fan.settings.min_pct = 0; /* Quiet (2 %) runs: see test_limits for the cut-off */
+    fan.settings.min_pct = 0; /* low limit off (see test_limits) */
     CHECK_EQ(fan_control_tick(&fan, 400, 1000, true),
              FAN_KICK_DEFAULT_PCT); /* kick, never 100 % */
     CHECK_EQ(fan_control_tick(&fan, 400, 1000 + FAN_KICK_MS + 1, true),
              FAN_PRESET_QUIET_PCT);
 
+    /* Issue #156 item 10: Quiet 15 %, Balanced 25 %, "Performance" 50 %. */
+    CHECK_EQ(FAN_PRESET_QUIET_PCT, 15);
+    CHECK_EQ(FAN_PRESET_BALANCED_PCT, 25);
+    CHECK_EQ(FAN_PRESET_MAX_PCT, 50);
+    CHECK_EQ(fan_control_tick(&fan, 400, 2000, true), 15);
+    fan.settings.mode = FAN_MODE_BALANCED;
+    CHECK_EQ(fan_control_tick(&fan, 400, 3000, true), 25);
+    CHECK_EQ(read_int("/sys/class/gpio5_pwm2/duty"),
+             fan_pct_to_duty(25));
+
     fan.settings.mode = FAN_MODE_MAX;
     CHECK_EQ(fan_control_tick(&fan, 400, 5000, true), FAN_PRESET_MAX_PCT);
-    CHECK_EQ(read_int("/sys/class/gpio5_pwm2/duty"), fan_pct_to_duty(100));
+    CHECK_EQ(read_int("/sys/class/gpio5_pwm2/duty"),
+             fan_pct_to_duty(FAN_PRESET_MAX_PCT));
 }
 
 static void test_safety(void)
@@ -526,12 +537,15 @@ static void test_limits(void)
     CHECK_EQ(fan.out_pct, 40);
     CHECK_EQ(read_int("/sys/class/gpio5_pwm2/duty"), fan_pct_to_duty(40));
 
-    /* Quiet (2 %) stops the fan under the shipped defaults and runs again
-     * with min_pct = 0. */
+    /* Quiet (15 %) sits inside the shipped 5..100 limits and runs; it is cut
+     * to 0 only when the low limit is raised above it. */
     fan.settings.mode = FAN_MODE_QUIET;
     fan.settings.max_pct = FAN_MAX_PCT_DEFAULT;
     fan.settings.min_pct = FAN_MIN_PCT_DEFAULT;
-    CHECK_EQ(fan_control_tick(&fan, 400, 11000, true), 0);
+    CHECK_EQ(fan_control_tick(&fan, 400, 11000, true), FAN_PRESET_QUIET_PCT);
+    CHECK_EQ(read_int("/sys/class/gpio5_pwm2/state"), 1);
+    fan.settings.min_pct = 20;
+    CHECK_EQ(fan_control_tick(&fan, 400, 13500, true), 0);
     CHECK_EQ(read_int("/sys/class/gpio5_pwm2/state"), 0);
     fan.settings.min_pct = 0;
     CHECK_EQ(fan_control_tick(&fan, 400, 13000, true), FAN_KICK_DEFAULT_PCT);
@@ -542,9 +556,10 @@ static void test_limits(void)
     /* max_pct 100 disables the cap. */
     fan.settings.mode = FAN_MODE_MAX;
     fan.settings.max_pct = 100;
-    CHECK_EQ(fan_control_tick(&fan, 400, 16000, true), 100);
+    CHECK_EQ(fan_control_tick(&fan, 400, 16000, true),
+             FAN_PRESET_MAX_PCT);
     CHECK_EQ(read_int("/sys/class/gpio5_pwm2/duty"),
-             fan_pct_to_duty(100));
+             fan_pct_to_duty(FAN_PRESET_MAX_PCT));
 
     /* The 90 C last-resort rule is never capped: max 40 still gives 100 %. */
     fan.settings.mode = FAN_MODE_MANUAL;
@@ -556,7 +571,7 @@ static void test_limits(void)
     CHECK_EQ(read_int("/sys/class/gpio5_pwm2/duty"),
              fan_pct_to_duty(100));
 
-    /* The no-sensor fail-safe (balanced 46 %) is exempt as well. */
+    /* The no-sensor fail-safe (balanced 25 %) is exempt as well. */
     fan_state_init(&fan);
     fan.settings.mode = FAN_MODE_MANUAL;
     fan.settings.manual_pct = 2;
@@ -736,20 +751,20 @@ static void test_led_effects(void)
     /* duo: both sticks show the interpolated colour; at phase 0 it is the
      * left colour, half a period later the right colour. */
     led.settings.mode = LED_MODE_DUO;
-    led.settings.speed = 5; /* period 5000 ms / 5 = 1000 ms */
+    led.settings.speed = 5; /* period 15000 ms / 5 = 3000 ms */
     led.settings.left = (rgb_t){255, 0, 0};
     led.settings.right = (rgb_t){0, 0, 255};
     led_frame(&led, 0, frame);
     CHECK_EQ(frame[0].r, 255);
     CHECK_EQ(frame[0].b, 0);
     CHECK(!memcmp(&frame[0], &frame[1], sizeof(frame[0])));
-    led_frame(&led, 250, frame);
+    led_frame(&led, 750, frame);
     CHECK(frame[0].r >= 127 && frame[0].r <= 128);
     CHECK(frame[0].b >= 127 && frame[0].b <= 128);
-    led_frame(&led, 500, frame);
+    led_frame(&led, 1500, frame);
     CHECK_EQ(frame[0].r, 0); /* half a period later: the right colour */
     CHECK_EQ(frame[0].b, 255);
-    led_frame(&led, 1000, frame);
+    led_frame(&led, 3000, frame);
     CHECK_EQ(frame[0].r, 255); /* a full period wraps back */
 
     /* breathing stays between 2 % (gamma curve floor) and 100 % of the base
@@ -757,23 +772,23 @@ static void test_led_effects(void)
     led.settings.mode = LED_MODE_BREATHING;
     led.settings.left = (rgb_t){200, 200, 200};
     led.settings.right = (rgb_t){200, 200, 200};
-    for (int t = 0; t <= 800; t += 5) {
+    for (int t = 0; t <= 2400; t += 5) {
         led_frame(&led, t, frame);
         CHECK(frame[0].r >= 3);
         CHECK(frame[0].r <= 200);
     }
 
     /* rainbow at t=0 is pure red, a third of the (3x slower) period later
-     * pure green: speed 5 -> 18 000/5 = 3 600 ms per turn. */
+     * pure green: speed 5 -> 54 000/5 = 10 800 ms per turn. */
     led.settings.mode = LED_MODE_RAINBOW;
     led.settings.speed = 5;
     led.settings.sync = true;
     led_frame(&led, 0, frame);
     CHECK_EQ(frame[0].r, 255);
     CHECK_EQ(frame[0].g, 0);
-    led_frame(&led, 400, frame);
-    CHECK(frame[0].g < 255); /* no longer a third of the turn at 400 ms */
     led_frame(&led, 1200, frame);
+    CHECK(frame[0].g < 255); /* no longer a third of the turn at 1200 ms */
+    led_frame(&led, 3600, frame);
     CHECK_EQ(frame[0].r, 0);
     CHECK_EQ(frame[0].g, 255);
     CHECK(!memcmp(&frame[0], &frame[1], sizeof(frame[0])));

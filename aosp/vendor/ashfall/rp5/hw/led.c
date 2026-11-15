@@ -318,7 +318,7 @@ void led_frame(const led_state *state, int64_t now_ms, rgb_t out[2])
     case LED_MODE_STATIC:
         break;
     case LED_MODE_BREATHING: {
-        double period = 4000.0 / speed;
+        double period = 12000.0 / speed;
         double phase = fmod(elapsed, period) / period;
         double perceptual = 0.5 - 0.5 * cos(2.0 * AH_PI * phase);
 
@@ -327,7 +327,7 @@ void led_frame(const led_state *state, int64_t now_ms, rgb_t out[2])
         break;
     }
     case LED_MODE_DUO: {
-        double period = 5000.0 / speed;
+        double period = 15000.0 / speed;
         double phase = fmod(elapsed, period) / period;
         double t = 0.5 - 0.5 * cos(2.0 * AH_PI * phase);
 
@@ -336,9 +336,11 @@ void led_frame(const led_state *state, int64_t now_ms, rgb_t out[2])
         break;
     }
     case LED_MODE_RAINBOW: {
-        /* Base speed is one third of the phase 5 v1 value: a full hue turn
-         * takes 18 000 / speed ms (was 6 000 / speed). */
-        double period = 18000.0 / speed;
+        /* Phase 6 wave 3 (issue #156 item 13): every effect period is three
+         * times the phase 5 value - all three were perceived as 3x too fast at
+         * the same slider value.  A full hue turn now takes 54 000 / speed ms
+         * (was 18 000 / speed, and 6 000 / speed in v1). */
+        double period = 54000.0 / speed;
         double hue = fmod(elapsed, period) / period;
 
         left = hsv_to_rgb(hue, 1.0, 1.0);
