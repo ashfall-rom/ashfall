@@ -34,4 +34,12 @@
     <!-- Status card -->
     <color name="status_warning">#FFFF6D00</color>
     <color name="status_ok">#FF2ECC40</color>
+
+    <!-- Fan graph series (docs/phase5.md §7.2).  Day tints are dark enough to
+         read on the light Settings surface; values-night/colors.xml holds the
+         bright variants used by the dark and pure-black themes.  The legend
+         swatches and labels use the same three colours. -->
+    <color name="fan_graph_temp">#FFC2410C</color>
+    <color name="fan_graph_pct">#FF1D4ED8</color>
+    <color name="fan_graph_rpm">#FF15803D</color>
 </resources>

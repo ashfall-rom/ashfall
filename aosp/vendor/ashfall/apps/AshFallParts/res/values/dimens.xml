@@ -20,7 +20,8 @@
     <dimen name="preference_widget_width">64dp</dimen>
     <dimen name="slider_value_width">56dp</dimen>
     <dimen name="status_card_padding">20dp</dimen>
-    <dimen name="status_gauge_height">6dp</dimen>
+    <dimen name="fan_graph_height">160dp</dimen>
+    <dimen name="fan_legend_swatch">10dp</dimen>
     <dimen name="swatch_size">40dp</dimen>
     <dimen name="swatch_gap">10dp</dimen>
     <dimen name="dialog_width">480dp</dimen>

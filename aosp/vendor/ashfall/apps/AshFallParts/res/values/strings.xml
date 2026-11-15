@@ -55,7 +55,6 @@
     <string name="temperature_value_format">%d °C</string>
     <string name="temperature_celsius">%1$s °C</string>
     <string name="temperature_value">%1$d °C</string>
-    <string name="rpm_value">%1$d rpm</string>
     <string name="value_and_unit">%1$s %2$s</string>
 
     <!-- Handheld page -->
@@ -69,11 +68,14 @@
     <string name="fan_switch_summary_on">On, %1$s</string>
     <string name="fan_switch_summary_off">Off</string>
     <string name="fan_status_title">Status</string>
-    <string name="fan_status_temperature">Temperature</string>
-    <string name="fan_status_output">Output</string>
-    <string name="fan_status_speed">Fan speed</string>
     <string name="fan_status_safety">Last-resort protection — fan at 100 %</string>
     <string name="fan_status_unavailable">The fan daemon is not responding.</string>
+    <!-- Legend of the live graph (docs/phase5.md §7.2).  The numbers are
+         formatted with temperature_value / percent_value / rpm_value_grouped;
+         this dash stands in for a value the daemon has not published. -->
+    <string name="fan_legend_unknown">—</string>
+    <string name="fan_legend_percent">%1$d %%</string>
+    <string name="rpm_value_grouped">%1$s rpm</string>
     <string name="fan_presets_category">Preset</string>
     <string name="fan_preset_builtin">Built-in</string>
     <string name="fan_preset_smart_summary">Follows a temperature curve</string>
@@ -92,6 +94,16 @@
     <string name="fan_manual_title">Fan output</string>
     <string name="fan_manual_summary">%1$d%%</string>
     <string name="fan_manual_disabled">Select the Manual preset to use this</string>
+    <!-- Fan speed limits (docs/phase5.md §7.1/§7.3).  The app only writes the
+         two properties; the daemon clamps the output. -->
+    <string name="fan_limits_category">Fan speed limits</string>
+    <string name="fan_limit_min_title">Minimum output</string>
+    <string name="fan_limit_min_summary">Below %1$d%% the fan stops completely</string>
+    <string name="fan_limit_min_summary_none">No low cut-off — the fan may run at any speed</string>
+    <string name="fan_limit_min_quiet_note">The built-in Quiet preset runs at %1$d %%, so any minimum above %1$d %% stops that preset completely</string>
+    <string name="fan_limit_max_title">Maximum output</string>
+    <string name="fan_limit_max_summary">The fan never runs above %1$d%%</string>
+    <string name="fan_limit_max_summary_none">No upper limit — the fan may run at any speed</string>
     <string name="fan_behaviour_category">Behaviour</string>
     <string name="fan_kick_title">Spin-up kick</string>
     <string name="fan_kick_summary">Give the fan a short burst when it starts, so it spins up reliably</string>

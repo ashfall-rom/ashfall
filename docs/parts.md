@@ -103,7 +103,7 @@ immediately to the properties from §2 of the contract; there is no Apply button
 | Page | Activity | Content |
 |---|---|---|
 | AshFall settings | `HandheldActivity` | Fan / Lighting / Controller rows with live summaries, daemon note |
-| Fan | `FanActivity` | main switch, live status, presets, curve, manual %, kick, screen-off, throttling override, GPU max frequency |
+| Fan | `FanActivity` | main switch, live graph, presets, curve, manual %, fan speed limits, kick, screen-off, throttling override, GPU max frequency |
 | Fan presets | `PresetActivity` | create / rename / duplicate / delete / change mode |
 | Curve | `CurveActivity` | drag-and-D-pad curve editor, live marker, live preview, stress test |
 | Lighting | `LightingActivity` | switch, target, live colour picker, brightness, effect, speed |
@@ -120,11 +120,30 @@ immediately to the properties from §2 of the contract; there is no Apply button
   framework `android.widget.Switch`, not `androidx…SwitchCompat`: the page is
   inflated with `Theme.SubSettingsBase.Expressive`, which is not an AppCompat
   theme (see §9).
-* **Status** is read every 500 ms while the page is visible (the page sets
-  `ashfall.ui.fan_live=1` on resume and clears it on pause, so the daemon
-  publishes at its fast cadence): `ashfall.status.fan.{temp,pct,rpm,safety}`.
-  Temperature is `tenths °C`; the page shows `°C`, output %, RPM (or `—`), and
-  the last-resort warning.
+* **Status** is a live graph, not a read-out (docs/phase5.md §7.2).  The page
+  still reads `ashfall.status.fan.{temp,pct,rpm,safety}` every 500 ms while it
+  is visible (it sets `ashfall.ui.fan_live=1` on resume and clears it on pause,
+  so the daemon publishes at its fast cadence), and each tick appends one
+  sample to a 120-sample (60 s) ring buffer that lives in the app.  Nothing is
+  stored and the daemon keeps no history, so **reopening the page starts a new
+  window** (`StatusPreference.resetHistory()` from `onCreatePreferences`).
+  One non-selectable row draws all three series with Canvas primitives
+  (`ui/FanGraphView`: no chart library, no vector or RRO dependency):
+  temperature on the fixed **20..100 °C left axis** with grid lines and labels
+  at 40/60/80, fan output on the **0..100 % right axis** with labels at
+  0/50/100, and fan speed on the same right axis against a **fixed 16 000 rpm
+  reference** (the measured maximum is ~15 600 rpm) with no labels of its own.
+  A **legend** above the plot keeps the exact current numbers (`58 °C`,
+  `75 %`, `9 800 rpm`) next to the series colour; a value the daemon has not
+  published reads `—` (`ashfall.status.fan.rpm = -1` is the tach-unavailable
+  case).  A `-1`/missing sample is a **gap** in the line, never a drawn zero,
+  and the buffer wraps after 60 s.  While no status value is published the row
+  shows "The fan daemon is not responding." in place of the legend and plot;
+  the last-resort warning line stays below it.  The row is neither focusable
+  nor selectable and blocks focus in its children, so the D-pad skips it in
+  both directions.  The plot follows the Settings theme: series colours are
+  resources with a day and a night variant (§6.9), axis labels use the theme's
+  secondary text colour and the grid is that colour at 12 % alpha.
 * **Presets** are single-choice rows.  Selecting one calls `Fan.apply()`:
   `mode`, then `manual_pct` for Manual or `curve` for Smart, then the preset id
   in `persist.ashfall.fan.preset`.  The daemon only ever sees the active values.
@@ -136,6 +155,21 @@ immediately to the properties from §2 of the contract; there is no Apply button
 * **Manual output** slider is enabled only in Manual mode; moving it writes
   `persist.ashfall.fan.manual_pct` and keeps the active Manual preset's stored
   percentage in step.
+* **Fan speed limits** (docs/phase5.md §7.1/§7.3) sit directly below **Manual
+  output**.  Two ordinary sliders: **Minimum output**
+  (`persist.ashfall.fan.min_pct`, 0..100, default 5) and **Maximum output**
+  (`persist.ashfall.fan.max_pct`, 0..100, default 100).  They are always
+  enabled - the limits apply in every mode - and each change is written
+  immediately.  Below the minimum the daemon stops the fan **completely**
+  (`0` = no low cut-off), above the maximum it never runs higher (`100` = no
+  upper limit); the summaries state that, and the minimum row adds the
+  consequence for the built-in Quiet preset (2 %), which the shipped 5 %
+  minimum stops completely.  The two rows keep `min <= max` by moving the
+  other slider along (a minimum pushed above the maximum takes the maximum
+  with it, and vice versa); a pair read back as `min > max` (invalid for the
+  daemon) is normalised once when the page opens.  The app never clamps the
+  output itself: `ashfall-hwd` is the single enforcement point and
+  `ashfall.status.fan.pct` reports what it actually applied.
 * **Behaviour**: **Spin-up kick** (`persist.ashfall.fan.kick`) and **Fan off
   while the screen is off** (`persist.ashfall.fan.screen_off` = `off`/`run`),
   both ordinary switch rows (`ui/TogglePreference`).
@@ -167,8 +201,9 @@ immediately to the properties from §2 of the contract; there is no Apply button
   published as stock while the override is active.  The status row also
   distinguishes a missing OC step (override off) from the override clamp.
 * **Safety threshold**: removed.  The daemon keeps a fixed, undocumented
-  last-resort rule (100 % at 90 °C, released at 80 °C) and the status block
-  still shows when it is active; there is no slider and no property.
+  last-resort rule (100 % at 90 °C, released at 80 °C) and the graph row still
+  shows its last-resort line when it is active; there is no slider and no
+  property.
 
 ### 2.2 Presets and the curve editor
 
@@ -425,7 +460,7 @@ SystemUI.
 
 Read/written exactly as specified in `docs/phase5.md`:
 
-* `persist.ashfall.fan.{mode,manual_pct,curve,preset,kick,kick_pct,screen_off}`
+* `persist.ashfall.fan.{mode,manual_pct,min_pct,max_pct,curve,preset,kick,kick_pct,screen_off}`
 * `ashfall.ui.{fan_live,fan_preview_curve}`
 * `ashfall.status.fan.{temp,pct,rpm,safety}`
 * `persist.ashfall.led.{mode,color_left,color_right,sync,brightness,speed}`
@@ -791,6 +826,94 @@ saturation check is the RP5 run below (checklist item 8).
    idle and `cur_freq` to 305 MHz; the same happens through the ten-minute
    auto-stop.
 
+### 6.9 Fan live graph and output limits (#122)
+
+The three-column Status read-out (Temperature / Output / Fan speed plus the
+`status_gauge` bar) is gone.  `res/layout/preference_status.xml` now holds one
+non-selectable row: the legend (`status_legend_{temp,pct,rpm}` with a tinted
+`drawable/fan_legend_swatch`), the Canvas-drawn `ui/FanGraphView` (160 dp, full
+row width, padding from `listPreferredItemPaddingStart/End`, 1.5 dp strokes,
+12 sp axis labels, 12 % grid, no fill or gradient) and the unchanged
+last-resort line.  `ui/StatusPreference` owns the 120-sample ring buffer: every
+500 ms tick is appended and pushed into the bound view through a
+`WeakReference` + `invalidate()`, so the row is never rebound while it
+updates (no `notifyChanged()` per tick) and a recycled row is skipped.
+Series colours are resources with a day and a night variant — temperature
+`#C2410C`/`#FFB74D`, output `#1D4ED8`/`#64B5F6`, fan speed
+`#15803D`/`#81C784`, i.e. 5.0–6.7:1 contrast on white and 9.5–12.1:1 on pure
+black.  `hw/Fan` gained `MIN_PCT`/`MAX_PCT` and
+`minPct()/setMinPct()/maxPct()/setMaxPct()` (0..100 clamped on read and write,
+defaults 5/100); the page adds the **Fan speed limits** category directly
+below Manual output.
+
+Verified on the `Retroid_Pocket_5` AVD (API 36, 1920×1080 @ 360 dpi,
+SwiftShader) with the preview build (`preview/prepare.sh && gradle
+:app:assembleDebug`), the new `tools/mock/fan-status.sh start` feeder publishing
+a synthetic 60 s cycle every 500 ms (35 → 85 → 35 °C, 20/55/85 % output steps,
+3 000–13 100 rpm), and `adb shell setenforce 0` for the app's own property
+writes (restored to enforcing afterwards; with enforcing the page still reads
+and draws the status, only the writes are blocked):
+
+* **Graph.** The legend read `58 °C` / `75 %` / `9 800 rpm` in the contract's
+  exact format (checked with a `uiautomator` dump of the row: the thousands
+  separator is a space and the percent sign has one too), and after 70 s every
+  column of the plot area was covered by all three series — the ring wraps
+  without a break or a stale end.
+* **Axes.** Left labels 40/60/80 °C, right labels 0/50/100 %, grid lines only at
+  the three temperature levels (pixel checks at 1/4, 1/2 and 3/4 of the plot
+  height).  The rpm series uses the fixed 16 000 rpm reference and has no
+  labels of its own.
+* **Gaps.** With the feeder stopped and only `ashfall.status.fan.rpm=-1`, the
+  legend showed `—` and the green line ended ~14 samples (~7 s) before the
+  right edge while temperature and output still reached it: a missing sample
+  is a gap, not a zero.
+* **Daemon not responding.** All three status values `-1`: the row showed
+  "The fan daemon is not responding." with no legend and no plot (0 series
+  pixels).  With `ashfall.status.fan.safety=1` the unchanged line "Last-resort
+  protection — fan at 100 %" appeared below the plot.
+* **Theme.** The same page was captured in day and night mode.  The emulator's
+  night theme paints the page `#000000`, which doubles as the pure-black
+  check: all three series stay distinguishable and the axis labels use the
+  theme's secondary text colour.  The LineageOS pure-black RRO itself only
+  exists on the device image, so it cannot be installed on the emulator; the
+  graph carries its own colours and only inherits the label colour from the
+  theme, so it follows that overlay.
+* **D-pad.** `dumpsys activity top` lists the status row as `V.E..V...` (no
+  focus flag) with descendant focusability blocked.  `KEYCODE_DPAD_DOWN` from
+  the Fan switch focuses the first preset row (the graph row in between is
+  skipped), `KEYCODE_DPAD_UP` from that preset row returns to the switch, and
+  the walk continues over the preset rows, the Manual output slider and both
+  limit sliders (`slider_title/slider_value/slider_summary/slider_seekbar`).
+* **Limits.** `KEYCODE_DPAD_RIGHT` on **Minimum output** wrote `min_pct` 7 → 10
+  and `KEYCODE_DPAD_LEFT` on **Maximum output** wrote `max_pct` 100 → 98
+  (`adb shell getprop` after each step).  Coupling, both directions: with
+  `min=50, max=60` eleven `LEFT` presses on the maximum ended at `max_pct=49`
+  and the minimum followed to `49`; with the invalid pair `min=40, max=30` the
+  page normalised it to `30/30` on open (the minimum follows the maximum, so
+  normalising never raises a cap the user set) and one `RIGHT` press on the
+  minimum left both at `31`.  The follower is written before the slider that
+  moved, so the daemon never reads `min_pct > max_pct` and never falls back to
+  both defaults mid-drag.  The minimum summary switches to "No low cut-off —
+  the fan may run at any speed" at 0, otherwise states the cut-off and appends
+  the Quiet note (`Fan.QUIET_PCT` used as a format argument, so the text cannot
+  drift from the constant); the maximum summary says "No upper limit — the fan
+  may run at any speed" at 100.
+* **Logs.** `adb logcat -d | grep -iE "FATAL|AndroidRuntime"` was empty after
+  opening the page, walking it, switching day/night twice and moving both
+  sliders; `logcat -b crash` stayed empty.
+
+**Known limitation (pre-existing).** With the Smart preset active the Manual
+output row is disabled, and the D-pad focus chain stops on the last preset row:
+the rows below (the limits here, Behaviour/Performance before this change) can
+only be reached after touch-scrolling or after selecting the Manual preset.
+The same stop reproduces on the pre-change build of this page, so it is not
+introduced by the graph (it is androidx's RecyclerView focus search at the
+viewport edge stopping on a disabled row), and it is left to a separate fix.
+
+Screenshots of the graph (feeder running, day and night) and of the limits
+section (day and night) are attached to the pull request; they are not
+committed.
+
 ## 7. Build integration
 
 `aosp/vendor/ashfall/apps.mk` gets a separate block (kept apart from the
@@ -824,9 +947,12 @@ trampoline and the two `TileService`s.
 2. Open AshFall settings; check the three rows show live values and open the
    pages; Back returns to Settings.
 3. Fan: switch off/on; activate each built-in (including **Manual**, then move
-   the output slider); check the daemon follows within a second
-   (temperature/output/RPM/safety update every 0.5 s while the page is open).
-   Edit the Smart curve and confirm the fan follows the live preview.
+   the output slider); check the daemon follows within a second (the graph
+   legend and the three lines update every 0.5 s while the page is open, and a
+   `-1` status value shows as `—` and as a gap).  Move both **Fan speed limits**
+   sliders: the properties change immediately, the summaries follow, and
+   pushing one past the other moves it along.  Edit the Smart curve and confirm
+   the fan follows the live preview.
 4. Presets: create, rename, duplicate, delete a user preset; verify it survives
    a reboot (device-protected storage) and that a preset id appears in
    `persist.ashfall.fan.preset`.
