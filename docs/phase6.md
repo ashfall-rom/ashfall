@@ -394,3 +394,22 @@ before any worker starts, so no two workers edit the same page shell.
   Parts row + `L1+R1+Start`, internal display only in v1.
 - Performance tuning: Eden, Winlator and one native game; p95 frame time and
   1% low decide; MGLRU/PELT stay hidden/root-only in v1.
+
+### 9.8 Fusion control protocol (fixed so #138's daemon and app can be written in parallel)
+
+The existing `/dev/socket/ashfall_input` seqpacket text protocol keeps its
+`GET/SET/RESET CAL` and `RAW`/`GRAB` commands unchanged. Fusion adds:
+
+| Request | Reply |
+|---|---|
+| `FUSION STATUS` | `OK FUSION <0\|1> PADS <n>` then one `PAD <key> <LAYOUT> <seen_ms> <name...>` per pad (name is the rest of the line, spaces allowed) |
+| `FUSION ON` / `FUSION OFF` | `OK` on success, `ERR <reason>` otherwise; same effect as writing `persist.ashfall.pad.fusion` |
+| `FUSION LAYOUT <key> <MODE>` | `OK` / `ERR <reason>` |
+| `FUSION REMAP <key> <map>` | `OK` / `ERR <reason>`; `map` is the `from->to,from->to` list |
+| `FUSION RESCAN` | `OK` after a fresh `/dev/input` scan |
+
+`<key>` is deterministic and space-free: `vendor:product:connection`
+(lowercase hex, `usb`/`bt`/`mcu`), never the enumeration order. `<LAYOUT>` is
+one of `DEFAULT`, `XBOX`, `NINTENDO`, `SWAP_AB`, `SWAP_XY`, `CUSTOM`. Missing
+pads or an unavailable daemon are the app's "daemon unavailable" state, not an
+error in the protocol.
