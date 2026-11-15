@@ -55,7 +55,8 @@ main() {
     ensure)
       dev_ensure
       ok "container '$DEV_BOX' ready on $BUILD_HOST"
-      dev_sh 'adb version | head -1; fastboot --version | head -1'
+      # Tool versions only, no device access: skip the RP5 lease guard.
+      ( ASH_DEVICE_LOCK_BYPASS=1; dev_sh 'adb version | head -1; fastboot --version | head -1' )
       return 0
       ;;
     recreate)
