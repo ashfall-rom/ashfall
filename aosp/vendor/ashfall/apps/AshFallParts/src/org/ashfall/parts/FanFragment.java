@@ -21,12 +21,15 @@ import android.content.Intent;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
+import android.view.View;
 import android.widget.Toast;
 
 import androidx.preference.Preference;
 import androidx.preference.PreferenceCategory;
 import androidx.preference.PreferenceFragmentCompat;
 import androidx.preference.PreferenceScreen;
+import androidx.recyclerview.widget.LinearLayoutManager;
+import androidx.recyclerview.widget.RecyclerView;
 
 import org.ashfall.parts.hw.Curve;
 import org.ashfall.parts.hw.Fan;
@@ -276,6 +279,35 @@ public class FanFragment extends PreferenceFragmentCompat {
         refreshToggles();
         updateStatus();
         updateLiveSummaries();
+    }
+
+    @Override
+    public void onViewCreated(View view, Bundle savedInstanceState) {
+        super.onViewCreated(view, savedInstanceState);
+        final RecyclerView list = getListView();
+        if (list == null) {
+            return;
+        }
+        // The framework's D-pad focus search only sees the rows RecyclerView
+        // has attached.  Once a focused row ends flush with the list edge, the
+        // row below it is detached, the search finds nothing and the D-pad
+        // stops there - even though more settings follow (a disabled row such
+        // as Manual output is skipped only when its neighbours are attached).
+        // Keeping one screen of rows attached on either side makes the whole
+        // page reachable in both directions; the focused view is scrolled into
+        // view by RecyclerView itself.
+        final RecyclerView.LayoutManager manager = list.getLayoutManager();
+        if (manager instanceof LinearLayoutManager) {
+            final LinearLayoutManager linear = (LinearLayoutManager) manager;
+            final int orientation = linear.getOrientation();
+            final boolean reversed = linear.getReverseLayout();
+            list.setLayoutManager(new LinearLayoutManager(list.getContext(), orientation, reversed) {
+                @Override
+                protected int getExtraLayoutSpace(RecyclerView.State state) {
+                    return Math.max(super.getExtraLayoutSpace(state), getHeight());
+                }
+            });
+        }
     }
 
     @Override

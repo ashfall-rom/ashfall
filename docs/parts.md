@@ -881,9 +881,14 @@ and draws the status, only the writes are blocked):
 * **D-pad.** `dumpsys activity top` lists the status row as `V.E..V...` (no
   focus flag) with descendant focusability blocked.  `KEYCODE_DPAD_DOWN` from
   the Fan switch focuses the first preset row (the graph row in between is
-  skipped), `KEYCODE_DPAD_UP` from that preset row returns to the switch, and
-  the walk continues over the preset rows, the Manual output slider and both
-  limit sliders (`slider_title/slider_value/slider_summary/slider_seekbar`).
+  skipped) and `KEYCODE_DPAD_UP` from that preset row returns to the switch.
+  With the **Smart** preset active - so the Manual output row is disabled - 14
+  `KEYCODE_DPAD_DOWN` presses walked switch → six presets → Edit presets →
+  Curve → **Minimum output** → **Maximum output** → Behaviour → Performance,
+  one row per press, and 14 `KEYCODE_DPAD_UP` presses walked the same path back
+  to the switch: the disabled row is passed in both directions.
+  `KEYCODE_DPAD_RIGHT` on Minimum wrote `min_pct` 5 → 8 and
+  `KEYCODE_DPAD_LEFT` on Maximum wrote `max_pct` 100 → 98.
 * **Limits.** `KEYCODE_DPAD_RIGHT` on **Minimum output** wrote `min_pct` 7 → 10
   and `KEYCODE_DPAD_LEFT` on **Maximum output** wrote `max_pct` 100 → 98
   (`adb shell getprop` after each step).  Coupling, both directions: with
@@ -902,13 +907,17 @@ and draws the status, only the writes are blocked):
   opening the page, walking it, switching day/night twice and moving both
   sliders; `logcat -b crash` stayed empty.
 
-**Known limitation (pre-existing).** With the Smart preset active the Manual
-output row is disabled, and the D-pad focus chain stops on the last preset row:
-the rows below (the limits here, Behaviour/Performance before this change) can
-only be reached after touch-scrolling or after selecting the Manual preset.
-The same stop reproduces on the pre-change build of this page, so it is not
-introduced by the graph (it is androidx's RecyclerView focus search at the
-viewport edge stopping on a disabled row), and it is left to a separate fix.
+**D-pad focus chain.** The framework focus search only sees the rows
+RecyclerView has attached.  Before this change, once a focused row ended flush
+with the list edge the row below was detached, the search found nothing and
+DOWN/UP stopped there; in the default Smart state (disabled Manual output row)
+that hid everything below the preset list - including the new limit sliders -
+and the same stop reproduced on the pre-change build.  The page now installs a
+`LinearLayoutManager` whose `getExtraLayoutSpace()` keeps one screen of rows
+attached on either side (page-local; no shared widget or adapter change), so
+focus search always finds the next row and RecyclerView scrolls it into view.
+Verified in Smart mode with the walk and property evidence above, and the rows
+above the list still behave: the graph row is never a focus stop.
 
 Screenshots of the graph (feeder running, day and night) and of the limits
 section (day and night) are attached to the pull request; they are not
