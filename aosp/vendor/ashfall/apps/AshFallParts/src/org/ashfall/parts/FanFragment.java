@@ -16,13 +16,11 @@
 
 package org.ashfall.parts;
 
-import android.app.AlertDialog;
 import android.content.Intent;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
 import android.view.View;
-import android.widget.Toast;
 
 import androidx.preference.Preference;
 import androidx.preference.PreferenceCategory;
@@ -33,7 +31,6 @@ import androidx.recyclerview.widget.RecyclerView;
 
 import org.ashfall.parts.hw.Curve;
 import org.ashfall.parts.hw.Fan;
-import org.ashfall.parts.hw.Perf;
 import org.ashfall.parts.hw.Preset;
 import org.ashfall.parts.hw.PresetStore;
 import org.ashfall.parts.ui.MainSwitchPreference;
@@ -51,14 +48,14 @@ import java.util.List;
  *
  * <p>While the page is visible it sets {@code ashfall.ui.fan_live=1} so the
  * daemon publishes status every 500 ms instead of every 2 s.
+ *
+ * <p>The Performance controls (throttling override and GPU max frequency) moved
+ * to the Power page (#124); this page keeps one row that points there.
  */
 public class FanFragment extends PreferenceFragmentCompat {
 
     /** The daemon's live status period while a fan UI is visible. */
     private static final long LIVE_TICK_MS = 500;
-    /** Number of taps on the version row that reveal the advanced settings. */
-    private static final int ADVANCED_TAPS = 7;
-
     private PresetStore mStore;
     private MainSwitchPreference mSwitch;
     private StatusPreference mStatus;
@@ -70,12 +67,7 @@ public class FanFragment extends PreferenceFragmentCompat {
     private SliderPreference mMaxPct;
     private TogglePreference mKick;
     private TogglePreference mScreenOff;
-    private TogglePreference mThrottle;
-    private Preference mGpu;
-    private TogglePreference mPermanent;
-    private PreferenceCategory mAdvancedCategory;
     private PreferenceScreen mScreen;
-    private int mVersionTaps;
     private boolean mRebuilding;
 
     private final Handler mHandler = new Handler(Looper.getMainLooper());
@@ -83,6 +75,7 @@ public class FanFragment extends PreferenceFragmentCompat {
         @Override
         public void run() {
             Fan.refreshLive();
+            // #132: the tick is the only place that appends a graph sample.
             updateStatus();
             updateLiveSummaries();
             // The daemon publishes ashfall.status.perf.throttle after boot and
@@ -92,8 +85,6 @@ public class FanFragment extends PreferenceFragmentCompat {
         }
     };
     private boolean mFirstResume = true;
-    private AlertDialog mThrottleDialog;
-    private AlertDialog mGpuDialog;
 
     @Override
     public void onCreatePreferences(Bundle savedInstanceState, String rootKey) {
@@ -218,51 +209,26 @@ public class FanFragment extends PreferenceFragmentCompat {
         });
         behaviour.addPreference(mScreenOff);
 
-        final PreferenceCategory performance = new PreferenceCategory(requireContext());
-        performance.setTitle(R.string.fan_performance_category);
-        mScreen.addPreference(performance);
-
-        mThrottle = new TogglePreference(requireContext());
-        mThrottle.setKey("fan_throttle_override");
-        mThrottle.setTitle(R.string.fan_throttle_title);
-        mThrottle.setOnToggleRequestedListener((preference, desired) -> {
-            if (!desired) {
-                Perf.setOverride(false);
-                refreshToggles();
-                return;
-            }
-            confirmThrottleOverride();
-        });
-        performance.addPreference(mThrottle);
-
-        // GPU cap (docs/phase6.md §3): the selector lives in the same
-        // Performance section; the daemon publishes the actual cap and
-        // whether the throttle override clamps it.
-        mGpu = new Preference(requireContext());
-        mGpu.setKey("fan_gpu_max");
-        mGpu.setPersistent(false);
-        mGpu.setTitle(R.string.fan_gpu_title);
-        mGpu.setOnPreferenceClickListener(preference -> {
-            showGpuDialog();
+        // Performance moved to the Power page (#124): the throttling override
+        // and the GPU cap live there now, with the CPU caps and the presets.
+        // One row keeps the section discoverable from here.
+        final Preference performance = new Preference(requireContext());
+        performance.setKey("fan_performance_link");
+        performance.setTitle(R.string.power_fan_row_title);
+        performance.setSummary(R.string.power_fan_row_summary);
+        performance.setIcon(R.drawable.ic_ashfall_power);
+        performance.setOnPreferenceClickListener(preference -> {
+            startActivity(new Intent(requireContext(), PowerActivity.class));
             return true;
         });
-        performance.addPreference(mGpu);
-
-        // Always build the hidden category (just above the version row) and
-        // only make it visible once it has been unlocked, so its position is
-        // identical whether it was unlocked now or in an earlier visit.
-        addAdvancedCategory();
-        setAdvancedVisible(Prefs.advancedUnlocked(requireContext()));
+        mScreen.addPreference(performance);
 
         final Preference versionRow = new Preference(requireContext());
         versionRow.setKey("fan_version");
         versionRow.setTitle(R.string.fan_version_title);
         versionRow.setSummary(getString(R.string.fan_version_summary,
                 Ui.appVersion(requireContext())));
-        versionRow.setOnPreferenceClickListener(preference -> {
-            onVersionTapped();
-            return true;
-        });
+        versionRow.setSelectable(false);
         mScreen.addPreference(versionRow);
 
         final Preference footer = new Preference(requireContext());
@@ -277,7 +243,6 @@ public class FanFragment extends PreferenceFragmentCompat {
         rebuildPresets();
         setPreferenceScreen(mScreen);
         refreshToggles();
-        updateStatus();
         updateLiveSummaries();
     }
 
@@ -321,7 +286,6 @@ public class FanFragment extends PreferenceFragmentCompat {
             // finished its current layout pass, never inside it.
             getListView().post(this::rebuildPresets);
         }
-        updateStatus();
         updateLiveSummaries();
         refreshToggles();
         mHandler.removeCallbacks(mTick);
@@ -338,14 +302,6 @@ public class FanFragment extends PreferenceFragmentCompat {
     @Override
     public void onDestroyView() {
         mHandler.removeCallbacks(mTick);
-        if (mThrottleDialog != null) {
-            mThrottleDialog.dismiss();
-            mThrottleDialog = null;
-        }
-        if (mGpuDialog != null) {
-            mGpuDialog.dismiss();
-            mGpuDialog = null;
-        }
         super.onDestroyView();
     }
 
@@ -360,7 +316,6 @@ public class FanFragment extends PreferenceFragmentCompat {
             Fan.setMode(Preset.MODE_OFF);
             Fan.setPresetId(PresetStore.ID_OFF);
             rebuildPresets();
-            updateStatus();
         }
     }
 
@@ -371,7 +326,6 @@ public class FanFragment extends PreferenceFragmentCompat {
         Fan.apply(preset);
         Prefs.setLastPreset(requireContext(), preset.id);
         rebuildPresets();
-        updateStatus();
     }
 
     /** Curves belong to Smart presets; fall back to the built-in Smart preset. */
@@ -488,194 +442,6 @@ public class FanFragment extends PreferenceFragmentCompat {
         }
         mKick.setChecked(Fan.kick());
         mScreenOff.setChecked(Fan.offWhileScreenOff());
-        final boolean throttleActive = Perf.overrideActive();
-        mThrottle.setChecked(throttleActive);
-        final int throttleSummary;
-        if (!Perf.overrideSupported()) {
-            throttleSummary = R.string.fan_throttle_summary_unsupported;
-        } else if (throttleActive) {
-            throttleSummary = Perf.permanent()
-                    ? R.string.fan_throttle_summary_permanent
-                    : R.string.fan_throttle_summary_on;
-        } else {
-            throttleSummary = R.string.fan_throttle_summary_off;
-        }
-        mThrottle.setSummaryText(getString(throttleSummary));
-        if (mPermanent != null) {
-            mPermanent.setChecked(Perf.permanent());
-        }
-        refreshGpu();
-    }
-
-    /** Keeps the GPU row's actual cap / clamp summary in step with the daemon. */
-    private void refreshGpu() {
-        if (mGpu == null) {
-            return;
-        }
-        final int requested = Perf.gpuRequestedMhz();
-        final int actual = Perf.gpuActualMhz();
-        final int oc = Perf.gpuOc();
-        final boolean aboveStock = requested > Perf.GPU_STOCK_MHZ;
-        final StringBuilder text = new StringBuilder();
-        if (oc == -1) {
-            text.append(getString(R.string.fan_gpu_summary_no_sysfs, requested));
-        } else if (oc == Integer.MIN_VALUE || oc < -1 || actual == Integer.MIN_VALUE) {
-            text.append(getString(R.string.fan_gpu_summary_unavailable, requested));
-        } else if (Perf.gpuClampedToStock()) {
-            // The daemon clamps the cap to stock while the phase-5 throttle
-            // override is active (docs/phase6.md §3); otherwise the requested
-            // OC step is simply missing from the GPU table.
-            text.append(Perf.overrideActive()
-                    ? getString(R.string.fan_gpu_summary_clamped, requested, actual)
-                    : getString(R.string.fan_gpu_summary_not_applied, requested, actual));
-        } else if (actual == requested) {
-            if (actual == Perf.GPU_STOCK_MHZ) {
-                text.append(getString(R.string.fan_gpu_summary_stock));
-            } else if (aboveStock) {
-                text.append(getString(R.string.fan_gpu_summary_overclock, actual));
-            } else {
-                text.append(getString(R.string.fan_gpu_summary_value, actual));
-            }
-        } else {
-            text.append(getString(R.string.fan_gpu_summary_actual, actual, requested));
-        }
-        if (aboveStock && !(oc == 0 && Perf.overrideActive())) {
-            text.append('\n').append(getString(R.string.fan_gpu_warning_fan));
-        }
-        if (Perf.mockEnabled()) {
-            text.append('\n').append(getString(R.string.fan_gpu_mock_note));
-        }
-        mGpu.setSummary(text);
-    }
-
-    /** Single-choice dialog with the five contract steps (stock is the default). */
-    private void showGpuDialog() {
-        if (!isAdded()) {
-            return;
-        }
-        final int[] values = Perf.GPU_STEPS;
-        final CharSequence[] labels = {
-                getString(R.string.fan_gpu_value_stock),
-                getString(R.string.fan_gpu_value_765),
-                getString(R.string.fan_gpu_value_850),
-                getString(R.string.fan_gpu_value_940),
-                getString(R.string.fan_gpu_value_experimental),
-        };
-        final int requested = Perf.gpuRequestedMhz();
-        int checked = -1;
-        for (int i = 0; i < values.length; i++) {
-            if (values[i] == requested) {
-                checked = i;
-            }
-        }
-        mGpuDialog = new AlertDialog.Builder(requireContext())
-                .setTitle(R.string.fan_gpu_title)
-                .setSingleChoiceItems(labels, checked, (dialog, which) -> {
-                    dialog.dismiss();
-                    onGpuStepSelected(values[which]);
-                })
-                .setNegativeButton(R.string.cancel, null)
-                .create();
-        mGpuDialog.show();
-    }
-
-    private void onGpuStepSelected(int mhz) {
-        if (mhz == Perf.GPU_EXPERIMENTAL_MHZ) {
-            confirmGpuExperimental(mhz);
-            return;
-        }
-        applyGpuStep(mhz);
-    }
-
-    /** 1000 MHz is opt-in and always goes through the thermal/stability warning. */
-    private void confirmGpuExperimental(int mhz) {
-        if (!isAdded()) {
-            return;
-        }
-        mGpuDialog = new AlertDialog.Builder(requireContext())
-                .setTitle(R.string.fan_gpu_confirm_title)
-                .setMessage(R.string.fan_gpu_confirm_body)
-                .setNegativeButton(R.string.cancel, null)
-                .setPositiveButton(R.string.fan_gpu_confirm_enable,
-                        (dialog, which) -> applyGpuStep(mhz))
-                .create();
-        mGpuDialog.show();
-    }
-
-    private void applyGpuStep(int mhz) {
-        Perf.setGpuRequestedMhz(mhz);
-        refreshGpu();
-    }
-
-    private void confirmThrottleOverride() {
-        if (!isAdded()) {
-            return;
-        }
-        mThrottleDialog = new AlertDialog.Builder(requireContext())
-                .setTitle(R.string.fan_throttle_confirm_title)
-                .setMessage(R.string.fan_throttle_confirm_body)
-                .setNegativeButton(R.string.cancel, null)
-                .setPositiveButton(R.string.fan_throttle_confirm_enable, (dialog, which) -> {
-                    Perf.setOverride(true);
-                    if (isAdded()) {
-                        refreshToggles();
-                    }
-                })
-                .create();
-        mThrottleDialog.show();
-    }
-
-    private void addAdvancedCategory() {
-        if (mAdvancedCategory != null || mScreen == null) {
-            return;
-        }
-        mAdvancedCategory = new PreferenceCategory(requireContext());
-        mAdvancedCategory.setTitle(R.string.fan_advanced_category);
-        // Attach the category to the screen *before* adding children: a
-        // detached PreferenceGroup has no PreferenceManager, and
-        // PreferenceGroup.addPreference() -> getNextId() dereferences it
-        // (P0 regression #96).  This also keeps the category just above the
-        // version row, because it is added before the version/footer rows.
-        mScreen.addPreference(mAdvancedCategory);
-        mPermanent = new TogglePreference(requireContext());
-        mPermanent.setKey("fan_throttle_permanent");
-        mPermanent.setTitle(R.string.fan_advanced_permanent_title);
-        mPermanent.setSummary(R.string.fan_advanced_permanent_summary);
-        mPermanent.setOnToggleRequestedListener((preference, desired) -> {
-            Perf.setPermanent(desired);
-            if (desired) {
-                // The hidden switch is also an immediate override, otherwise
-                // "apply at every boot" would do nothing until the next boot.
-                Perf.setOverride(true);
-            }
-            refreshToggles();
-        });
-        mAdvancedCategory.addPreference(mPermanent);
-        refreshToggles();
-    }
-
-    private void onVersionTapped() {
-        if (Prefs.advancedUnlocked(requireContext())) {
-            return;
-        }
-        mVersionTaps++;
-        if (mVersionTaps < ADVANCED_TAPS) {
-            return;
-        }
-        Prefs.setAdvancedUnlocked(requireContext(), true);
-        setAdvancedVisible(true);
-        Toast.makeText(requireContext(), R.string.fan_advanced_unlocked, Toast.LENGTH_SHORT)
-                .show();
-    }
-
-    /** androidx flattens groups into rows, so hide both the header and the row. */
-    private void setAdvancedVisible(boolean visible) {
-        if (mAdvancedCategory != null) {
-            mAdvancedCategory.setVisible(visible);
-        }
-        if (mPermanent != null) {
-            mPermanent.setVisible(visible);
-        }
     }
 
     private void updateLiveSummaries() {

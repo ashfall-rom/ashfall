@@ -19,9 +19,10 @@ package org.ashfall.parts;
 import androidx.fragment.app.Fragment;
 
 /**
- * Power page (#124): CPU clock caps, governor, GPU cap, presets and the live
- * power/clock graph.  The page itself is owned by the #124 app worker; this
- * shell only registers it so the other pages can be built in parallel.
+ * Power page (#124): CPU clock caps, governor, GPU cap, throttling override,
+ * presets and the live power/clock graph.  The page is
+ * {@link PowerFragment}; this activity is the shell every AshFall page shares
+ * (collapsing toolbar, insets, title).
  */
 public class PowerActivity extends PartsActivity {
 
