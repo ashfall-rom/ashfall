@@ -412,7 +412,7 @@ device (build `20261113-213314`):
 | `ashfall_fan_sysfs` | `/class/gpio5_pwm2` | the driver registers class-level attributes, so `state`/`duty`/`speed` live directly in the class directory (it is a real directory, not a device symlink); `avc` confirms `path="/sys/class/gpio5_pwm2/state"` |
 | `ashfall_led_sysfs` | `/devices/virtual/sn3112l`, `/devices/virtual/sn3112r` | `/sys/class/sn3112{l,r}/led` are symlinks into these device dirs; `avc` confirms `path="/sys/devices/virtual/sn3112l/led/brightness"` |
 | `ashfall_cpu_sysfs` | `/devices/system/cpu/cpufreq`, `/devices/system/cpu/cpu{0..7}/cpufreq` | phase 6 (#124): the `policy*` dirs are symlinks into `cpuN/cpufreq`; the platform label `sysfs_devices_system_cpu` is not writable by a coredomain (§12) |
-| `ashfall_zram_sysfs` | `/devices/virtual/block/zram0`, `/block/zram0` | phase 6 (#141): `/sys/block/zram0/*` is a class symlink to the virtual block device (§13) |
+| `sysfs_zram` (platform) | `/devices/virtual/block/zram0` | phase 6 (#141): `/sys/block/zram0/*` is a class symlink to the virtual block device, already labelled by the platform policy, so no AshFall type or genfscon is added (§13) |
 | `ashfall_swap_file` | `/data/ashfall(/.*)?` | phase 6 (#141): the swapfile directory and file; created by init at `post-fs-data` so the label is inherited (§13) |
 | `ashfall_gpu_sysfs` (+ `gpuclk`) | `.../kgsl/kgsl-3d0/gpuclk` (platform + legacy) | phase 6 (#124): the read-only live GPU clock behind `ashfall.status.perf.gpu_mhz`; only this attribute was added, `min_freq`/`max_freq` are unchanged (#120 stays open) |
 
@@ -917,7 +917,8 @@ so the fan holds its last applied duty for that window.  This is documented, not
 a regression: no new daemon or thread is added.
 
 **SELinux / init.**  `/dev/block/zram0` is `ashfall_zram_device`,
-`/sys/block/zram0/*` -> `ashfall_zram_sysfs`, `/data/ashfall(/.*)?` ->
+`/sys/block/zram0/*` -> the platform's `sysfs_zram` (no AshFall relabel),
+`/data/ashfall(/.*)?` ->
 `ashfall_swap_file`, and `swapon`/`swapoff` need `sys_admin`.
 `ashfall-hwd.rc` creates `/data/ashfall` at `post-fs-data` with
 `restorecon_recursive`, so both the directory and a runtime-created swapfile
@@ -928,7 +929,7 @@ inherit the `/data` label).  Enforcing check:
 adb shell 'ls -Zd /data/ashfall /data/ashfall/swapfile'
 #   -> u:object_r:ashfall_swap_file:s0
 adb shell ls -Z /dev/block/zram0 /sys/block/zram0/disksize
-#   -> ashfall_zram_device / ashfall_zram_sysfs
+#   -> ashfall_zram_device / sysfs_zram (platform type)
 adb shell 'setprop persist.ashfall.mem.zram_mb 2048; cat /proc/swaps'
 adb shell 'getprop | grep ashfall.status.mem'
 adb shell dmesg | grep avc      # must be clean

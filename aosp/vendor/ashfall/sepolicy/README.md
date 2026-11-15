@@ -94,8 +94,8 @@ merged into the contexts the image build and libselinux use.  The old
     build denies a differently-labelled vendor node (then add exact-path
     relabels like the kgsl ones).  docs/rp5/hw.md §11 has the check.
   * **zram / swap.**  `/dev/block/zram0` -> `ashfall_zram_device`,
-    `/sys/block/zram0/*` (resolved `/sys/devices/virtual/block/zram0`) ->
-    `ashfall_zram_sysfs`, `/data/ashfall(/.*)?` -> `ashfall_swap_file` (created
+    `/sys/block/zram0/*` keeps the platform's `sysfs_zram` (no AshFall type or
+    genfscon), `/data/ashfall(/.*)?` -> `ashfall_swap_file` (created
     by init at post-fs-data in `ashfall-hwd.rc` so the label is inherited by the
     runtime-created swapfile), plus `sys_admin` for swapon/swapoff.
   * `persist.ashfall.mem.*` stays `ashfall_prop`; `persist.ashfall.perf.cpu_*`
