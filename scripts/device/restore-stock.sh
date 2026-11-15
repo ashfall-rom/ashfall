@@ -44,7 +44,8 @@
 #   --no-splash         skip splash
 #   --wipe              erase userdata + metadata (needed if /data is unusable;
 #                       ~351 s after the super flash, seconds otherwise)
-#   --set-active a|b    mark this slot active (default: leave as is)
+#   --set-active a|b    mark this slot active (default: the restored slot when
+#                       super is flashed, otherwise leave it)
 #   --reboot            reboot to Android when done (default: stay in fastboot)
 #   --skip-size-check   do not verify image sizes against partition sizes
 #   --serial SERIAL     device serial (default: the only one connected)
@@ -319,6 +320,17 @@ print_plan() {
 # --- main --------------------------------------------------------------------
 preflight
 resolve_plan
+
+# A factory `super` image only populates slot A's dynamic partitions.  If the
+# bootloader stays on slot B the device boots a slot with no /system or
+# /vendor: init starts from the ramdisk, finds nothing, exits 127 and the
+# kernel panics ("Attempted to kill init! exitcode=0x00007f00", 2026-11-15).
+# So restoring `super` pins the active slot to the restored one unless the
+# caller asked for something else.
+if ((DO_SUPER)) && [[ -z $SET_ACTIVE ]]; then
+  SET_ACTIVE=${SLOTS%% *}
+  log "super restore: set_active $SET_ACTIVE (a factory super only populates slot A)"
+fi
 build_batch
 print_plan
 
