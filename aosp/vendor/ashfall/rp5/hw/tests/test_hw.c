@@ -203,6 +203,7 @@ static int make_sysfs(void)
     write_file(FAKE_KGSL_DEV "/kgsl/kgsl-3d0/gpu_available_frequencies",
                "670000000 587000000 525000000 490000000 441600000 400000000 "
                "305000000\n");
+    write_file(FAKE_KGSL_DEV "/kgsl/kgsl-3d0/gpuclk", "305000000\n");
 
     /* Battery telemetry (phase 6, #124/#137): `battery` carries current,
      * voltage, level and status; `bms` carries the charge counters. */
@@ -1397,6 +1398,35 @@ static void test_gpu(void)
     remove_rel(FAKE_KGSL_LEGACY);
 }
 
+/* --- phase 6: live GPU clock for the Power page graph (#124) ------------- */
+
+static void test_gpu_clock(void)
+{
+    const char *gpuclk = FAKE_KGSL_DEV "/kgsl/kgsl-3d0/gpuclk";
+
+    /* test_gpu() removed the platform kgsl tree for the missing-node case. */
+    mkdir_p(FAKE_KGSL_DEV "/kgsl/kgsl-3d0");
+    /* kgsl reports gpuclk in Hz; the status property is MHz. */
+    write_file(gpuclk, "670000000\n");
+    CHECK_EQ(gpu_clock_mhz(), 670);
+    write_file(gpuclk, "1000000000\n");
+    CHECK_EQ(gpu_clock_mhz(), 1000);
+    write_file(gpuclk, "441600000\n");
+    CHECK_EQ(gpu_clock_mhz(), 442);
+
+    /* 0 is a valid "GPU clocked off" reading, not an unknown one. */
+    write_file(gpuclk, "0\n");
+    CHECK_EQ(gpu_clock_mhz(), 0);
+
+    /* Missing node: -1 (the graph draws a gap), no crash. */
+    remove_rel(FAKE_KGSL_DEV "/kgsl/kgsl-3d0/gpuclk");
+    CHECK_EQ(gpu_clock_mhz(), -1);
+    /* A garbage value is unknown too. */
+    write_file(gpuclk, "busy\n");
+    CHECK_EQ(gpu_clock_mhz(), -1);
+    write_file(gpuclk, "670000000\n");
+}
+
 /* --- phase 6: battery/power telemetry (#124 + #137) ---------------------- */
 
 static void test_power(void)
@@ -1715,6 +1745,7 @@ int main(void)
     test_thermal_watch();
     test_throttle();
     test_gpu();
+    test_gpu_clock();
     test_power();
     test_cpu();
     test_mem();
