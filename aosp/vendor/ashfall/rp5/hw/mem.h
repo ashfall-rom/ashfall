@@ -82,6 +82,15 @@ int mem_data_free_mb(void);
 int mem_apply_zram(mem_state *state, int request_mb);
 int mem_apply_swap(mem_state *state, int request_mb);
 
+/*
+ * Write a v1 swap header (version, last_page, SWAPSPACE2 magic at 4086) to an
+ * open file/block device.  Shared by the swapfile and by zram, whose freshly
+ * reset block device is all zeros and is rejected by swapon(2) with EINVAL
+ * until it carries this signature (init normally runs mkswap on zram0).  A size
+ * below two pages is refused with -1.
+ */
+int mem_write_swap_header(int fd, long long size);
+
 /* ashfall.status.mem.zram_used_kb / zram_saved_kb from mm_stat (compressed
  * size and orig-compr); -1 when unavailable. */
 int mem_status_zram(const mem_state *state, int *used_kb, int *saved_kb);
