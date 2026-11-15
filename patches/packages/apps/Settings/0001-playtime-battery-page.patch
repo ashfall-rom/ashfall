@@ -1,0 +1,1385 @@
+From 92cd9d5cbccca0bca26e3414dfed772ea98e5d4f Mon Sep 17 00:00:00 2001
+From: AshFall UI <ui@ashfall.local>
+Date: Sun, 15 Nov 2026 16:24:36 +0000
+Subject: [PATCH] Settings: PlayTime indicator page on Battery
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+AshFall #137: the Settings side of the native PlayTime indicator. One row on
+Settings > Battery with a live estimate (2h 45m · 5.4W, or Off) opening a
+PlayTimeSettings sub-screen with the placement, detail, time format, sample
+window/interval, charging symbol/cycle, tap-cycle, font size and battery
+capacity rows, plus a non-selectable live read-out.
+
+Values are stored in persist.ashfall.batt.* as the wave-2 contract fixes them
+(docs/phase6.md §9.3), SystemUI owns the defaults, and an unset or malformed
+property falls back to the documented default instead of failing the page.
+
+The live values come from the framework BatteryManager (the sticky
+ACTION_BATTERY_CHANGED broadcast plus CURRENT_NOW / CHARGE_COUNTER and the
+power profile), not from ashfall.status.*: there is no battery sampler in
+ashfall-hwd, because a coredomain cannot read sysfs_batteryinfo (platform
+neverallow) and the RP5 power-supply nodes are vendor-labeled.
+
+The row is declared in res/xml/power_usage_summary.xml because that is the
+battery page that renders in this tree: the metadata screens
+(PowerUsageSummaryScreen / PowerUsageSummaryApiScreen) are gated behind the
+catalyst_power_usage_summary_screen and catalyst_migration_26q3 aconfig flags,
+which are disabled.
+---
+ res/values/strings.xml                        | 159 +++++++
+ res/xml/playtime_settings.xml                 | 145 ++++++
+ res/xml/power_usage_summary.xml               |  11 +
+ .../playtime/PlayTimeCapacityPreference.java  |  82 ++++
+ .../playtime/PlayTimeProperties.java          | 433 ++++++++++++++++++
+ .../fuelgauge/playtime/PlayTimeSettings.java  | 363 +++++++++++++++
+ .../playtime/PlayTimeSummaryController.java   |  95 ++++
+ 7 files changed, 1288 insertions(+)
+ create mode 100644 res/xml/playtime_settings.xml
+ create mode 100644 src/com/android/settings/fuelgauge/playtime/PlayTimeCapacityPreference.java
+ create mode 100644 src/com/android/settings/fuelgauge/playtime/PlayTimeProperties.java
+ create mode 100644 src/com/android/settings/fuelgauge/playtime/PlayTimeSettings.java
+ create mode 100644 src/com/android/settings/fuelgauge/playtime/PlayTimeSummaryController.java
+
+diff --git a/res/values/strings.xml b/res/values/strings.xml
+index a84186b96bc..218e1f48e7c 100644
+--- a/res/values/strings.xml
++++ b/res/values/strings.xml
+@@ -15590,4 +15590,163 @@
+     <!-- Search keywords for Human interface device access setting -->
+     <string name="keywords_access_hid">hid, human, access, device</string>
+     <!-- Access HID end -->
++
++    <!-- AshFall: PlayTime indicator, Settings > Battery (docs/settings-battery.md). The row, the
++         sub-screen and the live read-out; arrays live in this file so the patch touches one values
++         resource. -->
++    <!-- Title of the row on Settings > Battery and of its sub-screen [CHAR LIMIT=30] -->
++    <string name="playtime_indicator_title">PlayTime indicator</string>
++    <!-- Search keywords for the PlayTime indicator settings -->
++    <string name="keywords_playtime">playtime, indicator, battery, remaining time, status bar, watt</string>
++    <!-- Row summary when the indicator is disabled [CHAR LIMIT=30] -->
++    <string name="playtime_summary_off">Off</string>
++    <!-- Row summary with the live estimate, e.g. "2h 45m &middot; 5.4W" [CHAR LIMIT=40] -->
++    <string name="playtime_summary">%1$s · %2$s</string>
++    <!-- Row or read-out summary while charging, e.g. "&#8623; 1h 20m &middot; 5.4W" -->
++    <string name="playtime_charging_summary">%1$s %2$s</string>
++    <!-- Watts in a row summary, no space before the unit [CHAR LIMIT=12] -->
++    <string name="playtime_watts">%1$sW</string>
++    <!-- Estimated remaining time in hours and minutes [CHAR LIMIT=20] -->
++    <string name="playtime_time">%1$dh %2$dm</string>
++    <!-- Estimated remaining time under one hour [CHAR LIMIT=10] -->
++    <string name="playtime_time_short">%1$dm</string>
++    <!-- Remark that the estimate is capped at 48 hours [CHAR LIMIT=10] -->
++    <string name="playtime_time_over">&gt;48h</string>
++    <!-- Shown instead of a time when the battery is full -->
++    <string name="playtime_full">FULL</string>
++    <!-- Shown for a value the daemon did not publish -->
++    <string name="playtime_unavailable">-</string>
++
++    <!-- Sub-screen rows -->
++    <string name="playtime_settings_title">PlayTime indicator</string>
++    <string name="playtime_show_title">Show indicator</string>
++    <string name="playtime_show_summary">Estimate the remaining time from screen-on power draw and show it in the status bar</string>
++    <string name="playtime_category_display">Indicator</string>
++    <string name="playtime_category_estimate">Estimate</string>
++    <string name="playtime_category_charging">Charging</string>
++    <string name="playtime_category_readout">Live values</string>
++    <string name="playtime_placement_title">Placement</string>
++    <string name="playtime_detail_title">Detail</string>
++    <string name="playtime_format_title">Time format</string>
++    <string name="playtime_font_size_title">Font size</string>
++    <!-- Font size summary, e.g. "12 sp" -->
++    <string name="playtime_font_size_summary">%1$d sp</string>
++    <string name="playtime_tap_cycle_title">Tap to cycle</string>
++    <string name="playtime_tap_cycle_summary">Cycle the indicator through time, watts and percentage when tapped</string>
++    <string name="playtime_window_title">Averaging window</string>
++    <string name="playtime_interval_title">Sample interval</string>
++    <!-- Sample interval summary, e.g. "5 s" -->
++    <string name="playtime_seconds">%1$d s</string>
++    <!-- Charging cycle interval summary, e.g. "2.0 s" -->
++    <string name="playtime_seconds_tenths">%1$s s</string>
++    <string name="playtime_capacity_title">Battery capacity</string>
++    <string name="playtime_capacity_summary_auto">Auto</string>
++    <!-- Manual battery capacity summary, e.g. "5000 mAh" -->
++    <string name="playtime_capacity_summary">%1$d mAh</string>
++    <string name="playtime_charging_symbol_title">Charging symbol</string>
++    <string name="playtime_charging_cycle_title">Charging cycle</string>
++    <string name="playtime_charging_cycle_summary">Rotate the selected meters while charging</string>
++    <string name="playtime_charging_cycle_ms_title">Cycle interval</string>
++    <string name="playtime_charging_meters_title">Meters to cycle</string>
++    <!-- Toast shown when the meter selection is outside 2-3 entries -->
++    <string name="playtime_charging_meters_hint">Select 2 or 3 meters</string>
++
++    <!-- Non-selectable live read-out row, e.g. "4.8 W &middot; 3.85 V &middot; 5120 mAh &middot; 72 %" -->
++    <string name="playtime_readout_title">Read-out</string>
++    <string name="playtime_readout_format">%1$s · %2$s · %3$s · %4$s</string>
++    <string name="playtime_readout_watts">%1$s W</string>
++    <string name="playtime_readout_volts">%1$s V</string>
++    <string name="playtime_readout_charge">%1$s mAh</string>
++    <string name="playtime_readout_level">%1$s %%</string>
++    <string name="playtime_symbol_bolt">&#8623;</string>
++    <string name="playtime_symbol_plus">+</string>
++    <string name="playtime_symbol_text">CHG</string>
++    <string name="playtime_symbol_emoji">&#9889;</string>
++
++    <!-- List entries: placement -->
++    <string-array name="playtime_placement_entries">
++        <item>Left of battery</item>
++        <item>Right of battery</item>
++        <item>Left of clock</item>
++        <item>Right of clock</item>
++        <item>Replace battery percentage</item>
++    </string-array>
++    <string-array name="playtime_placement_values" translatable="false">
++        <item>BATTERY_LEFT</item>
++        <item>BATTERY_RIGHT</item>
++        <item>CLOCK_LEFT</item>
++        <item>CLOCK_RIGHT</item>
++        <item>REPLACE_PERCENT</item>
++    </string-array>
++    <!-- List entries: detail -->
++    <string-array name="playtime_detail_entries">
++        <item>Time only</item>
++        <item>Time and watts</item>
++        <item>Time, watts and voltage</item>
++        <item>Time and voltage</item>
++        <item>Watts only</item>
++        <item>Voltage only</item>
++        <item>Watts and voltage</item>
++    </string-array>
++    <string-array name="playtime_detail_values" translatable="false">
++        <item>TIME</item>
++        <item>TIME_W</item>
++        <item>TIME_W_V</item>
++        <item>TIME_V</item>
++        <item>W</item>
++        <item>V</item>
++        <item>W_V</item>
++    </string-array>
++    <!-- List entries: time format -->
++    <string-array name="playtime_format_entries">
++        <item>Compact (2h 45m)</item>
++        <item>Short (2h45)</item>
++        <item>Colon (2:45)</item>
++        <item>Detailed (2 hr 45 min)</item>
++    </string-array>
++    <string-array name="playtime_format_values" translatable="false">
++        <item>COMPACT</item>
++        <item>SHORT</item>
++        <item>COLON</item>
++        <item>DETAILED</item>
++    </string-array>
++    <!-- List entries: averaging window -->
++    <string-array name="playtime_window_entries">
++        <item>1 min</item>
++        <item>3 min</item>
++        <item>5 min</item>
++        <item>10 min</item>
++    </string-array>
++    <string-array name="playtime_window_values" translatable="false">
++        <item>1</item>
++        <item>3</item>
++        <item>5</item>
++        <item>10</item>
++    </string-array>
++    <!-- List entries: charging symbol -->
++    <string-array name="playtime_charging_symbol_entries">
++        <item>Bolt (&#8623;)</item>
++        <item>Plus (+)</item>
++        <item>Text (CHG)</item>
++        <item>Emoji (&#9889;)</item>
++    </string-array>
++    <string-array name="playtime_charging_symbol_values" translatable="false">
++        <item>BOLT</item>
++        <item>PLUS</item>
++        <item>TEXT</item>
++        <item>EMOJI</item>
++    </string-array>
++    <!-- Multi-select entries: charging cycle meters -->
++    <string-array name="playtime_charging_meters_entries">
++        <item>Time to full</item>
++        <item>Battery percentage</item>
++        <item>Power (W)</item>
++        <item>Voltage (V)</item>
++    </string-array>
++    <string-array name="playtime_charging_meters_values" translatable="false">
++        <item>TIME</item>
++        <item>PERCENT</item>
++        <item>WATTS</item>
++        <item>VOLTS</item>
++    </string-array>
+ </resources>
+diff --git a/res/xml/playtime_settings.xml b/res/xml/playtime_settings.xml
+new file mode 100644
+index 00000000000..4e7284ac9fb
+--- /dev/null
++++ b/res/xml/playtime_settings.xml
+@@ -0,0 +1,145 @@
++<?xml version="1.0" encoding="utf-8"?>
++<!-- Copyright (C) 2026 The Android Open Source Project
++
++     Licensed under the Apache License, Version 2.0 (the "License");
++     you may not use this file except in compliance with the License.
++     You may obtain a copy of the License at
++
++          http://www.apache.org/licenses/LICENSE-2.0
++
++     Unless required by applicable law or agreed to in writing, software
++     distributed under the License is distributed on an "AS IS" BASIS,
++     WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++     See the License for the specific language governing permissions and
++     limitations under the License.
++-->
++
++<!-- AshFall: PlayTime indicator settings, opened from Settings > Battery
++     (docs/settings-battery.md). Each row is backed by a persist.ashfall.batt.*
++     property, so every preference here is non-persistent on its own. -->
++<PreferenceScreen
++    xmlns:android="http://schemas.android.com/apk/res/android"
++    xmlns:settings="http://schemas.android.com/apk/res-auto"
++    android:key="playtime_settings"
++    android:title="@string/playtime_settings_title">
++
++    <SwitchPreferenceCompat
++        android:key="playtime_show"
++        android:persistent="false"
++        android:summary="@string/playtime_show_summary"
++        android:title="@string/playtime_show_title" />
++
++    <PreferenceCategory
++        android:key="playtime_display_category"
++        android:title="@string/playtime_category_display">
++
++        <ListPreference
++            android:entries="@array/playtime_placement_entries"
++            android:entryValues="@array/playtime_placement_values"
++            android:key="playtime_placement"
++            android:persistent="false"
++            android:summary="%s"
++            android:title="@string/playtime_placement_title" />
++
++        <ListPreference
++            android:entries="@array/playtime_detail_entries"
++            android:entryValues="@array/playtime_detail_values"
++            android:key="playtime_detail"
++            android:persistent="false"
++            android:summary="%s"
++            android:title="@string/playtime_detail_title" />
++
++        <ListPreference
++            android:entries="@array/playtime_format_entries"
++            android:entryValues="@array/playtime_format_values"
++            android:key="playtime_format"
++            android:persistent="false"
++            android:summary="%s"
++            android:title="@string/playtime_format_title" />
++
++        <com.android.settings.widget.SeekBarPreference
++            android:key="playtime_font_size"
++            android:max="16"
++            android:min="10"
++            android:persistent="false"
++            android:title="@string/playtime_font_size_title" />
++
++        <SwitchPreferenceCompat
++            android:key="playtime_tap_cycle"
++            android:persistent="false"
++            android:summary="@string/playtime_tap_cycle_summary"
++            android:title="@string/playtime_tap_cycle_title" />
++    </PreferenceCategory>
++
++    <PreferenceCategory
++        android:key="playtime_estimate_category"
++        android:title="@string/playtime_category_estimate">
++
++        <ListPreference
++            android:entries="@array/playtime_window_entries"
++            android:entryValues="@array/playtime_window_values"
++            android:key="playtime_window"
++            android:persistent="false"
++            android:summary="%s"
++            android:title="@string/playtime_window_title" />
++
++        <com.android.settings.widget.SeekBarPreference
++            android:key="playtime_interval"
++            android:max="30"
++            android:min="2"
++            android:persistent="false"
++            android:title="@string/playtime_interval_title" />
++
++        <com.android.settings.fuelgauge.playtime.PlayTimeCapacityPreference
++            android:dialogTitle="@string/playtime_capacity_title"
++            android:key="playtime_capacity"
++            android:persistent="false"
++            android:title="@string/playtime_capacity_title" />
++    </PreferenceCategory>
++
++    <PreferenceCategory
++        android:key="playtime_charging_category"
++        android:title="@string/playtime_category_charging">
++
++        <ListPreference
++            android:entries="@array/playtime_charging_symbol_entries"
++            android:entryValues="@array/playtime_charging_symbol_values"
++            android:key="playtime_charging_symbol"
++            android:persistent="false"
++            android:summary="%s"
++            android:title="@string/playtime_charging_symbol_title" />
++
++        <SwitchPreferenceCompat
++            android:key="playtime_charging_cycle"
++            android:persistent="false"
++            android:summary="@string/playtime_charging_cycle_summary"
++            android:title="@string/playtime_charging_cycle_title" />
++
++        <com.android.settings.widget.SeekBarPreference
++            android:key="playtime_charging_cycle_ms"
++            android:max="45"
++            android:min="0"
++            android:persistent="false"
++            android:title="@string/playtime_charging_cycle_ms_title" />
++
++        <MultiSelectListPreference
++            android:entries="@array/playtime_charging_meters_entries"
++            android:entryValues="@array/playtime_charging_meters_values"
++            android:key="playtime_charging_meters"
++            android:persistent="false"
++            android:title="@string/playtime_charging_meters_title" />
++    </PreferenceCategory>
++
++    <PreferenceCategory
++        android:key="playtime_readout_category"
++        android:title="@string/playtime_category_readout">
++
++        <!-- Live values from ashfall-hwd; never selectable. -->
++        <Preference
++            android:key="playtime_readout"
++            android:persistent="false"
++            android:selectable="false"
++            android:title="@string/playtime_readout_title"
++            settings:searchable="false" />
++    </PreferenceCategory>
++</PreferenceScreen>
+diff --git a/res/xml/power_usage_summary.xml b/res/xml/power_usage_summary.xml
+index 950ca2de9e9..957a1e87846 100644
+--- a/res/xml/power_usage_summary.xml
++++ b/res/xml/power_usage_summary.xml
+@@ -101,6 +101,17 @@
+             settings:controller="com.android.settings.display.BatteryPercentagePreferenceController" />
+     </com.android.settingslib.widget.UntitledPreferenceCategory>
+ 
++    <com.android.settingslib.widget.UntitledPreferenceCategory
++        android:key="playtime_category">
++        <!-- AshFall: PlayTime indicator settings, docs/settings-battery.md -->
++        <Preference
++            android:fragment="com.android.settings.fuelgauge.playtime.PlayTimeSettings"
++            android:key="playtime_indicator"
++            android:title="@string/playtime_indicator_title"
++            settings:controller="com.android.settings.fuelgauge.playtime.PlayTimeSummaryController"
++            settings:keywords="@string/keywords_playtime" />
++    </com.android.settingslib.widget.UntitledPreferenceCategory>
++
+     <Preference
+         android:key="battery_info"
+         android:title="@string/battery_info"
+diff --git a/src/com/android/settings/fuelgauge/playtime/PlayTimeCapacityPreference.java b/src/com/android/settings/fuelgauge/playtime/PlayTimeCapacityPreference.java
+new file mode 100644
+index 00000000000..6d3ed6a04d3
+--- /dev/null
++++ b/src/com/android/settings/fuelgauge/playtime/PlayTimeCapacityPreference.java
+@@ -0,0 +1,82 @@
++/*
++ * Copyright (C) 2026 The Android Open Source Project
++ *
++ * Licensed under the Apache License, Version 2.0 (the "License");
++ * you may not use this file except in compliance with the License.
++ * You may obtain a copy of the License at
++ *
++ *      http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++
++package com.android.settings.fuelgauge.playtime;
++
++import android.content.Context;
++import android.text.InputType;
++import android.util.AttributeSet;
++import android.view.View;
++import android.widget.EditText;
++
++import androidx.annotation.Nullable;
++
++import com.android.settings.widget.ValidatedEditTextPreference;
++
++/**
++ * Numeric dialog for the PlayTime battery capacity: {@code 0} means auto, anything else is a
++ * manual capacity in mAh. Values outside the accepted range cannot be confirmed.
++ */
++public class PlayTimeCapacityPreference extends ValidatedEditTextPreference {
++
++    public PlayTimeCapacityPreference(Context context, AttributeSet attrs, int defStyleAttr,
++            int defStyleRes) {
++        super(context, attrs, defStyleAttr, defStyleRes);
++        init();
++    }
++
++    public PlayTimeCapacityPreference(Context context, AttributeSet attrs, int defStyleAttr) {
++        super(context, attrs, defStyleAttr);
++        init();
++    }
++
++    public PlayTimeCapacityPreference(Context context, AttributeSet attrs) {
++        super(context, attrs);
++        init();
++    }
++
++    public PlayTimeCapacityPreference(Context context) {
++        super(context);
++        init();
++    }
++
++    private void init() {
++        setValidator(this::isCapacityValid);
++    }
++
++    @Override
++    protected void onBindDialogView(View view) {
++        super.onBindDialogView(view);
++        final EditText editText = view.findViewById(android.R.id.edit);
++        if (editText != null) {
++            editText.setInputType(InputType.TYPE_CLASS_NUMBER);
++        }
++    }
++
++    private boolean isCapacityValid(@Nullable String text) {
++        if (text == null || text.isEmpty()) {
++            return false;
++        }
++        final int capacity;
++        try {
++            capacity = Integer.parseInt(text);
++        } catch (NumberFormatException e) {
++            return false;
++        }
++        return capacity >= PlayTimeProperties.MIN_CAPACITY_MAH
++                && capacity <= PlayTimeProperties.MAX_CAPACITY_MAH;
++    }
++}
+diff --git a/src/com/android/settings/fuelgauge/playtime/PlayTimeProperties.java b/src/com/android/settings/fuelgauge/playtime/PlayTimeProperties.java
+new file mode 100644
+index 00000000000..9330c7aefd2
+--- /dev/null
++++ b/src/com/android/settings/fuelgauge/playtime/PlayTimeProperties.java
+@@ -0,0 +1,433 @@
++/*
++ * Copyright (C) 2026 The Android Open Source Project
++ *
++ * Licensed under the Apache License, Version 2.0 (the "License");
++ * you may not use this file except in compliance with the License.
++ * You may obtain a copy of the License at
++ *
++ *      http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++
++package com.android.settings.fuelgauge.playtime;
++
++import android.content.Context;
++import android.content.Intent;
++import android.content.IntentFilter;
++import android.os.BatteryManager;
++import android.os.SystemProperties;
++import android.text.TextUtils;
++import android.util.Log;
++
++import com.android.internal.os.PowerProfile;
++import com.android.settings.R;
++
++import java.util.ArrayList;
++import java.util.List;
++import java.util.Locale;
++
++/**
++ * Property access and display formatting for the PlayTime indicator ({@code
++ * persist.ashfall.batt.*}).
++ *
++ * <p>Settings stores the user's choice only. SystemUI owns the defaults, the estimator and the
++ * clamping, so an unset or malformed value is shown as the documented default and is never written
++ * back by this page, and a rejected property write is logged instead of failing the page
++ * (docs/settings-battery.md, docs/phase6.md §9.3).
++ *
++ * <p>The live values come from the framework's {@link BatteryManager} - the sticky {@code
++ * ACTION_BATTERY_CHANGED} broadcast plus {@code BATTERY_PROPERTY_CURRENT_NOW} and {@code
++ * BATTERY_PROPERTY_CHARGE_COUNTER} - not from {@code ashfall.status.*}: there is no battery sampler
++ * in {@code ashfall-hwd} (a coredomain cannot read the RP5's vendor-labeled power-supply nodes).
++ */
++public final class PlayTimeProperties {
++
++    private static final String TAG = "PlayTimeProperties";
++
++    /** Properties written by the PlayTime page. */
++    public static final String KEY_SHOW = "persist.ashfall.batt.show";
++
++    public static final String KEY_PLACEMENT = "persist.ashfall.batt.place";
++    public static final String KEY_DETAIL = "persist.ashfall.batt.detail";
++    public static final String KEY_FORMAT = "persist.ashfall.batt.fmt";
++    public static final String KEY_WINDOW = "persist.ashfall.batt.window";
++    public static final String KEY_INTERVAL = "persist.ashfall.batt.interval";
++    public static final String KEY_CHARGING_SYMBOL = "persist.ashfall.batt.chg_symbol";
++    public static final String KEY_CHARGING_CYCLE = "persist.ashfall.batt.chg_cycle";
++    public static final String KEY_CHARGING_CYCLE_MS = "persist.ashfall.batt.chg_cycle_ms";
++    public static final String KEY_CHARGING_METERS = "persist.ashfall.batt.chg_meters";
++    public static final String KEY_TAP_CYCLE = "persist.ashfall.batt.tap";
++    public static final String KEY_FONT_SIZE_SP = "persist.ashfall.batt.size_sp";
++    public static final String KEY_CAPACITY_MAH = "persist.ashfall.batt.capacity_mah";
++
++    /**
++     * Defaults shown when a property is unset or invalid. SystemUI is the owner of these values
++     * (docs/playtime.md); this page only mirrors them for display.
++     */
++    public static final boolean DEFAULT_SHOW = false;
++
++    public static final String DEFAULT_PLACEMENT = "BATTERY_LEFT";
++    public static final String DEFAULT_DETAIL = "TIME";
++    public static final String DEFAULT_FORMAT = "COMPACT";
++    public static final String DEFAULT_WINDOW = "5";
++    public static final int DEFAULT_INTERVAL = 5;
++    public static final String DEFAULT_CHARGING_SYMBOL = "BOLT";
++    public static final boolean DEFAULT_CHARGING_CYCLE = false;
++    public static final int DEFAULT_CHARGING_CYCLE_MS = 1000;
++    public static final String DEFAULT_CHARGING_METERS = "TIME,PERCENT";
++    public static final boolean DEFAULT_TAP_CYCLE = false;
++    public static final int DEFAULT_FONT_SIZE_SP = 12;
++    public static final int DEFAULT_CAPACITY_MAH = 0;
++
++    /** Ranges the rows enforce; a value outside them is treated as unset. */
++    public static final int MIN_INTERVAL = 2;
++
++    public static final int MAX_INTERVAL = 30;
++    public static final int MIN_CHARGING_CYCLE_MS = 500;
++    public static final int MAX_CHARGING_CYCLE_MS = 5000;
++    public static final int STEP_CHARGING_CYCLE_MS = 100;
++    public static final int MIN_FONT_SIZE_SP = 10;
++    public static final int MAX_FONT_SIZE_SP = 16;
++    public static final int MIN_CAPACITY_MAH = 0;
++    public static final int MAX_CAPACITY_MAH = 20000;
++
++    /** The meter list must keep 2 or 3 entries (issue #137). */
++    public static final int MIN_CHARGING_METERS = 2;
++
++    public static final int MAX_CHARGING_METERS = 3;
++
++    /** Telemetry bounds; the same ones SystemUI applies before it shows a number. */
++    private static final int MIN_CURRENT_MA = 1;
++
++    private static final int MAX_CURRENT_MA = 10000;
++    private static final int MIN_VOLTAGE_MV = 2500;
++    private static final int MAX_VOLTAGE_MV = 5500;
++    private static final int MAX_CHARGE_MAH = 100000;
++    private static final int MAX_LEVEL = 100;
++
++    private static int sCapacityMah = -1;
++    private static boolean sCapacityRead;
++
++    private static final long MINUTES_PER_HOUR = 60;
++    private static final long MINUTES_PER_DAY = 24 * MINUTES_PER_HOUR;
++    private static final long MAX_DISPLAYED_MINUTES = 2 * MINUTES_PER_DAY;
++
++    private PlayTimeProperties() {
++    }
++
++    /** Reads an integer inside {@code [min, max]}, or the default when unset or invalid. */
++    public static int getInt(String key, int defaultValue, int min, int max) {
++        final String value = SystemProperties.get(key, "");
++        if (TextUtils.isEmpty(value)) {
++            return defaultValue;
++        }
++        final int parsed;
++        try {
++            parsed = Integer.parseInt(value);
++        } catch (NumberFormatException e) {
++            return defaultValue;
++        }
++        return parsed < min || parsed > max ? defaultValue : parsed;
++    }
++
++    /** Reads a {@code 0}/{@code 1} property, or the default when it is anything else. */
++    public static boolean getBoolean(String key, boolean defaultValue) {
++        final String value = SystemProperties.get(key, "");
++        if ("1".equals(value)) {
++            return true;
++        }
++        if ("0".equals(value)) {
++            return false;
++        }
++        return defaultValue;
++    }
++
++    /** Returns {@code value} when it is one of {@code allowed}, otherwise {@code defaultValue}. */
++    public static String getChoice(String key, CharSequence[] allowed, String defaultValue) {
++        final String value = SystemProperties.get(key, "");
++        for (CharSequence candidate : allowed) {
++            if (candidate.toString().equals(value)) {
++                return value;
++            }
++        }
++        return defaultValue;
++    }
++
++    /**
++     * Reads a comma-separated list of {@code allowed} values, in {@code allowed} order. A list
++     * outside {@link #MIN_CHARGING_METERS}..{@link #MAX_CHARGING_METERS} falls back to {@code
++     * defaultCsv}.
++     */
++    public static List<String> getList(String key, CharSequence[] allowed, String defaultCsv) {
++        List<String> values = filterList(SystemProperties.get(key, ""), allowed);
++        if (values.size() < MIN_CHARGING_METERS || values.size() > MAX_CHARGING_METERS) {
++            values = filterList(defaultCsv, allowed);
++        }
++        return values;
++    }
++
++    /** Joins the selected values in {@code allowed} order, the form SystemUI parses. */
++    public static String toPropertyValue(Iterable<String> selected, CharSequence[] allowed) {
++        final List<String> ordered = new ArrayList<>();
++        for (CharSequence candidate : allowed) {
++            final String value = candidate.toString();
++            for (String item : selected) {
++                if (value.equals(item)) {
++                    ordered.add(value);
++                    break;
++                }
++            }
++        }
++        return TextUtils.join(",", ordered);
++    }
++
++    /** Writes a property; a rejected write is logged, never thrown at the page. */
++    public static void set(String key, String value) {
++        try {
++            SystemProperties.set(key, value);
++        } catch (RuntimeException e) {
++            Log.w(TAG, "Failed to set " + key + " to " + value, e);
++        }
++    }
++
++    public static void setInt(String key, int value) {
++        set(key, Integer.toString(value));
++    }
++
++    public static void setBoolean(String key, boolean value) {
++        set(key, value ? "1" : "0");
++    }
++
++    /** One-line summary for the Settings &gt; Battery row, e.g. {@code 2h 45m · 5.4W}. */
++    public static CharSequence buildSummary(Context context) {
++        if (!getBoolean(KEY_SHOW, DEFAULT_SHOW)) {
++            return context.getString(R.string.playtime_summary_off);
++        }
++        final Telemetry telemetry = readTelemetry(context);
++        final String time = formatRemainingTime(context, telemetry);
++        final String watts = formatWatts(telemetry.currentMa, telemetry.voltageMv);
++        final String value =
++                watts == null
++                        ? time
++                        : context.getString(
++                                R.string.playtime_summary,
++                                time,
++                                context.getString(R.string.playtime_watts, watts));
++        return telemetry.charging
++                ? context.getString(
++                        R.string.playtime_charging_summary, chargingSymbol(context), value)
++                : value;
++    }
++
++    /**
++     * Live read-out for the non-selectable row: {@code 4.8 W · 3.85 V · 5120 mAh · 72 %}. Fields
++     * the framework does not report are shown as {@code -}.
++     */
++    public static CharSequence buildReadout(Context context) {
++        final String unavailable = context.getString(R.string.playtime_unavailable);
++        final Telemetry telemetry = readTelemetry(context);
++        final String watts = formatWatts(telemetry.currentMa, telemetry.voltageMv);
++        return context.getString(
++                R.string.playtime_readout_format,
++                watts == null
++                        ? unavailable
++                        : context.getString(R.string.playtime_readout_watts, watts),
++                telemetry.voltageMv < 0
++                        ? unavailable
++                        : context.getString(
++                                R.string.playtime_readout_volts,
++                                formatVolts(telemetry.voltageMv)),
++                telemetry.capacityMah < 0
++                        ? unavailable
++                        : context.getString(
++                                R.string.playtime_readout_charge, telemetry.capacityMah),
++                telemetry.level < 0
++                        ? unavailable
++                        : context.getString(R.string.playtime_readout_level, telemetry.level));
++    }
++
++    /** One framework battery sample; every field is {@code -1}/false when it is unavailable. */
++    private static final class Telemetry {
++        int currentMa = -1;
++        int voltageMv = -1;
++        int level = -1;
++        int chargeMah = -1;
++        int capacityMah = -1;
++        boolean charging;
++    }
++
++    /**
++     * Reads one sample the way SystemUI does: the sticky {@code ACTION_BATTERY_CHANGED} broadcast
++     * for voltage, level and status, {@code BATTERY_PROPERTY_CURRENT_NOW} (µA, absolute value) for
++     * the draw, {@code BATTERY_PROPERTY_CHARGE_COUNTER} (µAh) for the remaining charge and the
++     * power profile for the design capacity.
++     */
++    private static Telemetry readTelemetry(Context context) {
++        final Telemetry telemetry = new Telemetry();
++        final Intent battery =
++                context.registerReceiver(null, new IntentFilter(Intent.ACTION_BATTERY_CHANGED));
++        if (battery != null) {
++            telemetry.voltageMv =
++                    inRange(
++                            battery.getIntExtra(BatteryManager.EXTRA_VOLTAGE, -1),
++                            MIN_VOLTAGE_MV,
++                            MAX_VOLTAGE_MV);
++            final int rawLevel = battery.getIntExtra(BatteryManager.EXTRA_LEVEL, -1);
++            final int scale = battery.getIntExtra(BatteryManager.EXTRA_SCALE, -1);
++            if (rawLevel >= 0 && scale > 0) {
++                telemetry.level =
++                        Math.min(
++                                MAX_LEVEL,
++                                Math.round((float) rawLevel * MAX_LEVEL / scale));
++            }
++            final int status =
++                    battery.getIntExtra(
++                            BatteryManager.EXTRA_STATUS, BatteryManager.BATTERY_STATUS_UNKNOWN);
++            telemetry.charging =
++                    status == BatteryManager.BATTERY_STATUS_CHARGING
++                            || status == BatteryManager.BATTERY_STATUS_FULL;
++        }
++        final BatteryManager batteryManager =
++                context.getSystemService(BatteryManager.class);
++        if (batteryManager != null) {
++            telemetry.currentMa = readCurrentMa(batteryManager);
++            telemetry.chargeMah = readChargeMah(batteryManager);
++        }
++        telemetry.capacityMah = readCapacityMah(context);
++        return telemetry;
++    }
++
++    /** {@code CURRENT_NOW} is µA and signed; the indicator shows the magnitude in mA. */
++    private static int readCurrentMa(BatteryManager batteryManager) {
++        final int microAmps =
++                batteryManager.getIntProperty(BatteryManager.BATTERY_PROPERTY_CURRENT_NOW);
++        if (microAmps == Integer.MIN_VALUE) {
++            return -1;
++        }
++        return inRange(Math.abs(microAmps) / 1000, MIN_CURRENT_MA, MAX_CURRENT_MA);
++    }
++
++    /** {@code CHARGE_COUNTER} is µAh; negative means the fuel gauge has no counter. */
++    private static int readChargeMah(BatteryManager batteryManager) {
++        final int microAmpHours =
++                batteryManager.getIntProperty(BatteryManager.BATTERY_PROPERTY_CHARGE_COUNTER);
++        if (microAmpHours < 0) {
++            return -1;
++        }
++        return inRange(microAmpHours / 1000, 0, MAX_CHARGE_MAH);
++    }
++
++    /**
++     * Design capacity from the power profile, mAh; {@code -1} when it is not declared. The profile
++     * is a static resource, so it is parsed once per process instead of on every refresh.
++     */
++    private static int readCapacityMah(Context context) {
++        if (!sCapacityRead) {
++            sCapacityRead = true;
++            final double capacityMah = new PowerProfile(context).getBatteryCapacity();
++            sCapacityMah =
++                    capacityMah <= 0 || capacityMah > MAX_CHARGE_MAH
++                            ? -1
++                            : (int) Math.round(capacityMah);
++        }
++        return sCapacityMah;
++    }
++
++    private static int inRange(int value, int min, int max) {
++        return value < min || value > max ? -1 : value;
++    }
++
++    private static String formatRemainingTime(Context context, Telemetry telemetry) {
++        if (telemetry.currentMa <= 0) {
++            return context.getString(R.string.playtime_unavailable);
++        }
++        final long minutes;
++        if (telemetry.charging) {
++            if (telemetry.chargeMah < 0 || telemetry.capacityMah <= 0) {
++                return context.getString(R.string.playtime_unavailable);
++            }
++            if (telemetry.chargeMah >= telemetry.capacityMah) {
++                return context.getString(R.string.playtime_full);
++            }
++            minutes =
++                    (long) (telemetry.capacityMah - telemetry.chargeMah)
++                            * MINUTES_PER_HOUR
++                            / telemetry.currentMa;
++        } else {
++            if (telemetry.chargeMah <= 0) {
++                return context.getString(R.string.playtime_unavailable);
++            }
++            minutes =
++                    (long) telemetry.chargeMah * MINUTES_PER_HOUR / telemetry.currentMa;
++        }
++        return formatMinutes(context, minutes);
++    }
++
++    /** Compact time format, capped like the estimator: past 48h a clock is meaningless. */
++    private static String formatMinutes(Context context, long minutes) {
++        if (minutes <= 0) {
++            return context.getString(R.string.playtime_unavailable);
++        }
++        if (minutes >= MAX_DISPLAYED_MINUTES) {
++            return context.getString(R.string.playtime_time_over);
++        }
++        final long hours = minutes / MINUTES_PER_HOUR;
++        final long rest = minutes % MINUTES_PER_HOUR;
++        if (hours == 0) {
++            return context.getString(R.string.playtime_time_short, rest);
++        }
++        return context.getString(R.string.playtime_time, hours, rest);
++    }
++
++    /** Formats {@code current_ma * voltage_mv} as watts, or {@code null} when unknown. */
++    private static String formatWatts(int currentMa, int voltageMv) {
++        if (currentMa <= 0 || voltageMv <= 0) {
++            return null;
++        }
++        final double watts = (double) currentMa * voltageMv / 1_000_000d;
++        return String.format(Locale.getDefault(), "%.1f", watts);
++    }
++
++    private static String formatVolts(int voltageMv) {
++        return String.format(Locale.getDefault(), "%.2f", voltageMv / 1000d);
++    }
++
++    private static String chargingSymbol(Context context) {
++        final String symbol =
++                getChoice(
++                        KEY_CHARGING_SYMBOL,
++                        new CharSequence[] {"BOLT", "PLUS", "TEXT", "EMOJI"},
++                        DEFAULT_CHARGING_SYMBOL);
++        switch (symbol) {
++            case "PLUS":
++                return context.getString(R.string.playtime_symbol_plus);
++            case "TEXT":
++                return context.getString(R.string.playtime_symbol_text);
++            case "EMOJI":
++                return context.getString(R.string.playtime_symbol_emoji);
++            case "BOLT":
++            default:
++                return context.getString(R.string.playtime_symbol_bolt);
++        }
++    }
++
++    private static List<String> filterList(String csv, CharSequence[] allowed) {
++        final List<String> values = new ArrayList<>();
++        for (String part : csv.split(",")) {
++            final String value = part.trim();
++            for (CharSequence candidate : allowed) {
++                final String candidateValue = candidate.toString();
++                if (candidateValue.equals(value) && !values.contains(candidateValue)) {
++                    values.add(candidateValue);
++                    break;
++                }
++            }
++        }
++        return values;
++    }
++}
+diff --git a/src/com/android/settings/fuelgauge/playtime/PlayTimeSettings.java b/src/com/android/settings/fuelgauge/playtime/PlayTimeSettings.java
+new file mode 100644
+index 00000000000..c03a7976287
+--- /dev/null
++++ b/src/com/android/settings/fuelgauge/playtime/PlayTimeSettings.java
+@@ -0,0 +1,363 @@
++/*
++ * Copyright (C) 2026 The Android Open Source Project
++ *
++ * Licensed under the Apache License, Version 2.0 (the "License");
++ * you may not use this file except in compliance with the License.
++ * You may obtain a copy of the License at
++ *
++ *      http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++
++package com.android.settings.fuelgauge.playtime;
++
++import android.app.settings.SettingsEnums;
++import android.os.Bundle;
++import android.os.Handler;
++import android.os.Looper;
++import android.text.TextUtils;
++import android.widget.Toast;
++
++import androidx.preference.ListPreference;
++import androidx.preference.MultiSelectListPreference;
++import androidx.preference.Preference;
++import androidx.preference.SwitchPreferenceCompat;
++
++import com.android.settings.R;
++import com.android.settings.SettingsPreferenceFragment;
++import com.android.settings.widget.SeekBarPreference;
++
++import java.util.ArrayList;
++import java.util.HashSet;
++import java.util.List;
++import java.util.Locale;
++import java.util.Set;
++
++/**
++ * Settings for the PlayTime indicator that lives in the status bar.
++ *
++ * <p>Every row reads {@code persist.ashfall.batt.*} once when the page opens and writes it back on
++ * change; SystemUI applies the change live and owns the defaults, so an unset or malformed value
++ * only ever falls back to the documented default (docs/settings-battery.md).
++ */
++public class PlayTimeSettings extends SettingsPreferenceFragment
++        implements Preference.OnPreferenceChangeListener {
++
++    public static final String TAG = "PlayTimeSettings";
++
++    /** ashfall-hwd publishes its power telemetry on a 2 s tick (docs/phase6.md §9.3). */
++    private static final int READOUT_REFRESH_MS = 2000;
++
++    private static final String KEY_SHOW = "playtime_show";
++
++    private static final String KEY_PLACEMENT = "playtime_placement";
++    private static final String KEY_DETAIL = "playtime_detail";
++    private static final String KEY_FORMAT = "playtime_format";
++    private static final String KEY_WINDOW = "playtime_window";
++    private static final String KEY_INTERVAL = "playtime_interval";
++    private static final String KEY_CHARGING_SYMBOL = "playtime_charging_symbol";
++    private static final String KEY_CHARGING_CYCLE = "playtime_charging_cycle";
++    private static final String KEY_CHARGING_CYCLE_MS = "playtime_charging_cycle_ms";
++    private static final String KEY_CHARGING_METERS = "playtime_charging_meters";
++    private static final String KEY_TAP_CYCLE = "playtime_tap_cycle";
++    private static final String KEY_FONT_SIZE = "playtime_font_size";
++    private static final String KEY_CAPACITY = "playtime_capacity";
++    private static final String KEY_READOUT = "playtime_readout";
++
++    private final Handler mHandler = new Handler(Looper.getMainLooper());
++
++    private final Runnable mReadoutUpdater =
++            new Runnable() {
++                @Override
++                public void run() {
++                    updateReadout();
++                    mHandler.postDelayed(this, READOUT_REFRESH_MS);
++                }
++            };
++
++    private SwitchPreferenceCompat mShow;
++    private ListPreference mPlacement;
++    private ListPreference mDetail;
++    private ListPreference mFormat;
++    private ListPreference mWindow;
++    private SeekBarPreference mInterval;
++    private ListPreference mChargingSymbol;
++    private SwitchPreferenceCompat mChargingCycle;
++    private SeekBarPreference mChargingCycleMs;
++    private MultiSelectListPreference mChargingMeters;
++    private SwitchPreferenceCompat mTapCycle;
++    private SeekBarPreference mFontSize;
++    private PlayTimeCapacityPreference mCapacity;
++    private Preference mReadout;
++
++    @Override
++    public void onCreatePreferences(Bundle savedInstanceState, String rootKey) {
++        addPreferencesFromResource(R.xml.playtime_settings);
++
++        mShow = findPreference(KEY_SHOW);
++        mPlacement = findPreference(KEY_PLACEMENT);
++        mDetail = findPreference(KEY_DETAIL);
++        mFormat = findPreference(KEY_FORMAT);
++        mWindow = findPreference(KEY_WINDOW);
++        mInterval = findPreference(KEY_INTERVAL);
++        mChargingSymbol = findPreference(KEY_CHARGING_SYMBOL);
++        mChargingCycle = findPreference(KEY_CHARGING_CYCLE);
++        mChargingCycleMs = findPreference(KEY_CHARGING_CYCLE_MS);
++        mChargingMeters = findPreference(KEY_CHARGING_METERS);
++        mTapCycle = findPreference(KEY_TAP_CYCLE);
++        mFontSize = findPreference(KEY_FONT_SIZE);
++        mCapacity = findPreference(KEY_CAPACITY);
++        mReadout = findPreference(KEY_READOUT);
++
++        for (Preference preference :
++                new Preference[] {
++                    mShow,
++                    mPlacement,
++                    mDetail,
++                    mFormat,
++                    mWindow,
++                    mInterval,
++                    mChargingSymbol,
++                    mChargingCycle,
++                    mChargingCycleMs,
++                    mChargingMeters,
++                    mTapCycle,
++                    mFontSize,
++                    mCapacity
++                }) {
++            preference.setOnPreferenceChangeListener(this);
++        }
++
++        bindValues();
++    }
++
++    @Override
++    public void onResume() {
++        super.onResume();
++        mHandler.post(mReadoutUpdater);
++    }
++
++    @Override
++    public void onPause() {
++        super.onPause();
++        mHandler.removeCallbacks(mReadoutUpdater);
++    }
++
++    @Override
++    public int getMetricsCategory() {
++        return SettingsEnums.FUELGAUGE_POWER_USAGE_SUMMARY_V2;
++    }
++
++    @Override
++    public boolean onPreferenceChange(Preference preference, Object newValue) {
++        final String key = preference.getKey();
++        if (KEY_SHOW.equals(key)) {
++            PlayTimeProperties.setBoolean(PlayTimeProperties.KEY_SHOW, (Boolean) newValue);
++        } else if (KEY_PLACEMENT.equals(key)) {
++            PlayTimeProperties.set(PlayTimeProperties.KEY_PLACEMENT, (String) newValue);
++        } else if (KEY_DETAIL.equals(key)) {
++            PlayTimeProperties.set(PlayTimeProperties.KEY_DETAIL, (String) newValue);
++        } else if (KEY_FORMAT.equals(key)) {
++            PlayTimeProperties.set(PlayTimeProperties.KEY_FORMAT, (String) newValue);
++        } else if (KEY_WINDOW.equals(key)) {
++            PlayTimeProperties.set(PlayTimeProperties.KEY_WINDOW, (String) newValue);
++        } else if (KEY_INTERVAL.equals(key)) {
++            final int seconds = (Integer) newValue;
++            PlayTimeProperties.setInt(PlayTimeProperties.KEY_INTERVAL, seconds);
++            updateIntervalSummary(seconds);
++        } else if (KEY_CHARGING_SYMBOL.equals(key)) {
++            PlayTimeProperties.set(PlayTimeProperties.KEY_CHARGING_SYMBOL, (String) newValue);
++        } else if (KEY_CHARGING_CYCLE.equals(key)) {
++            PlayTimeProperties.setBoolean(
++                    PlayTimeProperties.KEY_CHARGING_CYCLE, (Boolean) newValue);
++        } else if (KEY_CHARGING_CYCLE_MS.equals(key)) {
++            final int cycleMs = toChargingCycleMs((Integer) newValue);
++            PlayTimeProperties.setInt(PlayTimeProperties.KEY_CHARGING_CYCLE_MS, cycleMs);
++            updateChargingCycleSummary(cycleMs);
++        } else if (KEY_CHARGING_METERS.equals(key)) {
++            final Set<String> meters = toStringSet(newValue);
++            if (meters.size() < PlayTimeProperties.MIN_CHARGING_METERS
++                    || meters.size() > PlayTimeProperties.MAX_CHARGING_METERS) {
++                Toast.makeText(getContext(), R.string.playtime_charging_meters_hint,
++                        Toast.LENGTH_SHORT).show();
++                return false;
++            }
++            PlayTimeProperties.set(
++                    PlayTimeProperties.KEY_CHARGING_METERS,
++                    PlayTimeProperties.toPropertyValue(meters, mChargingMeters.getEntryValues()));
++            updateChargingMetersSummary(meters);
++        } else if (KEY_TAP_CYCLE.equals(key)) {
++            PlayTimeProperties.setBoolean(PlayTimeProperties.KEY_TAP_CYCLE, (Boolean) newValue);
++        } else if (KEY_FONT_SIZE.equals(key)) {
++            final int sizeSp = (Integer) newValue;
++            PlayTimeProperties.setInt(PlayTimeProperties.KEY_FONT_SIZE_SP, sizeSp);
++            updateFontSizeSummary(sizeSp);
++        } else if (KEY_CAPACITY.equals(key)) {
++            final int capacityMah = parseCapacity((String) newValue);
++            PlayTimeProperties.setInt(PlayTimeProperties.KEY_CAPACITY_MAH, capacityMah);
++            updateCapacitySummary(capacityMah);
++        } else {
++            return false;
++        }
++        return true;
++    }
++
++    private void bindValues() {
++        mShow.setChecked(
++                PlayTimeProperties.getBoolean(
++                        PlayTimeProperties.KEY_SHOW, PlayTimeProperties.DEFAULT_SHOW));
++
++        bindList(
++                mPlacement,
++                PlayTimeProperties.KEY_PLACEMENT,
++                PlayTimeProperties.DEFAULT_PLACEMENT);
++        bindList(mDetail, PlayTimeProperties.KEY_DETAIL, PlayTimeProperties.DEFAULT_DETAIL);
++        bindList(mFormat, PlayTimeProperties.KEY_FORMAT, PlayTimeProperties.DEFAULT_FORMAT);
++        bindList(mWindow, PlayTimeProperties.KEY_WINDOW, PlayTimeProperties.DEFAULT_WINDOW);
++        bindList(
++                mChargingSymbol,
++                PlayTimeProperties.KEY_CHARGING_SYMBOL,
++                PlayTimeProperties.DEFAULT_CHARGING_SYMBOL);
++
++        final int interval =
++                PlayTimeProperties.getInt(
++                        PlayTimeProperties.KEY_INTERVAL,
++                        PlayTimeProperties.DEFAULT_INTERVAL,
++                        PlayTimeProperties.MIN_INTERVAL,
++                        PlayTimeProperties.MAX_INTERVAL);
++        mInterval.setProgress(interval);
++        updateIntervalSummary(interval);
++
++        mChargingCycle.setChecked(
++                PlayTimeProperties.getBoolean(
++                        PlayTimeProperties.KEY_CHARGING_CYCLE,
++                        PlayTimeProperties.DEFAULT_CHARGING_CYCLE));
++
++        final int cycleMs =
++                PlayTimeProperties.getInt(
++                        PlayTimeProperties.KEY_CHARGING_CYCLE_MS,
++                        PlayTimeProperties.DEFAULT_CHARGING_CYCLE_MS,
++                        PlayTimeProperties.MIN_CHARGING_CYCLE_MS,
++                        PlayTimeProperties.MAX_CHARGING_CYCLE_MS);
++        mChargingCycleMs.setProgress(toChargingCycleStep(cycleMs));
++        updateChargingCycleSummary(cycleMs);
++
++        final Set<String> meters =
++                new HashSet<>(
++                        PlayTimeProperties.getList(
++                                PlayTimeProperties.KEY_CHARGING_METERS,
++                                mChargingMeters.getEntryValues(),
++                                PlayTimeProperties.DEFAULT_CHARGING_METERS));
++        mChargingMeters.setValues(meters);
++        updateChargingMetersSummary(meters);
++
++        mTapCycle.setChecked(
++                PlayTimeProperties.getBoolean(
++                        PlayTimeProperties.KEY_TAP_CYCLE, PlayTimeProperties.DEFAULT_TAP_CYCLE));
++
++        final int sizeSp =
++                PlayTimeProperties.getInt(
++                        PlayTimeProperties.KEY_FONT_SIZE_SP,
++                        PlayTimeProperties.DEFAULT_FONT_SIZE_SP,
++                        PlayTimeProperties.MIN_FONT_SIZE_SP,
++                        PlayTimeProperties.MAX_FONT_SIZE_SP);
++        mFontSize.setProgress(sizeSp);
++        updateFontSizeSummary(sizeSp);
++
++        final int capacityMah =
++                PlayTimeProperties.getInt(
++                        PlayTimeProperties.KEY_CAPACITY_MAH,
++                        PlayTimeProperties.DEFAULT_CAPACITY_MAH,
++                        PlayTimeProperties.MIN_CAPACITY_MAH,
++                        PlayTimeProperties.MAX_CAPACITY_MAH);
++        mCapacity.setText(Integer.toString(capacityMah));
++        updateCapacitySummary(capacityMah);
++    }
++
++    private static void bindList(ListPreference preference, String property, String defaultValue) {
++        preference.setValue(
++                PlayTimeProperties.getChoice(
++                        property, preference.getEntryValues(), defaultValue));
++    }
++
++    private void updateReadout() {
++        if (mReadout == null) {
++            return;
++        }
++        mReadout.setSummary(PlayTimeProperties.buildReadout(getContext()));
++    }
++
++    private void updateIntervalSummary(int seconds) {
++        mInterval.setSummary(getString(R.string.playtime_seconds, seconds));
++    }
++
++    private void updateChargingCycleSummary(int cycleMs) {
++        final String seconds = String.format(Locale.getDefault(), "%.1f", cycleMs / 1000f);
++        mChargingCycleMs.setSummary(
++                getString(R.string.playtime_seconds_tenths, seconds));
++    }
++
++    private void updateChargingMetersSummary(Set<String> meters) {
++        final List<String> labels = new ArrayList<>();
++        final CharSequence[] values = mChargingMeters.getEntryValues();
++        final CharSequence[] entries = mChargingMeters.getEntries();
++        for (int i = 0; i < values.length; i++) {
++            if (meters.contains(values[i].toString())) {
++                labels.add(entries[i].toString());
++            }
++        }
++        mChargingMeters.setSummary(TextUtils.join(", ", labels));
++    }
++
++    private void updateFontSizeSummary(int sizeSp) {
++        mFontSize.setSummary(getString(R.string.playtime_font_size_summary, sizeSp));
++    }
++
++    private void updateCapacitySummary(int capacityMah) {
++        mCapacity.setSummary(
++                capacityMah == 0
++                        ? getString(R.string.playtime_capacity_summary_auto)
++                        : getString(R.string.playtime_capacity_summary, capacityMah));
++    }
++
++    private static int toChargingCycleStep(int cycleMs) {
++        final int stepMs = cycleMs - PlayTimeProperties.MIN_CHARGING_CYCLE_MS;
++        return Math.round((float) stepMs / PlayTimeProperties.STEP_CHARGING_CYCLE_MS);
++    }
++
++    private static int toChargingCycleMs(int step) {
++        return PlayTimeProperties.MIN_CHARGING_CYCLE_MS
++                + step * PlayTimeProperties.STEP_CHARGING_CYCLE_MS;
++    }
++
++    private static int parseCapacity(String text) {
++        if (TextUtils.isEmpty(text)) {
++            return PlayTimeProperties.DEFAULT_CAPACITY_MAH;
++        }
++        try {
++            final int capacityMah = Integer.parseInt(text.trim());
++            if (capacityMah >= PlayTimeProperties.MIN_CAPACITY_MAH
++                    && capacityMah <= PlayTimeProperties.MAX_CAPACITY_MAH) {
++                return capacityMah;
++            }
++        } catch (NumberFormatException e) {
++            // Fall through to auto: the dialog validator already rejects unparsable input.
++        }
++        return PlayTimeProperties.DEFAULT_CAPACITY_MAH;
++    }
++
++    private static Set<String> toStringSet(Object value) {
++        final Set<String> result = new HashSet<>();
++        if (value instanceof Set) {
++            for (Object item : (Set<?>) value) {
++                result.add(String.valueOf(item));
++            }
++        }
++        return result;
++    }
++}
+diff --git a/src/com/android/settings/fuelgauge/playtime/PlayTimeSummaryController.java b/src/com/android/settings/fuelgauge/playtime/PlayTimeSummaryController.java
+new file mode 100644
+index 00000000000..6b5ea272f79
+--- /dev/null
++++ b/src/com/android/settings/fuelgauge/playtime/PlayTimeSummaryController.java
+@@ -0,0 +1,95 @@
++/*
++ * Copyright (C) 2026 The Android Open Source Project
++ *
++ * Licensed under the Apache License, Version 2.0 (the "License");
++ * you may not use this file except in compliance with the License.
++ * You may obtain a copy of the License at
++ *
++ *      http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++
++package com.android.settings.fuelgauge.playtime;
++
++import android.content.Context;
++import android.os.Handler;
++import android.os.Looper;
++
++import androidx.preference.Preference;
++import androidx.preference.PreferenceScreen;
++
++import com.android.settings.core.BasePreferenceController;
++import com.android.settingslib.core.lifecycle.LifecycleObserver;
++import com.android.settingslib.core.lifecycle.events.OnStart;
++import com.android.settingslib.core.lifecycle.events.OnStop;
++
++/**
++ * Summary of the PlayTime indicator row on Settings &gt; Battery: the live estimate from the
++ * framework {@link android.os.BatteryManager}, or "Off". The row itself opens {@link
++ * PlayTimeSettings}.
++ *
++ * <p>The estimate is refreshed on the ashfall-hwd tick while the page is started so the summary
++ * keeps ticking next to the status bar, and the timer is removed as soon as it is not.
++ */
++public class PlayTimeSummaryController extends BasePreferenceController
++        implements LifecycleObserver, OnStart, OnStop {
++
++    /** The estimate moves with the battery state; 2 s is the SystemUI sample interval. */
++    private static final int REFRESH_MS = 2000;
++
++    private final Handler mHandler = new Handler(Looper.getMainLooper());
++
++    private final Runnable mUpdater =
++            new Runnable() {
++                @Override
++                public void run() {
++                    updateSummary();
++                    mHandler.postDelayed(this, REFRESH_MS);
++                }
++            };
++
++    private Preference mPreference;
++
++    public PlayTimeSummaryController(Context context, String preferenceKey) {
++        super(context, preferenceKey);
++    }
++
++    @Override
++    public int getAvailabilityStatus() {
++        return AVAILABLE;
++    }
++
++    @Override
++    public void displayPreference(PreferenceScreen screen) {
++        super.displayPreference(screen);
++        mPreference = screen.findPreference(getPreferenceKey());
++    }
++
++    @Override
++    public void updateState(Preference preference) {
++        super.updateState(preference);
++        mPreference = preference;
++        updateSummary();
++    }
++
++    @Override
++    public void onStart() {
++        mHandler.post(mUpdater);
++    }
++
++    @Override
++    public void onStop() {
++        mHandler.removeCallbacks(mUpdater);
++    }
++
++    private void updateSummary() {
++        if (mPreference != null) {
++            mPreference.setSummary(PlayTimeProperties.buildSummary(mContext));
++        }
++    }
++}
+-- 
+2.53.0
+
