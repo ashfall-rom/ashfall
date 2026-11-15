@@ -102,12 +102,14 @@ immediately to the properties from §2 of the contract; there is no Apply button
 
 | Page | Activity | Content |
 |---|---|---|
-| AshFall settings | `HandheldActivity` | Fan / Lighting / Controller rows with live summaries, daemon note |
+| AshFall settings | `HandheldActivity` | Fan / Lighting / Controller / Power / Memory rows with live summaries, daemon note |
 | Fan | `FanActivity` | main switch, live graph, presets, curve, manual %, fan speed limits, kick, screen-off, throttling override, GPU max frequency |
 | Fan presets | `PresetActivity` | create / rename / duplicate / delete / change mode |
 | Curve | `CurveActivity` | drag-and-D-pad curve editor, live marker, live preview, stress test |
 | Lighting | `LightingActivity` | switch, target, live colour picker, brightness, effect, speed |
-| Controller | `ControllerActivity` | tester, calibration wizard, factory reset, deadzones |
+| Controller | `ControllerActivity` | tester, calibration wizard, factory reset, deadzones, fusion |
+| Power | `PowerActivity` | presets, CPU caps, governor, GPU cap, throttle override, live graph ([parts-power.md](parts-power.md)) |
+| Memory | `MemoryActivity` | zram and swapfile ([parts-memory.md](parts-memory.md)) |
 | Tester | `TesterActivity` | drawn handheld, live buttons/sticks/triggers, raw stream |
 | Calibration | `CalibrationActivity` | four-step wizard, review, `SET CAL` |
 
@@ -350,6 +352,8 @@ The UI target selector maps onto the daemon's `led.sync`:
 |---|---|---|---|
 | Fan (`qs.FanTileService`) | active preset name | temperature | inactive only for Off |
 | Lighting (`qs.LightingTileService`) | “Lighting” | effect name / “Off” | inactive when `led.mode=off` |
+| Power (`qs.PowerTileService`) | active power preset | CPU/GPU summary | inactive when no preset is active |
+| Fusion (`qs.FusionTileService`) | “Fusion” | pad count / “Off” | active when fusion is on |
 
 * Tap opens the dialog with `TileService.showDialog(dialog)` (window type
   `TYPE_QS_DIALOG`, so it behaves like the Internet/Bluetooth dialogs).  If the
@@ -387,7 +391,8 @@ The UI target selector maps onto the daemon's `led.sync`:
   `android.service.quicksettings.action.QS_TILE_PREFERENCES` inside the tile's
   package and passes the tile component in `EXTRA_COMPONENT_NAME`.
   `qs/TilePreferencesActivity` (a no-UI trampoline) opens the Fan page for the
-  Fan tile and the Lighting page for the Lighting tile.
+  Fan tile, the Lighting page for the Lighting tile, the Power page for the
+  Power tile and the Controller page for the Fusion tile.
 * Dice note: dialogs are built from the tile **service** context.  The service
   declares `android:theme="@style/Theme.AshFall.QsDialog"`; the dialog theme
   uses a literal accent (a self-referential `?android:attr/colorAccent` makes

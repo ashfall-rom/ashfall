@@ -23,8 +23,10 @@ import android.os.Bundle;
 
 import androidx.annotation.Nullable;
 
+import org.ashfall.parts.ControllerActivity;
 import org.ashfall.parts.FanActivity;
 import org.ashfall.parts.LightingActivity;
+import org.ashfall.parts.PowerActivity;
 
 /**
  * Long-press target of both tiles.
@@ -45,6 +47,12 @@ public class TilePreferencesActivity extends Activity {
         if (tile != null && tile.getClassName() != null
                 && tile.getClassName().contains("Lighting")) {
             target = LightingActivity.class;
+        } else if (tile != null && tile.getClassName() != null
+                && tile.getClassName().contains("Fusion")) {
+            target = ControllerActivity.class;
+        } else if (tile != null && tile.getClassName() != null
+                && tile.getClassName().contains("Power")) {
+            target = PowerActivity.class;
         } else {
             target = FanActivity.class;
         }

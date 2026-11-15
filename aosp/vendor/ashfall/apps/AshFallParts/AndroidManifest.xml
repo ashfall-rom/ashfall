@@ -115,6 +115,20 @@
             android:theme="@style/Theme.AshFall.Settings" />
 
         <activity
+            android:name=".PowerActivity"
+            android:configChanges="orientation|screenSize|screenLayout|keyboardHidden"
+            android:exported="true"
+            android:label="@string/power_title"
+            android:theme="@style/Theme.AshFall.Settings" />
+
+        <activity
+            android:name=".MemoryActivity"
+            android:configChanges="orientation|screenSize|screenLayout|keyboardHidden"
+            android:exported="true"
+            android:label="@string/memory_title"
+            android:theme="@style/Theme.AshFall.Settings" />
+
+        <activity
             android:name=".TesterActivity"
             android:configChanges="orientation|screenSize|screenLayout|keyboardHidden"
             android:exported="false"
@@ -161,6 +175,32 @@
             android:exported="true"
             android:icon="@drawable/ic_ashfall_lighting"
             android:label="@string/tile_lighting"
+            android:permission="android.permission.BIND_QUICK_SETTINGS_TILE"
+            android:theme="@style/Theme.AshFall.QsDialog">
+            <intent-filter>
+                <action android:name="android.service.quicksettings.action.QS_TILE" />
+            </intent-filter>
+        </service>
+
+        <!-- Power Quick Settings tile (#124): tap opens the preset dialog. -->
+        <service
+            android:name=".qs.PowerTileService"
+            android:exported="true"
+            android:icon="@drawable/ic_ashfall_power"
+            android:label="@string/tile_power"
+            android:permission="android.permission.BIND_QUICK_SETTINGS_TILE"
+            android:theme="@style/Theme.AshFall.QsDialog">
+            <intent-filter>
+                <action android:name="android.service.quicksettings.action.QS_TILE" />
+            </intent-filter>
+        </service>
+
+        <!-- Fusion Quick Settings tile (#138): tap opens the fusion dialog. -->
+        <service
+            android:name=".qs.FusionTileService"
+            android:exported="true"
+            android:icon="@drawable/ic_gamepad"
+            android:label="@string/tile_fusion"
             android:permission="android.permission.BIND_QUICK_SETTINGS_TILE"
             android:theme="@style/Theme.AshFall.QsDialog">
             <intent-filter>
