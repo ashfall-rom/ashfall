@@ -4,7 +4,9 @@ Phase-6 feature **#124** (contract `docs/phase6.md` §9), including the fan-grap
 fix **#132**.  This page documents the Power page, its graph, its presets, the
 properties it writes and reads, and the states it shows when `ashfall-hwd` is
 missing.  The other pages are described in `docs/parts.md`; the daemon side
-(cpufreq, SELinux, `power_mw`) lives in `docs/rp5/hw.md`.
+(cpufreq, SELinux) lives in `docs/rp5/hw.md`.  The battery power of the graph is
+sampled by the app itself with the framework `BatteryManager`, not by the
+daemon.
 
 The page is one `PreferenceFragmentCompat` (`PowerFragment`) in the existing
 page shell (`PowerActivity` extends `PartsActivity`), so it has the same
@@ -69,8 +71,9 @@ The Fan page keeps its default chart, its 120 × 500 ms window and its API
 
 | | Power page |
 |---|---|
-| Window | 30 samples, one per 2 s daemon tick = 60 s |
+| Window | 30 samples, one per 2 s page tick = 60 s |
 | Left axis | battery power 0..12 W, grid and labels at 0/6/12 W |
+| Power source | `BatteryManager` (framework): sticky `ACTION_BATTERY_CHANGED` for `EXTRA_VOLTAGE` + `BATTERY_PROPERTY_CURRENT_NOW`; CPU/GPU clocks still from `ashfall.status.perf.*` |
 | Right axis | CPU and GPU as percent of the maximum available clock, labels at 0/50/100 % |
 | CPU reference | 2841 MHz (prime stock clock, `docs/phase6.md` §9.3) |
 | GPU reference | 1000 MHz (top of the phase-6 table; the app cannot read `gpu_available_frequencies` because it is sysfs) |
@@ -82,9 +85,21 @@ The Fan page keeps its default chart, its 120 × 500 ms window and its API
   `updateStatus()` from `onCreatePreferences`, `onResume`, `onSwitchChanged` or
   `activate()`, so a fresh page contributes one sample per 500 ms tick and a
   preset tap no longer inserts an extra sample into the current window.
+* The power series is sampled with the framework, not from a daemon property
+  (`ashfall.status.perf.power_mw` is no longer read): the daemon sampler was
+  dropped because a coredomain may not read `sysfs_batteryinfo`, so the page
+  derives the same number itself,
+  `power_mw = abs(current_ua) * voltage_mv / 1e6`, from
+  `BatteryManager.getIntProperty(BATTERY_PROPERTY_CURRENT_NOW)` (microamperes)
+  and `EXTRA_VOLTAGE` (millivolts).  The receiver is registered once per visible
+  page (`onResume`/`onPause` in `hw/PowerBattery`), so a tick costs one current
+  read and nothing at all while charging; consumers without a page lifecycle
+  (Handheld summary, QS dialog) do a single sticky read per their own tick.
 * `-1`/missing is a **gap**, never a drawn zero.  Power is `-1` while charging
-  (a battery-side number is meaningless then); the legend shows `— W` and the
-  note "charging — power not measured" appears under the plot.
+  (a battery-side number is meaningless then) and while the current or voltage
+  cannot be read; only the charging case shows the note
+  "charging — power not measured" under the plot, an unreadable current stays a
+  silent gap.
 * The row is neither focusable nor selectable and blocks focus in its children,
   so the D-pad skips it in both directions.  Axis labels use the theme's
   secondary text colour and the grid is that colour at 12 % alpha, so day,
@@ -147,7 +162,7 @@ Three built-ins, exactly as #124 (no Max preset, no TDP):
 | `persist.ashfall.perf.throttle_override` | `ashfall_perf_prop` | app → daemon | `1` = software clock throttling off until reboot |
 | `persist.ashfall.perf.throttle_override_permanent` | `ashfall_prop` | app → daemon | re-apply the override at every boot |
 | `persist.ashfall.power.preset` | `ashfall_prop` | app only | active preset id |
-| `ashfall.status.perf.power_mw` | `ashfall_status_prop` | daemon → app | battery power in mW, `-1` while charging/unknown |
+| `ashfall.status.perf.power_mw` | `ashfall_status_prop` | not read by the app | kept in the daemon contract; the page samples `BatteryManager` instead (`power_mw = abs(current_ua) * voltage_mv / 1e6`) |
 | `ashfall.status.perf.cpu_mhz_silver/gold/prime` | `ashfall_status_prop` | daemon → app | effective `scaling_cur_freq`, `-1` unavailable |
 | `ashfall.status.perf.gpu_mhz` | `ashfall_status_prop` | daemon → app | effective kgsl clock, `-1` unavailable |
 | `ashfall.status.perf.gpu_max_mhz` / `.gpu_oc` | `ashfall_status_prop` | daemon → app | applied GPU cap / 0 stock, 1 OC, -1 no sysfs |
@@ -183,8 +198,10 @@ stored as the stock 670 MHz (the same sanitising `hw/Perf` already does).
 
 | Situation | What the page shows |
 |---|---|
-| No `ashfall-hwd` (all status values `-1`) | the graph row reads "The power daemon is not responding."; the legend and the plot are hidden |
-| Power unknown / charging (`power_mw = -1`) | `— W` in the legend, a gap in the orange line, note "charging — power not measured" |
+| No `ashfall-hwd` (clock status values `-1`) | the graph row says the CPU/GPU clocks are unavailable; the orange power line still draws from `BatteryManager` |
+| Neither clocks nor a battery reading | the graph row reads "The power daemon is not responding."; the legend and the plot are hidden |
+| Charging | `— W` in the legend, a gap in the orange line, note "charging — power not measured" |
+| Battery current/voltage unreadable | `— W` and a gap, no charging note (an unknown sample, not a measured zero) |
 | One cluster clock unknown | `—` in the clock legend for that cluster; the CPU percent series uses the fastest cluster that is known |
 | GPU clock unknown | `—` for the GPU legend and a gap in the green line |
 | GPU cap not published | `Requested N MHz — the GPU cap is not available (ashfall-hwd is not reporting).` |
@@ -193,8 +210,9 @@ stored as the stock 670 MHz (the same sanitising `hw/Perf` already does).
 | Handheld summary, no daemon | `Balanced · live stats unavailable` |
 
 Nothing is faked: a control still writes its property when the daemon is
-absent (so the value is applied at the next daemon start), but the read-outs
-stay in the unavailable state until the daemon publishes.
+absent (so the value is applied at the next daemon start), but the clock
+read-outs stay in the unavailable state until the daemon publishes.  The power
+series is independent of the daemon, so it is live even then.
 
 ## 7. Emulator mock
 
@@ -205,7 +223,8 @@ build), toggled with `tools/mock/power-perf.sh on|off|status`.  It applies the
 caps/governor/GPU request immediately, clamps the GPU like the daemon, clamps
 it to stock while the override is active, and publishes a synthetic 60 s status
 cycle (1.2–8 W with a charging window in which power is `-1`, clocks under the
-active caps).
+active caps).  The flag replaces the `BatteryManager` sample as well, so the
+page and the graph can be exercised without touching the emulated battery.
 
 ## 8. Verification record
 
@@ -224,6 +243,15 @@ installed, mock daemon (`tools/mock/power-perf.sh on`), 2026-11-15.
   the #124 table (`Low power 1171 / 1478 / 1632 MHz · conservative · GPU 305 MHz`,
   `Balanced Stock clocks · schedutil · GPU 670 MHz`,
   `Performance 1804 / 2419 / 2841 MHz · schedutil · GPU 850 MHz`).
+* **Battery power source (no mock).** The AVD exposes a battery current, so
+  with `dumpsys battery unplug` + `set status 3` the sysfs reading was
+  `current_now=900000` uA and `voltage_now=5000000` uV (5000 mV) and the legend
+  showed `4.5 W` = 900000 x 5000 / 1e6.  `set status 2` switched the legend to
+  `— W` with the "charging — power not measured" note and the orange line ended
+  at the gap; with the daemon absent the clock note appeared while the power
+  line still drew.  The emulator's `dumpsys battery` cannot inject voltage or
+  current, so this is the AVD's own battery model; the formula is the same
+  three-line expression the daemon used.
 * **Properties (real, no mock).** With `adb root` + `setenforce 0` and the mock
   off, tapping Low power wrote
   `cpu_max_silver=1171`, `cpu_max_gold=1478`, `cpu_max_prime=1632`,

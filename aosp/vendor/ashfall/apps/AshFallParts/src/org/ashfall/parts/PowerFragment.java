@@ -39,6 +39,7 @@ import androidx.recyclerview.widget.LinearLayoutManager;
 import androidx.recyclerview.widget.RecyclerView;
 
 import org.ashfall.parts.hw.Power;
+import org.ashfall.parts.hw.PowerBattery;
 import org.ashfall.parts.hw.PowerPreset;
 import org.ashfall.parts.hw.PowerPresetStore;
 import org.ashfall.parts.ui.FanGraphView;
@@ -280,6 +281,9 @@ public class PowerFragment extends PreferenceFragmentCompat {
     @Override
     public void onResume() {
         super.onResume();
+        // One sticky battery receiver for the whole visible page: the tick then
+        // costs one current read instead of a broadcast per sample.
+        PowerBattery.start(requireContext());
         if (mFirstResume) {
             mFirstResume = false;
         } else if (getListView() != null) {
@@ -299,6 +303,7 @@ public class PowerFragment extends PreferenceFragmentCompat {
     public void onPause() {
         super.onPause();
         mHandler.removeCallbacks(mTick);
+        PowerBattery.stop(requireContext());
     }
 
     @Override
@@ -664,7 +669,8 @@ public class PowerFragment extends PreferenceFragmentCompat {
         if (mStatus == null) {
             return;
         }
-        mStatus.update(Power.powerMw(), Power.cpuMhzSilver(), Power.cpuMhzGold(),
+        mStatus.update(Power.powerMw(requireContext()), Power.powerAvailable(requireContext()),
+                Power.powerCharging(requireContext()), Power.cpuMhzSilver(), Power.cpuMhzGold(),
                 Power.cpuMhzPrime(), Power.gpuMhz());
     }
 
@@ -959,11 +965,15 @@ public class PowerFragment extends PreferenceFragmentCompat {
                 new FanGraphView.Window(3, FanGraphView.POWER_SAMPLES);
 
         private int mPowerMw = -1;
+        private boolean mCharging;
         private int mSilverMhz = -1;
         private int mGoldMhz = -1;
         private int mPrimeMhz = -1;
         private int mGpuMhz = -1;
+        /** The row has something to draw (battery, clocks or both). */
         private boolean mAvailable;
+        /** The clocks are missing: the daemon note is shown above the plot. */
+        private boolean mClocksUnavailable;
 
         private WeakReference<FanGraphView> mGraph = new WeakReference<>(null);
         private WeakReference<View> mBody = new WeakReference<>(null);
@@ -987,14 +997,19 @@ public class PowerFragment extends PreferenceFragmentCompat {
          * "unknown" ({@code -1}, which includes power while charging) and
          * become gaps in the plot.
          */
-        void update(int powerMw, int silverMhz, int goldMhz, int primeMhz, int gpuMhz) {
+        void update(int powerMw, boolean powerKnown, boolean charging, int silverMhz,
+                int goldMhz, int primeMhz, int gpuMhz) {
             mPowerMw = powerMw;
+            mCharging = charging;
             mSilverMhz = silverMhz;
             mGoldMhz = goldMhz;
             mPrimeMhz = primeMhz;
             mGpuMhz = gpuMhz;
-            mAvailable = powerMw >= 0 || silverMhz >= 0 || goldMhz >= 0 || primeMhz >= 0
-                    || gpuMhz >= 0;
+            final boolean clocks = silverMhz >= 0 || goldMhz >= 0 || primeMhz >= 0 || gpuMhz >= 0;
+            mClocksUnavailable = !clocks;
+            // The battery series does not need the daemon, so a page with no
+            // clocks still draws power and says only the clocks are missing.
+            mAvailable = powerKnown || clocks;
             final int cpuMhz = Math.max(silverMhz, Math.max(goldMhz, primeMhz));
             mWindow.append(
                     powerMw < 0 ? Float.NaN : powerMw / 1000f,
@@ -1058,13 +1073,13 @@ public class PowerFragment extends PreferenceFragmentCompat {
             }
             final View unavailable = mUnavailable.get();
             if (unavailable != null) {
-                unavailable.setVisibility(mAvailable ? View.GONE : View.VISIBLE);
+                unavailable.setVisibility(mClocksUnavailable ? View.VISIBLE : View.GONE);
             }
             final View note = mNote.get();
             if (note != null) {
-                // -1 is the contract's charging state; the legend says so
-                // instead of pretending the battery draws nothing.
-                note.setVisibility(mAvailable && mPowerMw < 0 ? View.VISIBLE : View.GONE);
+                // -1 while charging is the contract; an unreadable current is
+                // just a gap, so only charging gets the note.
+                note.setVisibility(mCharging ? View.VISIBLE : View.GONE);
             }
             setText(mPowerText.get(), powerText());
             setText(mCpuText.get(), percentText(R.string.power_legend_cpu, cpuMhz(),

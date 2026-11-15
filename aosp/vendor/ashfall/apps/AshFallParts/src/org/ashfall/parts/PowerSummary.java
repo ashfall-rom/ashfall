@@ -55,7 +55,7 @@ public class PowerSummary implements Preference.SummaryProvider<Preference> {
         if (!Power.daemonAlive()) {
             return mContext.getString(R.string.power_home_offline, name);
         }
-        final int powerMw = Power.powerMw();
+        final int powerMw = Power.powerMw(mContext);
         final String watts = powerMw < 0
                 ? mContext.getString(R.string.power_unknown)
                 : mContext.getString(R.string.power_home_watts,

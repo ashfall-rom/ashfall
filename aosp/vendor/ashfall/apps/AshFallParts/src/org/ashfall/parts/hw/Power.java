@@ -16,6 +16,7 @@
 
 package org.ashfall.parts.hw;
 
+import android.content.Context;
 import android.os.SystemClock;
 
 import org.ashfall.parts.ipc.Props;
@@ -28,6 +29,12 @@ import org.ashfall.parts.ipc.Props;
  * applies them and publishes the effective values as {@code ashfall.status.perf.*}.
  * The app only reads a status property, it never writes one.  A missing or
  * invalid value is {@code -1}, never a fabricated one.
+ *
+ * <p>The battery power of the live graph is the one exception: it is sampled
+ * with {@link PowerBattery} (framework {@code BatteryManager}), because the
+ * daemon's battery sampler was removed (a coredomain cannot read
+ * {@code sysfs_batteryinfo}).  CPU and GPU clocks still come from the status
+ * properties.
  *
  * <p>The active preset id lives in {@code persist.ashfall.power.preset} and is
  * this app's own state; the daemon only ever sees the applied values.
@@ -43,7 +50,6 @@ public final class Power {
     /** App-only: the id of the active power preset. */
     public static final String PRESET = "persist.ashfall.power.preset";
 
-    public static final String STATUS_POWER_MW = "ashfall.status.perf.power_mw";
     public static final String STATUS_CPU_MHZ_SILVER = "ashfall.status.perf.cpu_mhz_silver";
     public static final String STATUS_CPU_MHZ_GOLD = "ashfall.status.perf.cpu_mhz_gold";
     public static final String STATUS_CPU_MHZ_PRIME = "ashfall.status.perf.cpu_mhz_prime";
@@ -322,12 +328,25 @@ public final class Power {
     // Telemetry (read-only)
     // ---------------------------------------------------------------------
 
-    /** Battery power in milliwatts, {@code -1} while charging and when unknown. */
-    public static int powerMw() {
+    /**
+     * Battery power in milliwatts, {@code -1} while charging and when unknown.
+     * Sampled with {@link PowerBattery}, not from a daemon property.
+     */
+    public static int powerMw(Context context) {
         if (mockEnabled()) {
             return mockPowerMw();
         }
-        return Props.getInt(STATUS_POWER_MW, -1);
+        return PowerBattery.powerMw(context);
+    }
+
+    /** Whether a battery reading exists at all, independent of charging. */
+    public static boolean powerAvailable(Context context) {
+        return mockEnabled() || PowerBattery.available(context);
+    }
+
+    /** Whether the {@code -1} power sample means "charging" (not "unknown"). */
+    public static boolean powerCharging(Context context) {
+        return mockEnabled() ? mockCharging() : PowerBattery.charging(context);
     }
 
     public static int cpuMhzSilver() {
@@ -363,9 +382,12 @@ public final class Power {
         return Math.max(cpuMhzSilver(), Math.max(cpuMhzGold(), cpuMhzPrime()));
     }
 
-    /** False when {@code ashfall-hwd} has not published anything yet. */
+    /**
+     * False when {@code ashfall-hwd} has not published the clocks yet.  The
+     * battery series is independent of the daemon, so it no longer counts.
+     */
     public static boolean daemonAlive() {
-        return powerMw() >= 0 || cpuMhzMax() >= 0 || gpuMhz() >= 0;
+        return cpuMhzMax() >= 0 || gpuMhz() >= 0;
     }
 
     // ---------------------------------------------------------------------
@@ -413,6 +435,10 @@ public final class Power {
     }
 
     /** A 30-tick (60 s) cycle with a 6-tick charging window (power = -1). */
+    private static boolean mockCharging() {
+        return mockTick() % 30 >= 24;
+    }
+
     private static int mockPowerMw() {
         final long tick = mockTick() % 30;
         if (tick >= 24) {

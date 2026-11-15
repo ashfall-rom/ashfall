@@ -281,7 +281,7 @@
          use carries the power_ prefix; the shared labels (cancel, done,
          duplicate, ...) come from the Common block above. -->
     <string name="power_status_title">Status</string>
-    <string name="power_status_unavailable">The power daemon is not responding.  Clocks and power are unavailable until ashfall-hwd publishes them.</string>
+    <string name="power_status_unavailable">The power daemon is not responding.  The CPU and GPU clocks are unavailable until ashfall-hwd publishes them.</string>
     <string name="power_legend_power">%1$s W</string>
     <string name="power_axis_watts">%1$d W</string>
     <string name="power_legend_cpu">CPU %1$s%%</string>
