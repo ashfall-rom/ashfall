@@ -145,3 +145,12 @@ Still to verify on hardware, in the build that carries this:
 * the animation comes up landscape, not sideways;
 * the parts app icon and the root README icon match what was authored;
 * no other package installs a second `system/media/bootanimation.zip`.
+
+## Boot animation on the GSI
+
+The GSI flow flashes only `system`; `/product/media/bootanimation.zip` on the
+device can therefore stay from an older build, and AOSP's `bootanimation`
+checks product/OEM before `system`. `patches/frameworks/base/0006-bootanimation-prefer-system.patch`
+makes it check `/system/media/bootanimation.zip` first, so the AshFall
+animation always wins. If the old animation shows up, verify the patch applied
+and that `/system/media/bootanimation.zip` exists on the device.

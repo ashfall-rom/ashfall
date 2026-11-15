@@ -1,0 +1,31 @@
+From b10381ba08bcf8de828be11574b0a9377e2708a5 Mon Sep 17 00:00:00 2001
+From: AshFall Brand <brand@ashfall.local>
+Date: Sun, 15 Nov 2026 21:29:21 +0000
+Subject: [PATCH] bootanimation: prefer the system animation over product/OEM
+
+---
+ cmds/bootanimation/BootAnimation.cpp | 7 +++++--
+ 1 file changed, 5 insertions(+), 2 deletions(-)
+
+diff --git a/cmds/bootanimation/BootAnimation.cpp b/cmds/bootanimation/BootAnimation.cpp
+index eb55bbd..6460907 100644
+--- a/cmds/bootanimation/BootAnimation.cpp
++++ b/cmds/bootanimation/BootAnimation.cpp
+@@ -672,9 +672,12 @@ void BootAnimation::findBootAnimationFile() {
+     const std::string productBootanimationFile = PRODUCT_BOOTANIMATION_DIR +
+         android::base::GetProperty("ro.product.bootanim.file", playDarkAnim ?
+         PRODUCT_BOOTANIMATION_DARK_FILE : PRODUCT_BOOTANIMATION_FILE);
++    // AshFall: the RP5 runs a GSI, so only /system is flashed while the stale
++    // /product partition keeps the previous animation. Check the ROM's system
++    // animation first, then the AOSP/Lineage candidates.
+     static const std::vector<std::string> bootFiles = {
+-        APEX_BOOTANIMATION_FILE, productBootanimationFile,
+-        OEM_BOOTANIMATION_FILE, SYSTEM_BOOTANIMATION_FILE
++        SYSTEM_BOOTANIMATION_FILE, APEX_BOOTANIMATION_FILE,
++        productBootanimationFile, OEM_BOOTANIMATION_FILE
+     };
+     static const std::vector<std::string> shutdownFiles = {
+         PRODUCT_SHUTDOWNANIMATION_FILE, OEM_SHUTDOWNANIMATION_FILE, SYSTEM_SHUTDOWNANIMATION_FILE, ""
+-- 
+2.53.0
+
