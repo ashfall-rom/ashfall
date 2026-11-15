@@ -17,7 +17,9 @@
 <resources>
     <!-- Memory page (issue #141, docs/phase6.md §9.3).  Every string of the
          page carries the mem_ prefix and lives in this file, so the other
-         wave-2 pages can change res/values/strings.xml without conflicts. -->
+         wave-2 pages can change res/values/strings.xml without conflicts.
+         The page is swapfile-only since #156 §7, so no string here mentions
+         compressed swap. -->
 
     <!-- Shared -->
     <string name="mem_dash">—</string>
@@ -28,24 +30,10 @@
 
     <!-- Live status (ashfall.status.mem.*) -->
     <string name="mem_status_category">Status</string>
-    <string name="mem_zram_status_title">zram</string>
     <string name="mem_swap_status_title">Swap</string>
     <string name="mem_storage_status_title">Free storage</string>
-    <string name="mem_zram_status_value">%1$s compressed · %2$s:1</string>
     <string name="mem_swap_status_value">%1$s used of %2$s</string>
     <string name="mem_storage_status_value">%1$s free of %2$s</string>
-
-    <!-- zram -->
-    <string name="mem_zram_category">zram</string>
-    <string name="mem_zram_title">Enable zram</string>
-    <string name="mem_zram_size_title">zram size</string>
-    <string name="mem_zram_on">On, %1$d MB</string>
-    <string name="mem_zram_off">Off — no compressed swap</string>
-    <string name="mem_zram_summary">%1$d %% of RAM · maximum %2$d MB</string>
-    <!-- The documented unavailable state (issue #141): the row is disabled and
-         says why, instead of failing at write time. -->
-    <string name="mem_zram_unavailable">zram not available on this kernel</string>
-    <string name="mem_zram_no_meminfo">Cannot read /proc/meminfo, so the zram limit cannot follow half of RAM</string>
 
     <!-- Swapfile.  The warning is part of the feature, not decoration: it is
          always in the row summary and repeated in a non-dismissible
@@ -61,8 +49,8 @@
     <string name="mem_swap_confirm_enable">Create</string>
 
     <!-- Handheld row summary -->
-    <string name="mem_home_summary">zram %1$s · swap %2$s</string>
+    <string name="mem_home_summary">swap %1$s</string>
     <string name="mem_home_unavailable">Not reporting</string>
 
-    <string name="mem_footer">This page only writes the two settings. ashfall-hwd applies them, reports what it actually did, and refuses anything it cannot apply. zram is priority 1 and the swapfile priority 2, so compressed RAM is used before the flash.</string>
+    <string name="mem_footer">This page only writes the swapfile setting. ashfall-hwd creates, enables and reports the swapfile, and refuses anything it cannot apply. Swap is overflow memory for memory pressure, never a performance option.</string>
 </resources>

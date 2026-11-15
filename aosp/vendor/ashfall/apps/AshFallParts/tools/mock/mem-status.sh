@@ -1,25 +1,24 @@
 #!/bin/bash
 # Feed the Memory page with a synthetic ashfall.status.mem.* cycle.
 #
-# The page reads ashfall.status.mem.{zram_mb,swap_mb,zram_used_kb,zram_saved_kb,
-# swap_total_kb,swap_used_kb}, which only the real ashfall-hwd publishes on the
-# handheld.  The stock emulator has neither the daemon nor the ashfall.*
-# property contexts, so this feeder writes the six values itself once a second -
-# the page's own tick - the way the daemon would report them.
+# The page reads ashfall.status.mem.{swap_mb,swap_total_kb,swap_used_kb}, which
+# only the real ashfall-hwd publishes on the handheld.  The stock emulator has
+# neither the daemon nor the ashfall.* property contexts, so this feeder writes
+# the three values itself once a second - the page's own tick - the way the
+# daemon would report them.
 #
-# The feeder also reads the two settings the page writes,
-# persist.ashfall.mem.{zram_mb,swap_mb}, and reports them as applied, so the
-# rows do not show the requested/applied mismatch that only the missing daemon
-# causes.  The app still writes every persist.* value itself; this script never
-# writes one.
+# The feeder also reads the setting the page writes,
+# persist.ashfall.mem.swap_mb, and reports it as applied, so the row does not
+# show the requested/applied mismatch that only the missing daemon causes.  The
+# app still writes every persist.* value itself; this script never writes one.
 #
 #   tools/mock/mem-status.sh start [normal|unavailable]
 #   tools/mock/mem-status.sh stop      stop it, leaving the last values
 #   tools/mock/mem-status.sh status    print the feeder state and the values
 #
-# "unavailable" publishes -1 for both applied sizes: the documented
-# "zram not available on this kernel" / swapfile-unavailable states, which have
-# to be checked on the emulator too.
+# "unavailable" publishes -1 for the applied size and the two live values: the
+# documented swapfile-unavailable state, which has to be checked on the emulator
+# too.
 #
 # The feeder runs detached on the device (a host-side loop would stop with the
 # adb session).  Both it and the app need a permissive policy on a stock
@@ -75,7 +74,7 @@ case "${1:-}" in
         else
             echo "stopped"
         fi
-        for key in zram_mb swap_mb zram_used_kb zram_saved_kb swap_total_kb swap_used_kb; do
+        for key in swap_mb swap_total_kb swap_used_kb; do
             echo "$key=$(getprop "ashfall.status.mem.$key")"
         done
         exit 0
@@ -87,32 +86,20 @@ echo "$MODE" > "$MODEFILE"
 
 if [ "$MODE" = unavailable ]; then
     while true; do
-        for key in zram_mb swap_mb zram_used_kb zram_saved_kb swap_total_kb swap_used_kb; do
+        for key in swap_mb swap_total_kb swap_used_kb; do
             publish "$key" -1
         done
         sleep 1
     done
 fi
 
-# A 60 s cycle: zram fills to ~2/3 of its device with a steady 2.5:1 ratio, and
-# the swapfile fills slowly, so both status rows and the overflow warning have
-# plausible numbers to show.
+# A 60 s cycle: the swapfile fills slowly, so the status row and the overflow
+# warning have plausible numbers to show.
 i=0
 while true; do
     t=$((i % 60))
-    zram=$(getprop persist.ashfall.mem.zram_mb)
     swap=$(getprop persist.ashfall.mem.swap_mb)
-    case "$zram" in ''|*[!0-9]*) zram=0 ;; esac
     case "$swap" in ''|*[!0-9]*) swap=0 ;; esac
-    if [ "$zram" -gt 0 ]; then
-        used_mb=$((zram * (30 + t) / 100))
-        [ "$used_mb" -gt 0 ] || used_mb=1
-        publish zram_used_kb "$((used_mb * 1024))"
-        publish zram_saved_kb "$((used_mb * 3 / 2 * 1024))"
-    else
-        publish zram_used_kb 0
-        publish zram_saved_kb 0
-    fi
     if [ "$swap" -gt 0 ]; then
         publish swap_total_kb "$((swap * 1024))"
         publish swap_used_kb "$((swap * (10 + t / 2) / 100 * 1024))"
@@ -120,7 +107,6 @@ while true; do
         publish swap_total_kb 0
         publish swap_used_kb 0
     fi
-    publish zram_mb "$zram"
     publish swap_mb "$swap"
     i=$((i + 1))
     sleep 1
@@ -161,7 +147,7 @@ case "${1:-}" in
         # must not take the cycle with it (the feeder records its own pid).
         "$ADB" shell "setsid env MODE=$MODE sh $REMOTE >/dev/null 2>&1 < /dev/null &"
         sleep 1
-        if [ -z "$("$ADB" shell getprop ashfall.status.mem.zram_mb | tr -d '\r')" ]; then
+        if [ -z "$("$ADB" shell getprop ashfall.status.mem.swap_mb | tr -d '\r')" ]; then
             echo "error: the feeder published nothing." >&2
             echo "       'ashfall.*' has no property context on a stock image, so" >&2
             echo "       both the feeder and the app need 'adb root' and a" >&2

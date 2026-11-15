@@ -19,8 +19,8 @@ package org.ashfall.parts;
 import androidx.fragment.app.Fragment;
 
 /**
- * Memory page (#141): zram and swapfile.  The page itself is owned by the #141
- * app worker; this shell only registers it.
+ * Memory page (#141): the swapfile.  The page itself is owned by the #141 app
+ * worker; this shell only registers it.  The page is swapfile-only (#156 §7).
  */
 public class MemoryActivity extends PartsActivity {
 

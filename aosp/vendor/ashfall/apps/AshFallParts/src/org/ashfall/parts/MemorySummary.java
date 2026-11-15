@@ -26,7 +26,7 @@ import java.util.Locale;
 
 /**
  * Live summary of the Memory row on the AshFall settings page (#141): the
- * sizes the daemon actually applied, not the ones the user asked for.
+ * swapfile size the daemon actually applied, not the one the user asked for.
  */
 public class MemorySummary implements Preference.SummaryProvider<Preference> {
 
@@ -38,14 +38,12 @@ public class MemorySummary implements Preference.SummaryProvider<Preference> {
 
     @Override
     public CharSequence provideSummary(Preference preference) {
-        final int zram = Memory.statusZramMb();
         final int swap = Memory.statusSwapMb();
-        if (zram == Memory.UNAVAILABLE && swap == Memory.UNAVAILABLE) {
+        if (swap == Memory.UNAVAILABLE) {
             // No daemon: never invent a size.
             return mContext.getString(R.string.mem_home_unavailable);
         }
-        return mContext.getString(R.string.mem_home_summary,
-                formatMb(mContext, zram), formatMb(mContext, swap));
+        return mContext.getString(R.string.mem_home_summary, formatMb(mContext, swap));
     }
 
     /**
