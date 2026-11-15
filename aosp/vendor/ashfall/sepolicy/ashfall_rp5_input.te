@@ -15,6 +15,27 @@ init_daemon_domain(ashfall_rp5_input)
 allow ashfall_rp5_input serial_device:chr_file rw_file_perms;
 allow ashfall_rp5_input uhid_device:chr_file rw_file_perms;
 
+# /dev/input (#138): fusion opens every node once to classify it, reads the
+# gamepad events, grabs the external gamepads (EVIOCGRAB) and replays force
+# feedback to them.  A motion-only node is only probed read-only for its
+# capabilities and is never grabbed or held, so the sensor path is unaffected.
+# /dev/input itself is deliberately NOT relabelled: issue #120 is the example
+# of what a relabel does to the other domains that need these nodes.
+allow ashfall_rp5_input input_device:dir {
+    getattr
+    search
+    open
+    read
+    watch
+};
+allow ashfall_rp5_input input_device:chr_file {
+    getattr
+    open
+    read
+    write
+    ioctl
+};
+
 # /data/misc/ashfall: joys (user calibration, written only by this daemon) and
 # joys.factory (copied from /mnt/vendor/persist by init at post-fs-data).  No
 # other domain may write this directory.

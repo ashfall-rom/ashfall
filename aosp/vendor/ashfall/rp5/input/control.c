@@ -6,6 +6,7 @@
 #define _GNU_SOURCE /* accept4 */
 
 #include "control.h"
+#include "fusion.h"
 #include "plat.h"
 
 #include <errno.h>
@@ -259,6 +260,73 @@ static void handle_reset_cal(struct control *control, int fd)
     reply(fd, "OK\n");
 }
 
+/* Log the effective settings after a change.  The app (system_app) owns the
+ * persist.ashfall.pad.* properties; the socket only changes the live state,
+ * and the property is adopted again whenever its text changes. */
+static void log_fusion_settings(const struct fusion_state *fs)
+{
+    char layouts[256];
+    char remap[256];
+
+    fusion_format_settings(fs, layouts, sizeof(layouts), remap, sizeof(remap));
+    ah_logf(AH_LOG_INFO, "fusion: layouts=[%s] remap=[%s]", layouts, remap);
+}
+
+static void handle_fusion(struct control *control, int fd, char **tokens,
+                          int count)
+{
+    struct fusion_state *fs = control->ctx->fusion;
+    char text[1536];
+    char key[FUSION_KEY_MAX];
+    enum fusion_layout layout;
+
+    if (!fs) {
+        reply(fd, "ERR fusion unavailable\n");
+        return;
+    }
+    if (count == 2 && !strcmp(tokens[1], "STATUS")) {
+        fusion_status_format(fs, ah_now_ms(), text, sizeof(text));
+        reply(fd, text);
+    } else if (count == 2 &&
+               (!strcmp(tokens[1], "ON") || !strcmp(tokens[1], "OFF"))) {
+        bool on = !strcmp(tokens[1], "ON");
+
+        fs->enabled = on;
+        /*
+         * Re-sync the adopted-property latch.  The app owns
+         * persist.ashfall.pad.fusion, so a later *change* of its text must be
+         * adopted; the same text must not undo this command.
+         */
+        prop_get_str(PROP_FUSION, fs->enabled_text,
+                     sizeof(fs->enabled_text));
+        ah_logf(AH_LOG_INFO, "control: FUSION %s", on ? "ON" : "OFF");
+        reply(fd, "OK\n");
+    } else if (count == 4 && !strcmp(tokens[1], "LAYOUT")) {
+        snprintf(key, sizeof(key), "%s", tokens[2]);
+        if (!fusion_layout_parse(tokens[3], &layout)) {
+            reply(fd, "ERR unknown layout\n");
+        } else if (!fusion_set_layout(fs, key, layout)) {
+            reply(fd, "ERR bad pad key\n");
+        } else {
+            log_fusion_settings(fs);
+            reply(fd, "OK\n");
+        }
+    } else if (count == 4 && !strcmp(tokens[1], "REMAP")) {
+        snprintf(key, sizeof(key), "%s", tokens[2]);
+        if (!fusion_set_remap(fs, key, tokens[3])) {
+            reply(fd, "ERR bad pad key\n");
+        } else {
+            log_fusion_settings(fs);
+            reply(fd, "OK\n");
+        }
+    } else if (count == 2 && !strcmp(tokens[1], "RESCAN")) {
+        fs->rescan = true;
+        reply(fd, "OK\n");
+    } else {
+        reply(fd, "ERR unknown fusion command\n");
+    }
+}
+
 static void handle_command(struct control *control, int fd, char *line)
 {
     char *tokens[CONTROL_PARSE_MAX];
@@ -315,6 +383,8 @@ static void handle_command(struct control *control, int fd, char *line)
             }
             reply(fd, "OK\n");
         }
+    } else if (!strcmp(tokens[0], "FUSION")) {
+        handle_fusion(control, fd, tokens, count);
     } else {
         reply(fd, "ERR unknown command\n");
     }

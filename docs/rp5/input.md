@@ -219,8 +219,12 @@ speaks the protocol; the missing piece was only the stock userspace bridge.
   load order.
 * `mapping.c` / `mapping.h` - raw MCU counts -> Android axes (the inverted ADC
   direction from the stock converter) and the stick/trigger deadzones.
+* `fusion.c` / `fusion.h` - GamepadFusion (#138): pad registry state,
+  classification (which `/dev/input` nodes are pads), the merge/remap rules,
+  property parsing and the `FUSION STATUS` text.  Free of evdev/uinput so the
+  host tests cover all of it; the daemon owns the fds.
 * `control.c` / `control.h` - the `/dev/socket/ashfall_input` server
-  (`GET/SET/RESET CAL`, `RAW ON/OFF`).
+  (`GET/SET/RESET CAL`, `RAW ON/OFF`, `GRAB ON/OFF`, `FUSION ...`).
 * `input.c` / `input.h` / `plat.c` / `plat.h` - shared state, logging and
   property helpers.
 * `ashfall-rp5-input.rc` - runs the daemon as `system:system` with the
@@ -478,6 +482,130 @@ checklist below; if the raw counts saturate before the physical end stop, the
 calibration min/max are wrong for the unit and `SET CAL`/the wizard fixes them
 (the daemon mapping itself is linear).
 
+## GamepadFusion (phase 6, #138)
+
+Fusion is a **mode of this daemon**, not a second daemon and not a Magisk
+module.  Contract: [`docs/phase6.md`](../phase6.md) §9.8; behaviour reference:
+the user's stock-app `fusiond.c` (MIT), reimplemented - its process,
+permission and configuration model does not apply here.
+
+### What it does
+
+| fusion | uinput device | external pads |
+|---|---|---|
+| off (default) | `AshFall RP5 Gamepad`, `2020:3001`, phase 5 capabilities | untouched, every app sees them |
+| on | `AshFall Fusion Controller`, `045e:028e`, plus `EV_FF`/`FF_RUMBLE` | opened, `EVIOCGRAB`ed, merged into the one device |
+
+There is never a second uinput device.  The identity cannot be changed in
+place, so a toggle destroys and recreates the device (a few milliseconds; the
+switch is user-initiated and the app is told to re-read `FUSION STATUS`).
+
+Merge rules, all covered by the host tests:
+
+* **classification** - a node is a pad only if it carries `EV_KEY` with one of
+  `BTN_GAMEPAD`/`BTN_SOUTH`/`BTN_A`/`BTN_TRIGGER` **and** at least one `EV_ABS`
+  axis.  A motion-only node (accelerometer, `ABS_X/Y/Z`, no gamepad button) is
+  probed **read-only** once to read its capabilities, then closed: never
+  grabbed, never held open, so Android's sensor path keeps it exactly as
+  before (the capabilities cannot be read without opening it).  Our own uinput
+  device is skipped by vendor/product **and** name.
+* **buttons** - union: any pad pressed means pressed.
+* **axes** - per axis the most recent *non-resting* value wins, so letting go
+  on one pad falls back to the other pad's deflection instead of snapping to
+  centre.  Triggers are the **maximum** of the pads.
+* **remap** - per pad, `DEFAULT`/`XBOX` (identity), `NINTENDO` (A<->B and
+  X<->Y), `SWAP_AB`, `SWAP_XY`, `CUSTOM` (identity + the from->to map), all
+  applied *before* the merge.
+* **output** - deltas only, one `SYN_REPORT` per batch; the full state is
+  re-reported after every topology change (pad add/remove, toggle, rescan) and
+  a release goes through the same `session.c` rules as the MCU path.
+* **system keys** - `KEY_BACK`/`KEY_HOMEPAGE`/`KEY_MENU`/volume/play-pause pass
+  through (they are in the advertised key set; a pad code outside it is
+  dropped because uinput capabilities cannot grow after creation).
+
+Axis ranges differ per pad too: a Bluetooth pad may report sticks as -127..127
+or triggers as 0..1023.  Every axis slot therefore keeps the pad's `EVIOCGABS`
+range and is rescaled to the uinput range (sticks around `0`, triggers
+`0..255`, hats `-1..1`); an identity range is passed through untouched, so the
+MCU path and standard HID pads have no rounding drift at all.
+
+External pads disagree on which axes are the triggers.  The daemon classifies
+per pad at open time: `ABS_BRAKE`/`ABS_GAS` always win; otherwise a unipolar
+`ABS_Z`/`ABS_RZ` (0..255) is a trigger and the right stick is `ABS_RX`/`ABS_RY`;
+anything else keeps the right stick on `ABS_Z`/`ABS_RZ`.  This is the fresh
+heuristic the contract asks for (the stock app's resting-`ABS_Z`-as-trigger bug)
+and `FUSION RESCAN` re-runs it.
+
+### Settings
+
+The **app** is the only writer (`system_app`); the daemon only reads, and
+adopts a value only when the property text changes - so a `FUSION` command is
+not reverted by the 250 ms poll.  A setting changed over the socket lives
+until the daemon restarts unless the app also writes the property (which it
+should, that is what makes it survive a reboot).
+
+| property | value | default |
+|---|---|---|
+| `persist.ashfall.pad.fusion` | `0`/`1` | `0` |
+| `persist.ashfall.pad.layouts` | `key=LAYOUT;key=LAYOUT` | empty |
+| `persist.ashfall.pad.remap` | `key=304->305,305->304;...` | empty |
+
+`key` is `vendor:product:connection`, lowercase hex and space-free:
+`2020:3001:mcu` (the internal pad), `0b05:1b21:usb`, `0b05:1b21:bt`.  It is
+stable across reboots and re-enumeration, never the enumeration order.  Two
+identical pads on the same transport share that key; the second gets a `~2`
+suffix (the only documented collision case - it inherits the first pad's layout
+unless the app addresses the `~2` key in `persist.ashfall.pad.layouts`).
+Malformed properties, unknown layout names, maps with a bad pair or a code
+outside 1..`KEY_MAX` are skipped one entry at a time - never a crash, never a
+half-applied file.  The property value limit is 92 bytes, so only non-default
+entries are stored; the daemon logs when the serialised text would not fit.
+
+### Control socket commands (§9.8)
+
+| request | reply |
+|---|---|
+| `FUSION STATUS` | `OK FUSION <0\|1> PADS <n>` then one `PAD <key> <LAYOUT> <seen_ms> <name...>` per pad |
+| `FUSION ON` / `FUSION OFF` | `OK` / `ERR <reason>` |
+| `FUSION LAYOUT <key> <MODE>` | `OK` / `ERR <reason>` |
+| `FUSION REMAP <key> <map>` | `OK` / `ERR <reason>` (`map` = `from->to,from->to`) |
+| `FUSION RESCAN` | `OK` (fresh `/dev/input` scan) |
+
+`<seen_ms>` is the age in ms since that pad's last event (0 = active now); the
+name is the rest of the line, spaces allowed, control characters replaced by
+spaces so a kernel-provided name cannot break the framing.  `GET/SET/RESET CAL`
+and `RAW`/`GRAB` are unchanged, and `GRAB ON` suppresses the fusion output too
+(the tester keeps working with fusion on).  An unknown command or subcommand is
+`ERR unknown fusion command`; the app shows "daemon unavailable" when the
+socket itself is missing, which is not a protocol error.
+
+### Grab, hotplug and rumble
+
+* Fusion on: every external pad is grabbed at open time (`EVIOCGRAB`), and a
+  pad that arrives later is grabbed on the next scan.  Fusion off, shutdown and
+  fd close release the grab explicitly, so a crash can never leave a pad
+  hidden; `PC`/`QL` in `getevent` is the way to check.
+* Hotplug comes from `inotify` on `/dev/input` plus a 2 s fallback scan (and
+  `FUSION RESCAN`).  A pad that is unplugged mid-press releases its buttons on
+  the next flush.
+* Rumble: the fusion device advertises `FF_RUMBLE`; an upload is remembered
+  and replayed to every pad that can take it (read-write pads only; `EVIOCSFF`
+  and write errors - `ENODEV`, `EINVAL` - are logged and skipped, never fatal).
+  The force-feedback events are read from our own event node; the uinput node
+  is opened `O_NONBLOCK` because a blocking read on an empty queue would park in
+  `uinput_read()` holding the device mutex and stop the whole loop.  Known
+  limitation: the first `EVIOCSFF` upload to a pad whose transport has hung can
+  still wait for the HID/BT timeout (one effect upload, never per event).
+
+### SELinux
+
+`ashfall_rp5_input.te` allows `input_device` dir `{ getattr search open read
+watch }` and chr_file `{ getattr open read write ioctl }`.  Nothing is
+relabelled: `/dev/input/*` keeps its platform label so every other domain is
+unaffected (issue #120).  `/dev/uinput` and `serial_device` stay as they were.
+The settings properties need no new rule - the app writes them and
+`get_prop(ashfall_rp5_input, ashfall_prop)` already exists.
+
 ## Phase 5 test checklist (in addition to the one below)
 
 1. `adb shell getprop init.svc.ashfall-rp5-input` -> `running`;
@@ -518,13 +646,47 @@ calibration min/max are wrong for the unit and `SET CAL`/the wizard fixes them
 6. Reboot: the service starts automatically (`adb shell getprop
    init.svc.ashfall-rp5-input` -> `running`).
 
+## Fusion test checklist (phase 6, #138)
+
+1. `setprop persist.ashfall.pad.fusion 1` (or `FUSION ON` from the app):
+   `getevent -pl` shows `AshFall Fusion Controller` with `045e:028e`,
+   `KEY_BACK`/`KEY_HOMEPAGE` and `FF`; the physical pads no longer appear as
+   separate devices while they keep working through the fusion pad.
+2. `FUSION STATUS` lists the internal `2020:3001:mcu` pad plus every connected
+   pad with its layout and age; a pad you just pressed has age 0-50 ms.
+3. `FUSION LAYOUT 0b05:1b21:usb NINTENDO` swaps A/B and X/Y live and survives
+   a reboot when the app also writes `persist.ashfall.pad.layouts`; a garbage
+   value (`FUSION LAYOUT <key> WAT`) is `ERR unknown layout`.
+4. `FUSION REMAP <key> 304->305,305->304`: A and B swap live, `FUSION STATUS`
+   shows `CUSTOM`; `RESET`-style recovery is `FUSION LAYOUT <key> DEFAULT`.
+5. `setprop persist.ashfall.pad.fusion 0`: both physical pads are visible
+   again **without a reboot** (`getevent -pl`) and `getevent` shows no
+   lingering `PC`/`QL` grab.
+6. Hotplug while fusion is on: connect/disconnect a USB and a BT pad (also
+   with the screen off/on and with a button held) - no stuck button, no
+   duplicate device, the new pad is grabbed and merged automatically.
+7. Motion: `dumpsys sensorservice` (or a sensor app) shows the same sensors
+   before and after enabling fusion, and `fusion` never opens the
+   accelerometer node (`logcat` has no `fusion: pad` line for it).
+8. Rumble: a rumble test in an app (or the Controller page) reaches the
+   physical pad; disconnecting the pad mid-rumble does not stall input.
+9. Enforcing build: `dmesg | grep avc` is clean after all of the above.
+10. `make -C aosp/vendor/ashfall/rp5/input/tests check` and
+    `make -C aosp/vendor/ashfall/rp5/hw/tests check` pass warning-free.
+
 ## Notes / follow-ups
 
 * Fan and RGB are driven by `ashfall-hwd` in phase 5 (#60), see
   [`docs/rp5/hw.md`](hw.md); this daemon does not touch those nodes.
 * The control socket, calibration files and deadzones are described in the
   phase 5 section above.
-* The daemon does not remap buttons; `GameAssistant`/`RsMapping` per-game
-  mapping is a separate UX feature.
+* Without fusion the daemon does not remap buttons; the per-pad layout/remap
+  above is the fusion feature (#138).  `GameAssistant`/`RsMapping` per-game
+  mapping stays a separate UX feature.
+* A pad that exposes motion and buttons on the *same* node loses its motion
+  while grabbed (documented limitation, #138 "Motion").  The second uinput
+  motion device is only allowed after measuring such a pad.
+* The app is the writer of `persist.ashfall.pad.*`; a change made over the
+  socket alone lasts until the daemon restarts.
 * If the stock `joys` calibration is missing or corrupt, the daemon falls back
   to the values above, so the sticks are still usable.

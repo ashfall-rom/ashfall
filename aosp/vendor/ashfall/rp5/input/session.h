@@ -42,4 +42,16 @@ int session_release(session_state *st, const uint16_t *keymap,
                     const uint16_t *axis_codes, session_emit_fn emit,
                     void *ctx);
 
+/*
+ * The same release rules for the fusion pad (#138), whose merged key set does
+ * not fit the MCU's 16-bit key word: `key_bits` is a little-endian bit array
+ * indexed by Linux key code (word * 32 + bit), `key_words` its length.  The
+ * axis half is shared with session_release().
+ *
+ * Returns the number of events emitted, not counting the SYN.
+ */
+int session_release_bits(uint32_t *key_bits, int key_words, int *axes,
+                         const uint16_t *axis_codes, int axis_count,
+                         session_emit_fn emit, void *ctx);
+
 #endif /* ASHFALL_SESSION_H */

@@ -11,6 +11,8 @@
 
 #include <stdbool.h>
 
+struct fusion_state;
+
 struct raw_sample {
     int lx, ly, rx, ry;  /* signed stick ADC counts */
     int l2, r2;          /* unsigned trigger ADC counts */
@@ -24,6 +26,9 @@ struct input_ctx {
     enum cal_source cal_source;
     bool cal_source_published;
     struct deadzones dz;
+
+    /* GamepadFusion state (#138); NULL when the daemon has not wired it. */
+    struct fusion_state *fusion;
 
     /* Fired after SET CAL / RESET CAL so the caller can log/report. */
     void (*on_calibration_changed)(struct input_ctx *ctx);
