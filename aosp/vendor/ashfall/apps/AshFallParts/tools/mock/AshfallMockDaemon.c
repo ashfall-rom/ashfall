@@ -18,8 +18,11 @@
  * Test-only stand-in for ashfall-rp5-input.
  *
  * Serves /dev/socket/ashfall_input (SOCK_SEQPACKET) with the protocol from
- * docs/phase5.md §2.3 and §6.2 (GRAB ON/OFF), and animates the RAW stream so the
- * controller tester and the calibration wizard can be exercised on the emulator.
+ * docs/phase5.md §2.3 and §6.2 (GRAB ON/OFF), animates the RAW stream so the
+ * controller tester and the calibration wizard can be exercised on the emulator,
+ * and answers the fusion commands of docs/phase6.md §9.8 (FUSION STATUS with two
+ * stand-in pads, ON/OFF, LAYOUT, REMAP, RESCAN) so the Controller page's Fusion
+ * category and the QS dialog can be checked without the daemon.
  * Development tooling: this binary is never installed into the image.
  *
  *   tools/mock/build.sh --run
@@ -34,12 +37,22 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/socket.h>
+#include <sys/system_properties.h>
 #include <sys/un.h>
 #include <time.h>
 #include <unistd.h>
 
 #define SOCKET_PATH "/dev/socket/ashfall_input"
 #define PACKET 8192
+
+/* Fusion (#138) test pads.  The id is the deterministic
+ * vendor:product:connection key of docs/phase6.md §9.8; the same two pads the
+ * user tests on the RP5 (internal MCU pad + 8BitDo over Bluetooth) stand in for
+ * "two pads drive the fusion controller". */
+#define PAD_COUNT 2
+static const char *PAD_KEYS[PAD_COUNT] = {"2f24:0001:mcu", "2dc8:3106:bt"};
+static const char *PAD_NAMES[PAD_COUNT] = {"AshFall RP5 Gamepad", "8BitDo Ultimate 2C"};
+static char pad_layout[PAD_COUNT][16] = {"DEFAULT", "DEFAULT"};
 
 static const char *AXES[] = {"left_x", "left_y", "right_x", "right_y", "l2", "r2"};
 
@@ -60,6 +73,73 @@ static double now_seconds(void) {
     struct timespec ts;
     clock_gettime(CLOCK_MONOTONIC, &ts);
     return ts.tv_sec + ts.tv_nsec / 1e9;
+}
+
+static int fusion_on(void) {
+    char value[PROP_VALUE_MAX];
+    const int len = __system_property_get("persist.ashfall.pad.fusion", value);
+    return len > 0 && strcmp(value, "1") == 0;
+}
+
+static int pad_index(const char *key) {
+    for (int i = 0; i < PAD_COUNT; i++) {
+        if (strcmp(PAD_KEYS[i], key) == 0) return i;
+    }
+    return -1;
+}
+
+static int valid_layout(const char *mode) {
+    static const char *MODES[] = {"DEFAULT", "XBOX", "NINTENDO", "SWAP_AB", "SWAP_XY",
+                                  "CUSTOM"};
+    for (size_t i = 0; i < sizeof(MODES) / sizeof(MODES[0]); i++) {
+        if (strcmp(MODES[i], mode) == 0) return 1;
+    }
+    return 0;
+}
+
+/* FUSION STATUS: the header packet, then one PAD packet per pad - the client
+ * must accept both framings, so the mock exercises the harder one. */
+static void send_fusion_status(int fd) {
+    char line[256];
+    snprintf(line, sizeof(line), "OK FUSION %d PADS %d", fusion_on() ? 1 : 0, PAD_COUNT);
+    reply(fd, line);
+    for (int i = 0; i < PAD_COUNT; i++) {
+        snprintf(line, sizeof(line), "PAD %s %s %d %s", PAD_KEYS[i], pad_layout[i],
+                 (i + 1) * 7, PAD_NAMES[i]);
+        reply(fd, line);
+    }
+}
+
+static void handle_fusion(int fd, const char *request) {
+    char key[64];
+    char value[64];
+    if (strcmp(request, "FUSION STATUS") == 0) {
+        send_fusion_status(fd);
+    } else if (strcmp(request, "FUSION ON") == 0 || strcmp(request, "FUSION OFF") == 0) {
+        /* The app writes persist.ashfall.pad.fusion itself; the command is the
+         * same effect without waiting for the daemon's property read. */
+        reply(fd, "OK");
+    } else if (strcmp(request, "FUSION RESCAN") == 0) {
+        fprintf(stderr, "FUSION RESCAN\n");
+        fflush(stderr);
+        reply(fd, "OK");
+    } else if (sscanf(request, "FUSION LAYOUT %63s %63s", key, value) == 2) {
+        const int index = pad_index(key);
+        if (index < 0) {
+            reply(fd, "ERR unknown pad");
+        } else if (!valid_layout(value)) {
+            reply(fd, "ERR invalid layout");
+        } else {
+            strlcpy(pad_layout[index], value, sizeof(pad_layout[index]));
+            reply(fd, "OK");
+        }
+    } else if (strncmp(request, "FUSION REMAP ", 13) == 0) {
+        fprintf(stderr, "FUSION REMAP %s\n", request + 13);
+        fflush(stderr);
+        reply(fd, "OK");
+    } else {
+        reply(fd, "ERR unknown fusion command");
+    }
 }
 
 static void send_raw(int fd, double start) {
@@ -149,6 +229,8 @@ static void handle_client(int fd) {
             fprintf(stderr, "GRAB OFF\n");
             fflush(stderr);
             reply(fd, "OK grab off");
+        } else if (strncmp(buffer, "FUSION ", 7) == 0) {
+            handle_fusion(fd, buffer);
         } else {
             reply(fd, "ERR unknown command");
         }

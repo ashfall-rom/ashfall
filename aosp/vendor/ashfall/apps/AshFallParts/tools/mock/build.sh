@@ -36,5 +36,8 @@ if [ "${1:-}" = "--run" ]; then
     adb shell "pkill -x ashfall-mock || true"
     adb shell "setsid /data/local/tmp/ashfall-mock > /data/local/tmp/ashfall-mock.log 2>&1 < /dev/null &"
     sleep 1
+    # A debug /data APK is not system_app, so it cannot connect to the 0755
+    # socket the mock creates; the real init socket is 0660 system:system.
+    adb shell chmod 666 /dev/socket/ashfall_input || true
     adb shell "ps -A | grep ashfall-mock || cat /data/local/tmp/ashfall-mock.log"
 fi

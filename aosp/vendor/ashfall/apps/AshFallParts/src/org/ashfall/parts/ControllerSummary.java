@@ -21,12 +21,21 @@ import android.content.Context;
 import androidx.preference.Preference;
 
 import org.ashfall.parts.hw.Pad;
+import org.ashfall.parts.ipc.FusionClient;
 
 /**
- * Live summary of the Controller row.  It currently carries the deadzones; the
- * #138 app worker adds the fusion state ("2 pads -> Fusion").
+ * Live summary of the Controller row: the deadzones plus the fusion state on
+ * one line ("Stick deadzone 5% · 3% · 2 pads -> Fusion").
+ *
+ * <p>The fusion state needs a socket round trip, and the homepage summarizes
+ * every row from the UI thread on its 3 s tick.  The pad list therefore comes
+ * from {@link FusionClient#cache()}, refreshed in the background and never from
+ * a blocking read here.
  */
 public class ControllerSummary implements Preference.SummaryProvider<Preference> {
+
+    /** The socket is asked at most this often while fusion is on. */
+    private static final long REFRESH_MS = 5000;
 
     private final Context mContext;
 
@@ -36,7 +45,9 @@ public class ControllerSummary implements Preference.SummaryProvider<Preference>
 
     @Override
     public CharSequence provideSummary(Preference preference) {
+        FusionClient.refreshCacheAsync(REFRESH_MS);
         return mContext.getString(R.string.home_controller_summary,
-                Pad.inner(), Pad.outer());
+                Pad.inner(), Pad.outer())
+                + " · " + FusionClient.stateText(mContext, FusionClient.cache());
     }
 }
