@@ -65,7 +65,6 @@
     <string name="home_lighting_summary">%1$s · %2$s</string>
     <string name="home_controller_summary">Stick deadzone %1$d%% · %2$d%%</string>
     <string name="home_power_summary_empty">Live power, clocks and presets</string>
-    <string name="home_memory_summary_empty">zram and swapfile</string>
     <string name="home_daemon_note">Fan and lighting are applied by the AshFall daemons.  Presets are stored by this app; the daemons only see the active values.</string>
 
     <!-- Fan -->

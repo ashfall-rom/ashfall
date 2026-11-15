@@ -36,21 +36,16 @@ import androidx.recyclerview.widget.LinearLayoutManager;
 import androidx.recyclerview.widget.RecyclerView;
 
 import org.ashfall.parts.hw.Memory;
-import org.ashfall.parts.ui.MainSwitchPreference;
-
-import java.util.Locale;
 
 /**
- * The Memory page (#141): zram and the swapfile, plus the live status the
- * daemon publishes in {@code ashfall.status.mem.*}.
+ * The Memory page (#141): the swapfile, plus the live status the daemon
+ * publishes in {@code ashfall.status.mem.*}.  The page is swapfile-only
+ * (#156 §7); compressed swap belongs to the platform, not to this app.
  *
- * <p>Both controls are off by default, write one property each
- * ({@code persist.ashfall.mem.zram_mb}, {@code persist.ashfall.mem.swap_mb})
- * and leave every clamp to {@code ashfall-hwd} - the same contract as the fan
- * and LED pages.  The zram maximum is read from {@code /proc/meminfo} when the
- * page opens, so the slider follows the unit's RAM (4 GB on the 8 GB unit,
- * 6 GB on the 12 GB unit); the swapfile deliberately does not, because 16 GB on
- * the 8 GB unit is the point of the feature.
+ * <p>The single control is off by default and writes one property,
+ * {@code persist.ashfall.mem.swap_mb}, leaving every clamp to
+ * {@code ashfall-hwd} - the same contract as the fan and LED pages.  The
+ * swapfile cap is deliberately independent of the installed RAM.
  *
  * <p>The swap warning is part of the feature, never decoration: it is always in
  * the row summary and repeated in a confirmation every time the swapfile is
@@ -60,14 +55,11 @@ public class MemoryFragment extends PreferenceFragmentCompat {
 
     /**
      * The daemon publishes memory status on its 2 s tick; the page reads the
-     * six properties once a second so a slider change shows up promptly.
+     * three swap properties once a second so a slider change shows up promptly.
      */
     private static final long TICK_MS = 1000;
 
-    private MainSwitchPreference mZramSwitch;
-    private StepSlider mZramSize;
     private StepSlider mSwapSize;
-    private Preference mZramStatus;
     private Preference mSwapStatus;
     private Preference mStorageStatus;
     private AlertDialog mSwapDialog;
@@ -89,32 +81,10 @@ public class MemoryFragment extends PreferenceFragmentCompat {
         final PreferenceCategory statusCategory = new PreferenceCategory(requireContext());
         statusCategory.setTitle(R.string.mem_status_category);
         screen.addPreference(statusCategory);
-        mZramStatus = readOnlyRow(statusCategory, "mem_status_zram",
-                R.string.mem_zram_status_title);
         mSwapStatus = readOnlyRow(statusCategory, "mem_status_swap",
                 R.string.mem_swap_status_title);
         mStorageStatus = readOnlyRow(statusCategory, "mem_status_storage",
                 R.string.mem_storage_status_title);
-
-        final PreferenceCategory zramCategory = new PreferenceCategory(requireContext());
-        zramCategory.setTitle(R.string.mem_zram_category);
-        screen.addPreference(zramCategory);
-
-        mZramSwitch = new MainSwitchPreference(requireContext());
-        mZramSwitch.setKey("mem_zram_switch");
-        mZramSwitch.setTitle(R.string.mem_zram_title);
-        mZramSwitch.setCheckedChangeListener((preference, checked) -> onZramSwitch(checked));
-        zramCategory.addPreference(mZramSwitch);
-
-        mZramSize = new StepSlider(requireContext());
-        mZramSize.setKey("mem_zram_size");
-        mZramSize.setTitle(R.string.mem_zram_size_title);
-        // A unit whose MemTotal could not be read has no cap, so keep the range
-        // valid and let refresh() disable the row with the reason.
-        mZramSize.setRange(0, Math.max(Memory.STEP_MB, Memory.zramMaxMb()));
-        mZramSize.setValue(Memory.zramMb());
-        mZramSize.setValueChangedListener((preference, value) -> onZramSize(value));
-        zramCategory.addPreference(mZramSize);
 
         final PreferenceCategory swapCategory = new PreferenceCategory(requireContext());
         swapCategory.setTitle(R.string.mem_swap_category);
@@ -199,34 +169,6 @@ public class MemoryFragment extends PreferenceFragmentCompat {
         return row;
     }
 
-    /** zram switch: on restores the last size (or a quarter of RAM), off writes 0. */
-    private void onZramSwitch(boolean checked) {
-        if (!checked) {
-            Memory.setZramMb(0);
-            mZramSize.setValue(0);
-            refresh();
-            return;
-        }
-        int mb = mZramSize.getValue();
-        if (mb < Memory.STEP_MB) {
-            mb = defaultZramMb();
-            mZramSize.setValue(mb);
-        }
-        Memory.setZramMb(mb);
-        refresh();
-    }
-
-    /** A quarter of RAM, rounded to a step: 768 MB on the emulator's 3 GB, 1.7 GB on 8 GB. */
-    private int defaultZramMb() {
-        final int quarter = Memory.snapMb(Memory.memTotalMb() / 4);
-        return Math.min(Memory.zramMaxMb(), Math.max(Memory.STEP_MB, quarter));
-    }
-
-    private void onZramSize(int value) {
-        Memory.setZramMb(value);
-        refresh();
-    }
-
     /**
      * Swapfile slider.  Moving from off to a size always goes through the
      * warning dialog first; every other change is written immediately.
@@ -263,54 +205,17 @@ public class MemoryFragment extends PreferenceFragmentCompat {
         mSwapDialog.show();
     }
 
-    /** Pushes the properties and the daemon's published values into the rows. */
+    /** Pushes the property and the daemon's published values into the rows. */
     private void refresh() {
-        final int zramStatus = Memory.statusZramMb();
         final int swapStatus = Memory.statusSwapMb();
-        final int zramRequested = Memory.zramMb();
         final int swapRequested = Memory.swapMb();
-        final boolean zramAvailable = Memory.zramAvailable();
-
-        mZramSwitch.setChecked(zramRequested > 0);
-        mZramSwitch.setEnabled(zramAvailable);
-        if (!zramAvailable) {
-            mZramSwitch.setSummaryText(getString(R.string.mem_zram_unavailable));
-        } else {
-            mZramSwitch.setSummaryText(zramRequested > 0
-                    ? getString(R.string.mem_zram_on, zramRequested)
-                    : getString(R.string.mem_off));
-        }
-
-        mZramSize.setValue(zramRequested);
-        mZramSize.setEnabled(zramAvailable);
-        mZramSize.setSummaryText(zramSummary(zramRequested, zramStatus));
 
         mSwapSize.setValue(swapRequested);
         mSwapSize.setEnabled(Memory.swapAvailable());
         mSwapSize.setSummaryText(swapSummary(swapRequested, swapStatus));
 
-        mZramStatus.setSummary(zramStatusSummary(zramStatus));
         mSwapStatus.setSummary(swapStatusSummary(swapStatus));
         mStorageStatus.setSummary(storageSummary());
-    }
-
-    private CharSequence zramSummary(int requested, int applied) {
-        if (!Memory.zramAvailable()) {
-            // The documented unavailable state: the kernel has no zram node or
-            // module, so the row says so instead of failing at write time.
-            return getString(Memory.zramMaxMb() > 0
-                    ? R.string.mem_zram_unavailable
-                    : R.string.mem_zram_no_meminfo);
-        }
-        if (requested == 0) {
-            return getString(R.string.mem_zram_off);
-        }
-        final String summary = getString(R.string.mem_zram_summary,
-                Memory.percentOf(requested, Memory.memTotalMb()), Memory.zramMaxMb());
-        if (applied >= 0 && applied != requested) {
-            return summary + "\n" + getString(R.string.mem_applied_mismatch, requested, applied);
-        }
-        return summary;
     }
 
     private CharSequence swapSummary(int requested, int applied) {
@@ -331,23 +236,6 @@ public class MemoryFragment extends PreferenceFragmentCompat {
         // Never dismissible: the warning is part of the row, not a one-off.
         text.append('\n').append(getString(R.string.mem_swap_warning));
         return text;
-    }
-
-    private CharSequence zramStatusSummary(int statusMb) {
-        if (statusMb < 0) {
-            return getString(R.string.mem_dash);
-        }
-        final int usedKb = Memory.statusZramUsedKb();
-        final int savedKb = Memory.statusZramSavedKb();
-        if (statusMb == 0 || usedKb <= 0 || savedKb < 0) {
-            return getString(statusMb == 0 ? R.string.mem_off : R.string.mem_dash);
-        }
-        // mm_stat: the compressed size is the real cost, and the ratio is
-        // what the compressor holds against the RAM it saved.
-        final float ratio = (usedKb + savedKb) / (float) usedKb;
-        return getString(R.string.mem_zram_status_value,
-                MemorySummary.formatKb(requireContext(), usedKb),
-                String.format(Locale.US, "%.1f", ratio));
     }
 
     private CharSequence swapStatusSummary(int statusMb) {
@@ -383,7 +271,7 @@ public class MemoryFragment extends PreferenceFragmentCompat {
      * a size - the contract's step is 256 MB - so the page carries its own row.
      * Like that slider, the row (not the SeekBar) owns the D-pad, and one
      * left/right press moves the size by exactly one step.  The value comes
-     * from the properties on every open, so no state is saved.
+     * from the property on every open, so no state is saved.
      */
     private static final class StepSlider extends Preference {
 
