@@ -1,0 +1,2067 @@
+From 5ffada932b9c1470d91a0ffb52d0b1a947cf0ee0 Mon Sep 17 00:00:00 2001
+From: AshFall UI <ui@ashfall.local>
+Date: Sun, 15 Nov 2026 16:28:21 +0000
+Subject: [PATCH] SystemUI: AshFall PlayTime battery indicator
+
+Stock Android predicts remaining battery life from long-term averages that
+include hours of standby, so a handheld shows "18 h remaining" and then
+collapses to two hours under a 3D emulator. Add an active-only estimate to
+the status bar: the current is averaged over a rolling window of the
+current screen-on session and turned into remaining time (discharging) or
+time to full (charging).
+
+The estimator is pure Java with an injected clock, no Android dependency,
+so the maths is unit tested on the host: window expiry, the screen-off
+purge, "--" before one full interval, charging time-to-full, FULL, the four
+time formats, the >48h cap and the tap cycle.
+
+Telemetry comes from BatteryManager, not from a daemon property: a coredomain
+may not read sysfs_batteryinfo (platform neverallow) and on the RP5 those
+nodes carry a vendor label. The sticky ACTION_BATTERY_CHANGED broadcast
+supplies level, voltage, charging state and the charge counter (capacity is
+derived from counter and level), and BATTERY_PROPERTY_CURRENT_NOW supplies
+the current in uA, rectified to mA. Unsupported properties stay unknown and
+render "--"; nothing reads sysfs and nothing polls a service in the
+background - the receiver only exists while the indicator is shown and the
+screen is on.
+
+The status bar element is a TextView in the PhoneStatusBarView hierarchy
+tinted from the same DarkIconDispatcher source as the clock, placed left or
+right of the battery or the clock, or in the battery percentage slot. The
+status bar root in this tree is still the View status_bar.xml, but the
+battery percentage is Compose (BatteryWithPercent), so REPLACE_PERCENT also
+suppresses the stock percentage there.
+
+Settings are read from persist.ashfall.batt.* through a property listener
+(no poll, no timers while the indicator is off) and every value is clamped
+to a documented default. A missing view, a missing broadcast or an
+unsupported battery property leaves the indicator hidden or on "--" instead
+of crashing SystemUI; FULL and >48h are explicit.
+
+Refs #137
+---
+ .../systemui/ashfall/PlayTimeEstimator.java   | 692 ++++++++++++++++++
+ .../systemui/ashfall/PlayTimeIndicator.java   | 571 +++++++++++++++
+ .../ashfall/PlayTimeIndicatorView.java        |  50 ++
+ .../systemui/ashfall/PlayTimeSettings.java    | 161 ++++
+ .../phone/PhoneStatusBarViewController.kt     |  14 +
+ .../shared/ui/composable/StatusBarRoot.kt     |  22 +-
+ .../ashfall/PlayTimeEstimatorTest.java        | 411 +++++++++++
+ 7 files changed, 1920 insertions(+), 1 deletion(-)
+ create mode 100644 packages/SystemUI/src/com/android/systemui/ashfall/PlayTimeEstimator.java
+ create mode 100644 packages/SystemUI/src/com/android/systemui/ashfall/PlayTimeIndicator.java
+ create mode 100644 packages/SystemUI/src/com/android/systemui/ashfall/PlayTimeIndicatorView.java
+ create mode 100644 packages/SystemUI/src/com/android/systemui/ashfall/PlayTimeSettings.java
+ create mode 100644 packages/SystemUI/tests/src/com/android/systemui/ashfall/PlayTimeEstimatorTest.java
+
+diff --git a/packages/SystemUI/src/com/android/systemui/ashfall/PlayTimeEstimator.java b/packages/SystemUI/src/com/android/systemui/ashfall/PlayTimeEstimator.java
+new file mode 100644
+index 000000000000..b097d8050961
+--- /dev/null
++++ b/packages/SystemUI/src/com/android/systemui/ashfall/PlayTimeEstimator.java
+@@ -0,0 +1,692 @@
++/*
++ * Copyright (C) 2026 The AshFall Project
++ *
++ * Licensed under the Apache License, Version 2.0 (the "License");
++ * you may not use this file except in compliance with the License.
++ * You may obtain a copy of the License at
++ *
++ *      http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++
++package com.android.systemui.ashfall;
++
++import java.util.Locale;
++
++/**
++ * PlayTime estimator: remaining active play time while discharging, time to full while charging.
++ *
++ * <p>Android predicts remaining life from long-term averages that include hours of standby, so a
++ * handheld shows "18 h remaining" and then collapses to two hours under a 3D emulator. This class
++ * only looks at the current screen-on session: it averages the power-supply current over a rolling
++ * window of that session and derives the clock from the remaining charge.
++ *
++ * <p>The class is dependency free on purpose - no Android imports, no sysfs, no properties, no
++ * direct clock. The caller injects a {@link Clock}, feeds one sample per telemetry tick and renders
++ * the result through the {@code format*}/{@code render} helpers. That keeps the maths and every edge
++ * case ({@code --}, FULL, the &gt;48 h cap, the screen-off purge) unit testable on the host without
++ * an emulator; see {@code PlayTimeEstimatorTest}.
++ */
++public final class PlayTimeEstimator {
++
++    /** Value used for "we do not know" everywhere in this class. */
++    public static final int UNKNOWN = -1;
++
++    /** Text shown when there is no estimate yet. */
++    public static final String UNKNOWN_TEXT = "--";
++
++    /** Samples are sparse (one per telemetry tick); 10 min at 2 s needs 300. */
++    private static final int CAPACITY = 512;
++
++    /** Below this the current reading is noise, not a measurement. */
++    public static final int MIN_USABLE_MA = 20;
++
++    /** Past this a clock is meaningless on a handheld. */
++    private static final int MAX_ESTIMATE_HOURS = 48;
++
++    private static final String SEPARATOR = " \u00b7 ";
++
++    /** Where the indicator sits in the status bar. */
++    public enum Placement {
++        BATTERY_LEFT, BATTERY_RIGHT, CLOCK_LEFT, CLOCK_RIGHT, REPLACE_PERCENT
++    }
++
++    /** Which values the indicator shows. */
++    public enum Detail {
++        TIME, TIME_W, TIME_W_V, TIME_V, W, V, W_V
++    }
++
++    /** How the time component is written. */
++    public enum Format {
++        COMPACT, SHORT, COLON, DETAILED
++    }
++
++    /** Symbol prefixed to the time while charging. */
++    public enum ChargingSymbol {
++        /** Monochrome bolt. */
++        BOLT,
++        /** Plain plus. */
++        PLUS,
++        /** {@code CHG}. */
++        TEXT,
++        /** Colour emoji bolt. */
++        EMOJI
++    }
++
++    /** The four values the indicator can show, used by the charging cycle. */
++    public enum Meter {
++        TIME, PERCENT, WATTS, VOLTS
++    }
++
++    /** Tap-to-cycle state: the configured view, then W, V, %. */
++    public enum TapCycle {
++        CONFIG, WATTS, VOLTS, PERCENT;
++
++        public TapCycle next() {
++            switch (this) {
++                case CONFIG:
++                    return WATTS;
++                case WATTS:
++                    return VOLTS;
++                case VOLTS:
++                    return PERCENT;
++                case PERCENT:
++                default:
++                    return CONFIG;
++            }
++        }
++    }
++
++    /** Injected time source, so tests control "now". */
++    public interface Clock {
++        long elapsedRealtime();
++    }
++
++    /** Fixed ring buffer of screen-on current samples (no allocation per tick). */
++    private final long[] mTimestamps = new long[CAPACITY];
++    private final int[] mCurrents = new int[CAPACITY];
++    private int mHead;
++    private int mCount;
++
++    private final Clock mClock;
++
++    private boolean mScreenOn = true;
++    private boolean mSawScreenOff;
++
++    private int mWindowMinutes = 5;
++    private int mIntervalSeconds = 5;
++
++    /** Charging state of the samples in the window; a flip purges it. */
++    private boolean mCharging;
++    private boolean mChargingKnown;
++
++    private long mSessionStart = UNKNOWN;
++
++    /** Raw inputs of the latest tick, kept for {@link #fill}. */
++    private int mLevelPct = UNKNOWN;
++    private int mVoltageMv = UNKNOWN;
++    private int mChargeMah = UNKNOWN;
++    private int mCapacityMah = UNKNOWN;
++    private int mCapacityOverrideMah;
++
++    public PlayTimeEstimator(Clock clock) {
++        mClock = clock;
++    }
++
++    // ----------------------------------------------------------------- config
++
++    /** One of 1/3/5/10 minutes; anything else keeps the current window. */
++    public void setWindowMinutes(int minutes) {
++        if (minutes == 1 || minutes == 3 || minutes == 5 || minutes == 10) {
++            mWindowMinutes = minutes;
++        }
++    }
++
++    public void setIntervalSeconds(int seconds) {
++        mIntervalSeconds = clampIntervalSeconds(seconds);
++    }
++
++    // ----------------------------------------------------------- screen state
++
++    /**
++     * Screen off stops sampling; the next screen on purges the window so the previous session (and
++     * any standby drain) never leaks into the new one. This is the main accuracy rule of the
++     * feature.
++     */
++    public void setScreenOn(boolean screenOn) {
++        if (mScreenOn == screenOn) {
++            return;
++        }
++        mScreenOn = screenOn;
++        if (screenOn) {
++            if (mSawScreenOff) {
++                purge();
++            }
++            mSawScreenOff = false;
++        } else {
++            mSawScreenOff = true;
++        }
++    }
++
++    // --------------------------------------------------------------- sampling
++
++    /**
++     * Feeds one telemetry tick. Ignored while the screen is off, for unknown ({@code <= 0}) current
++     * readings and for implausible ones. A change of the charging state drops the window: discharge
++     * samples say nothing about charge current and vice versa.
++     *
++     * @param currentMa current magnitude as measured by the power daemon
++     * @param levelPct battery level 0..100, {@link #UNKNOWN} if unknown
++     * @param voltageMv battery voltage in mV, {@link #UNKNOWN} if unknown
++     * @param charging {@code true} while the charger is connected
++     * @param chargeMah remaining charge in mAh, {@link #UNKNOWN} if unknown
++     * @param capacityMah design capacity in mAh, {@link #UNKNOWN} if unknown
++     * @param capacityOverrideMah user override in mAh, {@code 0} = auto
++     */
++    public synchronized void observe(int currentMa, int levelPct, int voltageMv,
++            boolean charging, int chargeMah, int capacityMah, int capacityOverrideMah) {
++        mLevelPct = levelPct;
++        mVoltageMv = voltageMv;
++        mChargeMah = chargeMah;
++        mCapacityMah = capacityMah;
++        mCapacityOverrideMah = Math.max(0, capacityOverrideMah);
++
++        if (!mScreenOn) {
++            return;
++        }
++        if (mChargingKnown && charging != mCharging) {
++            purge();
++        }
++        mCharging = charging;
++        mChargingKnown = true;
++
++        if (currentMa <= 0) {
++            return;
++        }
++
++        long now = mClock.elapsedRealtime();
++        if (mSessionStart == UNKNOWN) {
++            mSessionStart = now;
++        }
++        prune(now - mWindowMinutes * 60_000L);
++
++        if (mCount == CAPACITY) {
++            // Ring is full: drop the oldest sample.
++            mHead = (mHead + 1) % CAPACITY;
++            mCount--;
++        }
++        int tail = (mHead + mCount) % CAPACITY;
++        mTimestamps[tail] = now;
++        mCurrents[tail] = currentMa;
++        mCount++;
++    }
++
++    /** Drops every sample; the next estimate needs a full interval again. */
++    public synchronized void purge() {
++        mHead = 0;
++        mCount = 0;
++        mSessionStart = UNKNOWN;
++    }
++
++    private void prune(long oldestAllowed) {
++        while (mCount > 0 && mTimestamps[mHead] < oldestAllowed) {
++            mHead = (mHead + 1) % CAPACITY;
++            mCount--;
++        }
++    }
++
++    public synchronized int getSampleCount() {
++        return mCount;
++    }
++
++    /**
++     * A number is only shown after one full sample interval of the current session, and never from
++     * a single reading.
++     */
++    public synchronized boolean isEstimateReady() {
++        if (mCount < 2 || mSessionStart == UNKNOWN) {
++            return false;
++        }
++        return mClock.elapsedRealtime() - mSessionStart >= mIntervalSeconds * 1000L;
++    }
++
++    /** Average current of the window, {@link #UNKNOWN} when there is none. */
++    public synchronized int getAverageCurrentMa() {
++        if (mCount == 0) {
++            return UNKNOWN;
++        }
++        long sum = 0;
++        for (int i = 0; i < mCount; i++) {
++            sum += mCurrents[(mHead + i) % CAPACITY];
++        }
++        return (int) (sum / mCount);
++    }
++
++    // ------------------------------------------------------------------ maths
++
++    /**
++     * Remaining charge in mAh: the reported charge counter when the daemon has one, otherwise level
++     * x capacity. {@link #UNKNOWN} when neither is usable - never a guess.
++     */
++    public static int remainingMah(int chargeMah, int capacityMah, int capacityOverrideMah,
++            int levelPct) {
++        if (chargeMah > 0) {
++            return chargeMah;
++        }
++        int total = totalMah(capacityMah, capacityOverrideMah);
++        if (total <= 0 || levelPct < 0 || levelPct > 100) {
++            return UNKNOWN;
++        }
++        return (int) ((long) total * levelPct / 100);
++    }
++
++    /** The capacity to use: the user override when set, otherwise the design capacity. */
++    public static int totalMah(int capacityMah, int capacityOverrideMah) {
++        if (capacityOverrideMah > 0) {
++            return capacityOverrideMah;
++        }
++        return capacityMah > 0 ? capacityMah : UNKNOWN;
++    }
++
++    /**
++     * Minutes for {@code mah} at {@code avgMa}, rounded up so a positive amount never reads
++     * {@code 0m}. {@link #UNKNOWN} for a missing amount or a current that is just noise.
++     */
++    public static int minutesFor(long mah, int avgMa) {
++        if (mah <= 0 || avgMa <= MIN_USABLE_MA) {
++            return UNKNOWN;
++        }
++        return (int) ((mah * 60 + avgMa - 1) / avgMa);
++    }
++
++    /**
++     * Full means "stop counting up": 100 %, or a charge counter with no headroom left. The counter
++     * is authoritative when the daemon has one.
++     */
++    public static boolean isFull(boolean charging, int levelPct, int remainingMah, int fullMah) {
++        if (levelPct >= 100) {
++            return true;
++        }
++        return charging && fullMah > 0 && remainingMah >= fullMah;
++    }
++
++    /** Snapshot of everything the renderer needs; reuse one instance per view. */
++    public static final class Reading {
++        public int currentMa = UNKNOWN;
++        public int levelPct = UNKNOWN;
++        public int voltageMv = UNKNOWN;
++        public boolean charging;
++        public int remainingMah = UNKNOWN;
++        public int fullMah = UNKNOWN;
++        public int minutesRemaining = UNKNOWN;
++        public int minutesToFull = UNKNOWN;
++        public boolean full;
++        public boolean ready;
++    }
++
++    /** Fills {@code out} from the current window; never allocates. */
++    public synchronized void fill(Reading out) {
++        out.charging = mChargingKnown && mCharging;
++        out.levelPct = mLevelPct;
++        out.voltageMv = mVoltageMv;
++        out.currentMa = getAverageCurrentMa();
++        out.fullMah = totalMah(mCapacityMah, mCapacityOverrideMah);
++        out.remainingMah =
++                remainingMah(mChargeMah, mCapacityMah, mCapacityOverrideMah, mLevelPct);
++        out.ready = isEstimateReady() && out.currentMa > MIN_USABLE_MA;
++        out.full = isFull(out.charging, out.levelPct, out.remainingMah, out.fullMah);
++        out.minutesRemaining = !out.ready || out.charging
++                ? UNKNOWN
++                : minutesFor(out.remainingMah, out.currentMa);
++        out.minutesToFull = !out.ready || !out.charging || out.fullMah <= 0
++                ? UNKNOWN
++                : minutesFor(out.fullMah - out.remainingMah, out.currentMa);
++    }
++
++    // ------------------------------------------------------------ formatting
++
++    /** The time component: duration, charging prefix, {@code --} or FULL. */
++    public static String time(Reading r, Config config) {
++        String symbol = config.chargingSymbolText(r.charging);
++        if (r.charging) {
++            if (r.full) {
++                return symbol + "FULL";
++            }
++            if (r.minutesToFull == UNKNOWN) {
++                // No usable charge current yet: show the symbol alone, never a fabricated number.
++                return symbol.trim().isEmpty() ? UNKNOWN_TEXT : symbol.trim();
++            }
++            return symbol + formatMinutes(r.minutesToFull, config.format);
++        }
++        if (!r.ready || r.minutesRemaining == UNKNOWN) {
++            return UNKNOWN_TEXT;
++        }
++        return formatMinutes(r.minutesRemaining, config.format);
++    }
++
++    public static String formatMinutes(int minutes, Format format) {
++        if (minutes < 0) {
++            return UNKNOWN_TEXT;
++        }
++        int hours = minutes / 60;
++        int mins = minutes % 60;
++        if (hours > MAX_ESTIMATE_HOURS) {
++            return ">48h";
++        }
++        switch (format) {
++            case SHORT:
++                return String.format(Locale.US, "%dh%02d", hours, mins);
++            case COLON:
++                return String.format(Locale.US, "%d:%02d", hours, mins);
++            case DETAILED:
++                return String.format(Locale.US, "%d hr %d min", hours, mins);
++            case COMPACT:
++            default:
++                return hours > 0
++                        ? String.format(Locale.US, "%dh %dm", hours, mins)
++                        : String.format(Locale.US, "%dm", mins);
++        }
++    }
++
++    public static String watts(Reading r) {
++        if (r.currentMa <= 0 || r.voltageMv <= 0) {
++            return UNKNOWN_TEXT;
++        }
++        double w = (double) r.currentMa * r.voltageMv / 1_000_000d;
++        return String.format(Locale.US, "%s%.1fW", r.charging ? "+" : "", w);
++    }
++
++    public static String volts(Reading r) {
++        if (r.voltageMv <= 0) {
++            return UNKNOWN_TEXT;
++        }
++        return String.format(Locale.US, "%.2fV", r.voltageMv / 1000d);
++    }
++
++    public static String percent(Reading r) {
++        if (r.levelPct < 0 || r.levelPct > 100) {
++            return UNKNOWN_TEXT;
++        }
++        return r.levelPct + "%";
++    }
++
++    /** Text of one meter, for the charging cycle. */
++    public static String meter(Meter meter, Reading r, Config config) {
++        switch (meter) {
++            case PERCENT:
++                return percent(r);
++            case WATTS:
++                return watts(r);
++            case VOLTS:
++                return volts(r);
++            case TIME:
++            default:
++                return time(r, config);
++        }
++    }
++
++    /** The full indicator string for the configured detail mode. */
++    public static String render(Reading r, Config config) {
++        switch (config.detail) {
++            case TIME_W:
++                return time(r, config) + SEPARATOR + watts(r);
++            case TIME_W_V:
++                return time(r, config) + SEPARATOR + watts(r) + SEPARATOR + volts(r);
++            case TIME_V:
++                return time(r, config) + SEPARATOR + volts(r);
++            case W:
++                return watts(r);
++            case V:
++                return volts(r);
++            case W_V:
++                return watts(r) + SEPARATOR + volts(r);
++            case TIME:
++            default:
++                return time(r, config);
++        }
++    }
++
++    /** The indicator string with the tap override applied. */
++    public static String render(Reading r, Config config, TapCycle tap) {
++        switch (tap) {
++            case WATTS:
++                return watts(r);
++            case VOLTS:
++                return volts(r);
++            case PERCENT:
++                return percent(r);
++            case CONFIG:
++            default:
++                return render(r, config);
++        }
++    }
++
++    // ----------------------------------------------------------------- config
++
++    /** The persisted settings, already validated; defaults are documented in docs/playtime.md. */
++    public static final class Config {
++        public static final int METER_TIME = 1;
++        public static final int METER_PERCENT = 1 << 1;
++        public static final int METER_WATTS = 1 << 2;
++        public static final int METER_VOLTS = 1 << 3;
++
++        public boolean show;
++        public Placement placement = Placement.BATTERY_LEFT;
++        public Detail detail = Detail.TIME;
++        public Format format = Format.COMPACT;
++        public int windowMinutes = 5;
++        public int intervalSeconds = 5;
++        public ChargingSymbol chargingSymbol = ChargingSymbol.BOLT;
++        public boolean chargingCycle;
++        public int chargingCycleMs = 1000;
++        public int meters = METER_TIME | METER_PERCENT;
++        public boolean tapToCycle;
++        public int textSizeSp = 12;
++        public int capacityMah;
++
++        String chargingSymbolText(boolean charging) {
++            if (!charging) {
++                return "";
++            }
++            switch (chargingSymbol) {
++                case PLUS:
++                    return "+";
++                case TEXT:
++                    return "CHG ";
++                case EMOJI:
++                    return "\u26a1";
++                case BOLT:
++                default:
++                    return "\u21ef";
++            }
++        }
++
++        /** Meters of the charging cycle, in fixed order. */
++        public Meter[] cycleMeters() {
++            int count = Integer.bitCount(meters);
++            Meter[] out = new Meter[Math.max(2, count)];
++            int at = 0;
++            if ((meters & METER_TIME) != 0) {
++                out[at++] = Meter.TIME;
++            }
++            if ((meters & METER_PERCENT) != 0) {
++                out[at++] = Meter.PERCENT;
++            }
++            if ((meters & METER_WATTS) != 0) {
++                out[at++] = Meter.WATTS;
++            }
++            if ((meters & METER_VOLTS) != 0) {
++                out[at++] = Meter.VOLTS;
++            }
++            if (at == 0) {
++                out[0] = Meter.TIME;
++                out[1] = Meter.PERCENT;
++            }
++            return out;
++        }
++
++        /** True when {@code other} holds the same settings (for the property listener). */
++        public boolean sameAs(Config other) {
++            return other != null
++                    && show == other.show
++                    && placement == other.placement
++                    && detail == other.detail
++                    && format == other.format
++                    && windowMinutes == other.windowMinutes
++                    && intervalSeconds == other.intervalSeconds
++                    && chargingSymbol == other.chargingSymbol
++                    && chargingCycle == other.chargingCycle
++                    && chargingCycleMs == other.chargingCycleMs
++                    && meters == other.meters
++                    && tapToCycle == other.tapToCycle
++                    && textSizeSp == other.textSizeSp
++                    && capacityMah == other.capacityMah;
++        }
++    }
++
++    // --------------------------------------------------------------- parsing
++
++    public static int clampWindow(int minutes) {
++        return (minutes == 1 || minutes == 3 || minutes == 5 || minutes == 10) ? minutes : 5;
++    }
++
++    public static int clampIntervalSeconds(int seconds) {
++        return (seconds < 2 || seconds > 30) ? 5 : seconds;
++    }
++
++    public static int clampTextSizeSp(int sp) {
++        return (sp < 10 || sp > 16) ? 12 : sp;
++    }
++
++    public static int clampCycleMs(int ms) {
++        return (ms < 500 || ms > 5000) ? 1000 : ms;
++    }
++
++    public static boolean parseEnabled(String value) {
++        return "1".equals(value) || "true".equalsIgnoreCase(value);
++    }
++
++    public static Placement parsePlacement(String value) {
++        if (value != null) {
++            switch (value.trim().toUpperCase(Locale.US)) {
++                case "BATTERY_RIGHT":
++                    return Placement.BATTERY_RIGHT;
++                case "CLOCK_LEFT":
++                    return Placement.CLOCK_LEFT;
++                case "CLOCK_RIGHT":
++                    return Placement.CLOCK_RIGHT;
++                case "REPLACE_PERCENT":
++                    return Placement.REPLACE_PERCENT;
++                case "BATTERY_LEFT":
++                default:
++                    break;
++            }
++        }
++        return Placement.BATTERY_LEFT;
++    }
++
++    public static Detail parseDetail(String value) {
++        if (value != null) {
++            switch (value.trim().toUpperCase(Locale.US)) {
++                case "TIME_W":
++                    return Detail.TIME_W;
++                case "TIME_W_V":
++                    return Detail.TIME_W_V;
++                case "TIME_V":
++                    return Detail.TIME_V;
++                case "W":
++                    return Detail.W;
++                case "V":
++                    return Detail.V;
++                case "W_V":
++                    return Detail.W_V;
++                case "TIME":
++                default:
++                    break;
++            }
++        }
++        return Detail.TIME;
++    }
++
++    public static Format parseFormat(String value) {
++        if (value != null) {
++            switch (value.trim().toUpperCase(Locale.US)) {
++                case "SHORT":
++                    return Format.SHORT;
++                case "COLON":
++                    return Format.COLON;
++                case "DETAILED":
++                    return Format.DETAILED;
++                case "COMPACT":
++                default:
++                    break;
++            }
++        }
++        return Format.COMPACT;
++    }
++
++    public static ChargingSymbol parseChargingSymbol(String value) {
++        if (value != null) {
++            switch (value.trim().toUpperCase(Locale.US)) {
++                case "PLUS":
++                    return ChargingSymbol.PLUS;
++                case "TEXT":
++                    return ChargingSymbol.TEXT;
++                case "EMOJI":
++                    return ChargingSymbol.EMOJI;
++                case "BOLT":
++                default:
++                    break;
++            }
++        }
++        return ChargingSymbol.BOLT;
++    }
++
++    /**
++     * {@code chg_meters} is a comma separated list of 2-3 of TIME/PERCENT/WATTS/VOLTS; anything
++     * else falls back to the default pair.
++     */
++    public static int parseMeters(String value) {
++        if (value == null) {
++            return Config.METER_TIME | Config.METER_PERCENT;
++        }
++        int mask = 0;
++        for (String part : value.split(",")) {
++            switch (part.trim().toUpperCase(Locale.US)) {
++                case "TIME":
++                    mask |= Config.METER_TIME;
++                    break;
++                case "PERCENT":
++                    mask |= Config.METER_PERCENT;
++                    break;
++                case "WATTS":
++                    mask |= Config.METER_WATTS;
++                    break;
++                case "VOLTS":
++                    mask |= Config.METER_VOLTS;
++                    break;
++                default:
++                    break;
++            }
++        }
++        return Integer.bitCount(mask) < 2 ? Config.METER_TIME | Config.METER_PERCENT : mask;
++    }
++
++    /** Parses a non-negative integer property; anything else yields {@code fallback}. */
++    public static int parseNonNegativeInt(String value, int fallback) {
++        if (value == null || value.isEmpty()) {
++            return fallback;
++        }
++        try {
++            int parsed = Integer.parseInt(value.trim());
++            return parsed >= 0 ? parsed : fallback;
++        } catch (NumberFormatException e) {
++            return fallback;
++        }
++    }
++}
+diff --git a/packages/SystemUI/src/com/android/systemui/ashfall/PlayTimeIndicator.java b/packages/SystemUI/src/com/android/systemui/ashfall/PlayTimeIndicator.java
+new file mode 100644
+index 000000000000..28301cc853a0
+--- /dev/null
++++ b/packages/SystemUI/src/com/android/systemui/ashfall/PlayTimeIndicator.java
+@@ -0,0 +1,571 @@
++/*
++ * Copyright (C) 2026 The AshFall Project
++ *
++ * Licensed under the Apache License, Version 2.0 (the "License");
++ * you may not use this file except in compliance with the License.
++ * You may obtain a copy of the License at
++ *
++ *      http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++
++package com.android.systemui.ashfall;
++
++import android.content.BroadcastReceiver;
++import android.content.Context;
++import android.content.Intent;
++import android.content.IntentFilter;
++import android.os.BatteryManager;
++import android.os.Handler;
++import android.os.Looper;
++import android.os.SystemClock;
++import android.util.Log;
++import android.util.TypedValue;
++import android.view.View;
++import android.view.ViewGroup;
++import android.view.ViewParent;
++
++import com.android.systemui.Dependency;
++import com.android.systemui.keyguard.ScreenLifecycle;
++import com.android.systemui.plugins.DarkIconDispatcher;
++import com.android.systemui.res.R;
++import com.android.systemui.statusbar.phone.PhoneStatusBarView;
++import com.android.systemui.statusbar.policy.KeyguardStateController;
++
++import java.util.function.BooleanSupplier;
++
++/**
++ * Drives the PlayTime text in the status bar.
++ *
++ * <p>Owns one {@link PlayTimeIndicatorView} in the {@link PhoneStatusBarView} hierarchy. The
++ * telemetry comes from {@link BatteryManager}: the sticky {@link Intent#ACTION_BATTERY_CHANGED}
++ * broadcast for level, voltage, charging state and the charge counter, and {@code
++ * BATTERY_PROPERTY_CURRENT_NOW} for the current. Nothing reads sysfs, nothing reads a daemon
++ * property, nothing polls a service in the background: the broadcast updates the cached state and a
++ * tick at the configured sample interval feeds {@link PlayTimeEstimator} and writes the resulting
++ * string. Nothing is scheduled while the indicator or the screen is off; the estimator drops its
++ * window when the screen comes back so standby drain can never leak into the estimate.
++ *
++ * <p>Everything is guarded: a missing view, a missing broadcast or an unsupported battery property
++ * leaves the indicator showing {@code --} instead of taking SystemUI down.
++ */
++public final class PlayTimeIndicator {
++
++    private static final String TAG = "PlayTimeIndicator";
++    private static final boolean DEBUG = false;
++
++    private static final IntentFilter BATTERY_FILTER = new IntentFilter(
++            Intent.ACTION_BATTERY_CHANGED);
++
++    /** Plausibility bounds for this device; anything outside is treated as unknown. */
++    private static final int MAX_PLAUSIBLE_MA = 10_000;
++    private static final int MIN_PLAUSIBLE_MV = 2_500;
++    private static final int MAX_PLAUSIBLE_MV = 5_500;
++
++    /** {@link BatteryManager#getIntProperty} reports this for an unsupported property. */
++    private static final int UNSUPPORTED_PROPERTY = Integer.MIN_VALUE;
++
++    private static final int PADDING_DP = 4;
++
++    private final PhoneStatusBarView mBarView;
++    private final Context mContext;
++    private final DarkIconDispatcher mDarkIconDispatcher;
++    private final BooleanSupplier mPanelCollapsed;
++    private final Handler mHandler = new Handler(Looper.getMainLooper());
++    private final PlayTimeEstimator mEstimator =
++            new PlayTimeEstimator(SystemClock::elapsedRealtime);
++    private final PlayTimeEstimator.Reading mReading = new PlayTimeEstimator.Reading();
++    private final PlayTimeIndicatorView mIndicatorView;
++
++    private ScreenLifecycle mScreenLifecycle;
++    private KeyguardStateController mKeyguardStateController;
++    private BatteryManager mBatteryManager;
++    private boolean mBatteryReceiverRegistered;
++
++    private final Runnable mTick = this::tick;
++    private final Runnable mCycle = this::advanceCycle;
++    private final Runnable mOnSettingsChanged = this::onSettingsChanged;
++
++    private final ScreenLifecycle.Observer mScreenObserver =
++            new ScreenLifecycle.Observer() {
++                @Override
++                public void onScreenTurnedOn() {
++                    mEstimator.setScreenOn(true);
++                    mTap = PlayTimeEstimator.TapCycle.CONFIG;
++                    registerBatteryReceiver();
++                    startTicking();
++                }
++
++                @Override
++                public void onScreenTurnedOff() {
++                    mEstimator.setScreenOn(false);
++                    unregisterBatteryReceiver();
++                    stopTimers();
++                }
++            };
++
++    // State of the latest ACTION_BATTERY_CHANGED, refreshed by the receiver.
++    private int mLevelPct = PlayTimeEstimator.UNKNOWN;
++    private int mVoltageMv = PlayTimeEstimator.UNKNOWN;
++    private boolean mCharging;
++    private int mChargeMah = PlayTimeEstimator.UNKNOWN;
++    private int mCapacityMah = PlayTimeEstimator.UNKNOWN;
++
++    private final BroadcastReceiver mBatteryReceiver =
++            new BroadcastReceiver() {
++                @Override
++                public void onReceive(Context context, Intent intent) {
++                    try {
++                        updateFromBatteryIntent(intent);
++                        if (mAttached && mConfig.show && isScreenOn()) {
++                            sample();
++                        }
++                    } catch (Throwable t) {
++                        fail("battery broadcast failed", t);
++                    }
++                }
++            };
++
++    private PlayTimeEstimator.Config mConfig = new PlayTimeEstimator.Config();
++    private PlayTimeEstimator.Meter[] mMeters = new PlayTimeEstimator.Meter[0];
++    private PlayTimeEstimator.TapCycle mTap = PlayTimeEstimator.TapCycle.CONFIG;
++    private int mCycleIndex;
++    private String mLastText = "";
++    private boolean mAttached;
++    private boolean mFailureLogged;
++
++    /**
++     * Attaches the indicator to {@code view}, or returns {@code null} when it cannot be attached.
++     *
++     * @param panelCollapsed tells whether the shade is collapsed, so a tap on the indicator never
++     *     fires during an unfold or an expanded shade gesture
++     */
++    public static PlayTimeIndicator attach(PhoneStatusBarView view,
++            DarkIconDispatcher darkIconDispatcher, BooleanSupplier panelCollapsed) {
++        try {
++            PlayTimeIndicator indicator =
++                    new PlayTimeIndicator(view, darkIconDispatcher, panelCollapsed);
++            indicator.onAttached();
++            return indicator;
++        } catch (Throwable t) {
++            Log.w(TAG, "PlayTime indicator disabled: attach failed", t);
++            return null;
++        }
++    }
++
++    private PlayTimeIndicator(PhoneStatusBarView view, DarkIconDispatcher darkIconDispatcher,
++            BooleanSupplier panelCollapsed) {
++        mBarView = view;
++        mContext = view.getContext();
++        mDarkIconDispatcher = darkIconDispatcher;
++        mPanelCollapsed = panelCollapsed;
++        mIndicatorView = new PlayTimeIndicatorView(mContext);
++        int padding = Math.round(PADDING_DP * view.getResources().getDisplayMetrics().density);
++        mIndicatorView.setPaddingRelative(padding, 0, padding, 0);
++    }
++
++    private void onAttached() {
++        mAttached = true;
++        try {
++            mScreenLifecycle = Dependency.get(ScreenLifecycle.class);
++            mScreenLifecycle.addObserver(mScreenObserver);
++            mEstimator.setScreenOn(
++                    mScreenLifecycle.getScreenState() == ScreenLifecycle.SCREEN_ON);
++        } catch (Throwable t) {
++            mScreenLifecycle = null;
++            Log.w(TAG, "no screen lifecycle, sampling will not pause with the screen", t);
++        }
++        try {
++            mKeyguardStateController = Dependency.get(KeyguardStateController.class);
++        } catch (Throwable t) {
++            mKeyguardStateController = null;
++        }
++        try {
++            mBatteryManager = mContext.getSystemService(BatteryManager.class);
++        } catch (Throwable t) {
++            mBatteryManager = null;
++            Log.w(TAG, "no battery manager, the estimate stays unavailable", t);
++        }
++
++        PlayTimeSettings.addListener(mOnSettingsChanged);
++        if (mDarkIconDispatcher != null) {
++            mDarkIconDispatcher.addDarkReceiver(mIndicatorView);
++        }
++        mIndicatorView.setOnClickListener(v -> onTap());
++        applyConfig();
++    }
++
++    /** Detaches everything this indicator added. Safe to call twice. */
++    public void detach() {
++        if (!mAttached) {
++            return;
++        }
++        mAttached = false;
++        stopTimers();
++        unregisterBatteryReceiver();
++        PlayTimeSettings.removeListener(mOnSettingsChanged);
++        try {
++            if (mScreenLifecycle != null) {
++                mScreenLifecycle.removeObserver(mScreenObserver);
++            }
++        } catch (Throwable t) {
++            Log.w(TAG, "removing the screen observer failed", t);
++        }
++        if (mDarkIconDispatcher != null) {
++            mDarkIconDispatcher.removeDarkReceiver(mIndicatorView);
++        }
++        removeFromParent();
++        mEstimator.purge();
++    }
++
++    // ------------------------------------------------------------- settings
++
++    private void onSettingsChanged() {
++        try {
++            applyConfig();
++        } catch (Throwable t) {
++            fail("applying settings failed", t);
++        }
++    }
++
++    private void applyConfig() {
++        mConfig = PlayTimeSettings.config();
++        mEstimator.setWindowMinutes(mConfig.windowMinutes);
++        mEstimator.setIntervalSeconds(mConfig.intervalSeconds);
++        mMeters = mConfig.cycleMeters();
++        mTap = PlayTimeEstimator.TapCycle.CONFIG;
++        mCycleIndex = 0;
++        mIndicatorView.setClickable(mConfig.tapToCycle);
++
++        if (!mConfig.show) {
++            hide();
++            return;
++        }
++        mIndicatorView.setTextSize(TypedValue.COMPLEX_UNIT_SP, mConfig.textSizeSp);
++        if (!place()) {
++            hide();
++            return;
++        }
++        mIndicatorView.setVisibility(View.VISIBLE);
++        registerBatteryReceiver();
++        startTicking();
++    }
++
++    private void hide() {
++        stopTimers();
++        unregisterBatteryReceiver();
++        removeFromParent();
++        mEstimator.purge();
++        mLastText = "";
++    }
++
++    // ------------------------------------------------------------- placement
++
++    /** Places the view in the configured slot; false when there is no suitable parent. */
++    private boolean place() {
++        ViewGroup parent = parentFor(mConfig.placement);
++        if (parent == null) {
++            return false;
++        }
++        removeFromParent();
++        int index = Math.max(0, Math.min(indexFor(parent, mConfig.placement), parent.getChildCount()));
++        try {
++            parent.addView(mIndicatorView, index);
++        } catch (Throwable t) {
++            fail("cannot place the indicator", t);
++            return false;
++        }
++        return true;
++    }
++
++    private void removeFromParent() {
++        ViewParent parent = mIndicatorView.getParent();
++        if (parent instanceof ViewGroup) {
++            ((ViewGroup) parent).removeView(mIndicatorView);
++        }
++    }
++
++    private ViewGroup parentFor(PlayTimeEstimator.Placement placement) {
++        switch (placement) {
++            case CLOCK_LEFT:
++            case CLOCK_RIGHT: {
++                View clock = pickClockView();
++                if (clock == null) {
++                    return null;
++                }
++                ViewParent parent = clock.getParent();
++                return parent instanceof ViewGroup ? (ViewGroup) parent : null;
++            }
++            case BATTERY_LEFT:
++            case BATTERY_RIGHT:
++            case REPLACE_PERCENT:
++            default: {
++                View systemIcons = mBarView.findViewById(R.id.system_icons);
++                if (systemIcons instanceof ViewGroup
++                        && systemIcons.getVisibility() != View.GONE) {
++                    return (ViewGroup) systemIcons;
++                }
++                // Status icons rendered in Compose hide the View container (flag), or the layout
++                // changed: fall back to the end side of the status bar instead of dropping out.
++                View endSide = mBarView.findViewById(R.id.status_bar_end_side_content);
++                return endSide instanceof ViewGroup ? (ViewGroup) endSide : null;
++            }
++        }
++    }
++
++    private int indexFor(ViewGroup parent, PlayTimeEstimator.Placement placement) {
++        switch (placement) {
++            case CLOCK_LEFT:
++            case CLOCK_RIGHT: {
++                View clock = pickClockView();
++                if (clock == null || clock.getParent() != parent) {
++                    return parent.getChildCount();
++                }
++                return placement == PlayTimeEstimator.Placement.CLOCK_LEFT
++                        ? parent.indexOfChild(clock)
++                        : parent.indexOfChild(clock) + 1;
++            }
++            case BATTERY_LEFT:
++            case BATTERY_RIGHT:
++            case REPLACE_PERCENT:
++            default: {
++                // With the Compose battery the percent lives inside the battery view, so the
++                // indicator takes the slot right after it; the Compose side hides the percent for
++                // REPLACE_PERCENT (see StatusBarRoot).
++                View battery = parent.findViewById(R.id.battery_composable_view);
++                if (battery != null && battery.getParent() == parent) {
++                    int index = parent.indexOfChild(battery);
++                    return placement == PlayTimeEstimator.Placement.BATTERY_LEFT ? index : index + 1;
++                }
++                View icons = parent.findViewById(R.id.statusIcons);
++                if (icons != null && icons.getParent() == parent) {
++                    int index = parent.indexOfChild(icons);
++                    return placement == PlayTimeEstimator.Placement.BATTERY_LEFT ? index : index + 1;
++                }
++                return placement == PlayTimeEstimator.Placement.BATTERY_LEFT
++                        ? 0
++                        : parent.getChildCount();
++            }
++        }
++    }
++
++    /** The clock slot in use: left by default, centre or right when the user picked those. */
++    private View pickClockView() {
++        View[] clocks = {
++                mBarView.findViewById(R.id.clock),
++                mBarView.findViewById(R.id.clock_center),
++                mBarView.findViewById(R.id.clock_right),
++        };
++        for (View clock : clocks) {
++            if (clock != null && clock.getVisibility() == View.VISIBLE) {
++                return clock;
++            }
++        }
++        return null;
++    }
++
++    // --------------------------------------------------------------- sampling
++
++    private void startTicking() {
++        if (!mAttached || !mConfig.show || !isScreenOn()) {
++            return;
++        }
++        mHandler.removeCallbacks(mTick);
++        mHandler.post(mTick);
++    }
++
++    private void stopTimers() {
++        mHandler.removeCallbacks(mTick);
++        mHandler.removeCallbacks(mCycle);
++    }
++
++    private void tick() {
++        if (!mAttached || !mConfig.show || !isScreenOn()) {
++            return;
++        }
++        try {
++            sample();
++        } catch (Throwable t) {
++            fail("sampling failed", t);
++            return;
++        }
++        mHandler.postDelayed(mTick, mConfig.intervalSeconds * 1000L);
++    }
++
++    /** One sample: the cached broadcast state plus the current from BatteryManager. */
++    private void sample() {
++        mEstimator.observe(readCurrentMa(), mLevelPct, mVoltageMv, mCharging, mChargeMah,
++                mCapacityMah, mConfig.capacityMah);
++        render();
++    }
++
++    private void registerBatteryReceiver() {
++        if (mBatteryReceiverRegistered) {
++            return;
++        }
++        try {
++            // Sticky: returns the latest battery state and keeps it updated from then on.
++            Intent sticky = mContext.registerReceiver(mBatteryReceiver, BATTERY_FILTER,
++                    Context.RECEIVER_NOT_EXPORTED);
++            mBatteryReceiverRegistered = true;
++            if (sticky != null) {
++                updateFromBatteryIntent(sticky);
++            }
++        } catch (Throwable t) {
++            mBatteryReceiverRegistered = false;
++            Log.w(TAG, "cannot register for battery updates", t);
++        }
++    }
++
++    private void unregisterBatteryReceiver() {
++        if (!mBatteryReceiverRegistered) {
++            return;
++        }
++        mBatteryReceiverRegistered = false;
++        try {
++            mContext.unregisterReceiver(mBatteryReceiver);
++        } catch (Throwable t) {
++            Log.w(TAG, "cannot unregister from battery updates", t);
++        }
++    }
++
++    /**
++     * Caches level, voltage, charging state, remaining charge and the derived capacity from an
++     * {@link Intent#ACTION_BATTERY_CHANGED} intent. Anything missing becomes {@link
++     * PlayTimeEstimator#UNKNOWN}.
++     */
++    private void updateFromBatteryIntent(Intent intent) {
++        if (intent == null) {
++            return;
++        }
++        int level = intent.getIntExtra(BatteryManager.EXTRA_LEVEL, PlayTimeEstimator.UNKNOWN);
++        int scale = intent.getIntExtra(BatteryManager.EXTRA_SCALE, PlayTimeEstimator.UNKNOWN);
++        mLevelPct = (level < 0 || scale <= 0 || level > scale)
++                ? PlayTimeEstimator.UNKNOWN
++                : (int) ((long) level * 100 / scale);
++
++        int voltageMv = intent.getIntExtra(BatteryManager.EXTRA_VOLTAGE,
++                PlayTimeEstimator.UNKNOWN);
++        mVoltageMv = (voltageMv < MIN_PLAUSIBLE_MV || voltageMv > MAX_PLAUSIBLE_MV)
++                ? PlayTimeEstimator.UNKNOWN
++                : voltageMv;
++
++        int status = intent.getIntExtra(BatteryManager.EXTRA_STATUS, PlayTimeEstimator.UNKNOWN);
++        mCharging = status == BatteryManager.BATTERY_STATUS_CHARGING
++                || status == BatteryManager.BATTERY_STATUS_FULL;
++
++        int chargeUah = property(BatteryManager.BATTERY_PROPERTY_CHARGE_COUNTER);
++        mChargeMah = chargeUah >= 0 ? chargeUah / 1000 : PlayTimeEstimator.UNKNOWN;
++        // Design capacity is not exposed: derive it from the charge counter and the level.
++        mCapacityMah = (mChargeMah > 0 && mLevelPct > 0)
++                ? (int) ((long) mChargeMah * 100 / mLevelPct)
++                : PlayTimeEstimator.UNKNOWN;
++    }
++
++    /** Instantaneous current in mA, rectified: {@code BATTERY_PROPERTY_CURRENT_NOW} is uA, signed. */
++    private int readCurrentMa() {
++        int microAmps = property(BatteryManager.BATTERY_PROPERTY_CURRENT_NOW);
++        if (microAmps == PlayTimeEstimator.UNKNOWN || microAmps == 0) {
++            return PlayTimeEstimator.UNKNOWN;
++        }
++        int milliAmps = Math.abs(microAmps) / 1000;
++        return milliAmps > MAX_PLAUSIBLE_MA ? PlayTimeEstimator.UNKNOWN : milliAmps;
++    }
++
++    private int property(int id) {
++        if (mBatteryManager == null) {
++            return PlayTimeEstimator.UNKNOWN;
++        }
++        try {
++            int value = mBatteryManager.getIntProperty(id);
++            return value == UNSUPPORTED_PROPERTY ? PlayTimeEstimator.UNKNOWN : value;
++        } catch (Throwable t) {
++            return PlayTimeEstimator.UNKNOWN;
++        }
++    }
++
++    private void render() {
++        mEstimator.fill(mReading);
++        String text;
++        if (mConfig.chargingCycle && mReading.charging && mMeters.length > 1) {
++            text = PlayTimeEstimator.meter(mMeters[mCycleIndex % mMeters.length], mReading, mConfig);
++        } else {
++            text = PlayTimeEstimator.render(mReading, mConfig, mTap);
++        }
++        // One setText per changed string: no allocation and no relayout in the draw path.
++        if (!text.equals(mLastText)) {
++            mLastText = text;
++            mIndicatorView.setText(text);
++            mIndicatorView.setContentDescription(text);
++            if (DEBUG) {
++                Log.d(TAG, "indicator: " + text);
++            }
++        }
++        updateCycleTimer();
++    }
++
++    private void updateCycleTimer() {
++        mHandler.removeCallbacks(mCycle);
++        boolean rotate = mConfig.chargingCycle && mReading.charging && mMeters.length > 1
++                && isScreenOn();
++        if (!rotate) {
++            mCycleIndex = 0;
++            return;
++        }
++        mHandler.postDelayed(mCycle, mConfig.chargingCycleMs);
++    }
++
++    private void advanceCycle() {
++        if (!mAttached || !mConfig.show) {
++            return;
++        }
++        mCycleIndex++;
++        try {
++            render();
++        } catch (Throwable t) {
++            fail("charging cycle failed", t);
++        }
++    }
++
++    // -------------------------------------------------------------- tap cycle
++
++    private void onTap() {
++        if (!mConfig.show || !mConfig.tapToCycle) {
++            return;
++        }
++        if (mPanelCollapsed != null && !mPanelCollapsed.getAsBoolean()) {
++            // The shade is expanded or being dragged: that gesture belongs to the shade.
++            return;
++        }
++        if (mKeyguardStateController != null
++                && mKeyguardStateController.isPrimaryBouncerShowing()) {
++            return;
++        }
++        mTap = mTap.next();
++        try {
++            render();
++        } catch (Throwable t) {
++            fail("tap cycle failed", t);
++        }
++    }
++
++    // ---------------------------------------------------------------- helpers
++
++    private boolean isScreenOn() {
++        return mScreenLifecycle == null
++                || mScreenLifecycle.getScreenState() == ScreenLifecycle.SCREEN_ON;
++    }
++
++    private void fail(String message, Throwable t) {
++        if (!mFailureLogged) {
++            mFailureLogged = true;
++            Log.w(TAG, "PlayTime indicator disabled: " + message, t);
++        }
++        hide();
++    }
++}
+diff --git a/packages/SystemUI/src/com/android/systemui/ashfall/PlayTimeIndicatorView.java b/packages/SystemUI/src/com/android/systemui/ashfall/PlayTimeIndicatorView.java
+new file mode 100644
+index 000000000000..966b74935f90
+--- /dev/null
++++ b/packages/SystemUI/src/com/android/systemui/ashfall/PlayTimeIndicatorView.java
+@@ -0,0 +1,50 @@
++/*
++ * Copyright (C) 2026 The AshFall Project
++ *
++ * Licensed under the Apache License, Version 2.0 (the "License");
++ * you may not use this file except in compliance with the License.
++ * You may obtain a copy of the License at
++ *
++ *      http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++
++package com.android.systemui.ashfall;
++
++import android.content.Context;
++import android.graphics.Rect;
++import android.view.Gravity;
++import android.widget.TextView;
++
++import com.android.systemui.plugins.DarkIconDispatcher;
++import com.android.systemui.res.R;
++
++import java.util.ArrayList;
++
++/**
++ * The status bar PlayTime text.
++ *
++ * <p>Colour comes from the same {@link DarkIconDispatcher} tint the status bar clock and the battery
++ * text use, so the indicator follows light, dark and tinted backgrounds. The text itself is set by
++ * {@link PlayTimeIndicator} once per telemetry tick, never from {@code onDraw}: drawing only paints
++ * the cached string.
++ */
++public final class PlayTimeIndicatorView extends TextView implements DarkIconDispatcher.DarkReceiver {
++
++    public PlayTimeIndicatorView(Context context) {
++        super(context, null, 0, R.style.TextAppearance_StatusBar_Default);
++        setGravity(Gravity.CENTER_VERTICAL);
++        setSingleLine(true);
++        setIncludeFontPadding(false);
++    }
++
++    @Override
++    public void onDarkChanged(ArrayList<Rect> areas, float darkIntensity, int tint) {
++        setTextColor(DarkIconDispatcher.getTint(areas, this, tint));
++    }
++}
+diff --git a/packages/SystemUI/src/com/android/systemui/ashfall/PlayTimeSettings.java b/packages/SystemUI/src/com/android/systemui/ashfall/PlayTimeSettings.java
+new file mode 100644
+index 000000000000..adc3685d5428
+--- /dev/null
++++ b/packages/SystemUI/src/com/android/systemui/ashfall/PlayTimeSettings.java
+@@ -0,0 +1,161 @@
++/*
++ * Copyright (C) 2026 The AshFall Project
++ *
++ * Licensed under the Apache License, Version 2.0 (the "License");
++ * you may not use this file except in compliance with the License.
++ * You may obtain a copy of the License at
++ *
++ *      http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++
++package com.android.systemui.ashfall;
++
++import android.os.Handler;
++import android.os.Looper;
++import android.os.SystemProperties;
++import android.util.Log;
++
++import java.util.concurrent.CopyOnWriteArrayList;
++
++/**
++ * The PlayTime settings, read from {@code persist.ashfall.batt.*}.
++ *
++ * <p>The settings page (Settings > Battery) writes those properties; this process only reads them.
++ * They are watched with a {@link SystemProperties} change callback, not polled: a change is
++ * coalesced onto the main thread, the whole schema is re-read once and listeners are only told when
++ * the parsed settings actually differ.
++ *
++ * <p>Every value is validated here. A missing, malformed or stale property yields the documented
++ * default (see {@code docs/playtime.md}) - never an exception and never a crash.
++ */
++public final class PlayTimeSettings {
++
++    private static final String TAG = "PlayTimeSettings";
++
++    public static final String KEY_SHOW = "persist.ashfall.batt.show";
++    public static final String KEY_PLACEMENT = "persist.ashfall.batt.place";
++    public static final String KEY_DETAIL = "persist.ashfall.batt.detail";
++    public static final String KEY_FORMAT = "persist.ashfall.batt.fmt";
++    public static final String KEY_WINDOW = "persist.ashfall.batt.window";
++    public static final String KEY_INTERVAL = "persist.ashfall.batt.interval";
++    public static final String KEY_CHARGING_SYMBOL = "persist.ashfall.batt.chg_symbol";
++    public static final String KEY_CHARGING_CYCLE = "persist.ashfall.batt.chg_cycle";
++    public static final String KEY_CHARGING_CYCLE_MS = "persist.ashfall.batt.chg_cycle_ms";
++    public static final String KEY_CHARGING_METERS = "persist.ashfall.batt.chg_meters";
++    public static final String KEY_TAP = "persist.ashfall.batt.tap";
++    public static final String KEY_TEXT_SIZE = "persist.ashfall.batt.size_sp";
++    public static final String KEY_CAPACITY = "persist.ashfall.batt.capacity_mah";
++
++    private static volatile PlayTimeSettings sInstance;
++
++    private final Handler mHandler = new Handler(Looper.getMainLooper());
++    private final CopyOnWriteArrayList<Runnable> mListeners = new CopyOnWriteArrayList<>();
++    private final Runnable mRefresh = this::refresh;
++
++    private volatile PlayTimeEstimator.Config mConfig = read();
++
++    /** The process wide settings snapshot. */
++    public static PlayTimeSettings get() {
++        PlayTimeSettings instance = sInstance;
++        if (instance == null) {
++            synchronized (PlayTimeSettings.class) {
++                instance = sInstance;
++                if (instance == null) {
++                    instance = new PlayTimeSettings();
++                    sInstance = instance;
++                }
++            }
++        }
++        return instance;
++    }
++
++    private PlayTimeSettings() {
++        try {
++            // Fires on a native thread for every property change in the system: coalesce onto the
++            // main thread and re-read once, rather than re-reading per notification.
++            SystemProperties.addChangeCallback(() -> {
++                mHandler.removeCallbacks(mRefresh);
++                mHandler.post(mRefresh);
++            });
++        } catch (Throwable t) {
++            Log.w(TAG, "property listener unavailable, settings will not update live", t);
++        }
++    }
++
++    /** The current, already validated settings. */
++    public static PlayTimeEstimator.Config config() {
++        return get().mConfig;
++    }
++
++    public static void addListener(Runnable listener) {
++        get().mListeners.addIfAbsent(listener);
++    }
++
++    public static void removeListener(Runnable listener) {
++        get().mListeners.remove(listener);
++    }
++
++    /** True when the indicator is on and owns the battery percent slot. */
++    public static boolean replacesBatteryPercent() {
++        PlayTimeEstimator.Config config = config();
++        return config.show && config.placement == PlayTimeEstimator.Placement.REPLACE_PERCENT;
++    }
++
++    private void refresh() {
++        PlayTimeEstimator.Config fresh = read();
++        if (fresh.sameAs(mConfig)) {
++            return;
++        }
++        mConfig = fresh;
++        for (Runnable listener : mListeners) {
++            try {
++                listener.run();
++            } catch (Throwable t) {
++                Log.w(TAG, "settings listener failed", t);
++            }
++        }
++    }
++
++    private static PlayTimeEstimator.Config read() {
++        PlayTimeEstimator.Config config = new PlayTimeEstimator.Config();
++        try {
++            config.show = PlayTimeEstimator.parseEnabled(get(KEY_SHOW, "0"));
++            config.placement = PlayTimeEstimator.parsePlacement(get(KEY_PLACEMENT, ""));
++            config.detail = PlayTimeEstimator.parseDetail(get(KEY_DETAIL, ""));
++            config.format = PlayTimeEstimator.parseFormat(get(KEY_FORMAT, ""));
++            config.windowMinutes = PlayTimeEstimator.clampWindow(
++                    PlayTimeEstimator.parseNonNegativeInt(get(KEY_WINDOW, ""), 5));
++            config.intervalSeconds = PlayTimeEstimator.clampIntervalSeconds(
++                    PlayTimeEstimator.parseNonNegativeInt(get(KEY_INTERVAL, ""), 5));
++            config.chargingSymbol =
++                    PlayTimeEstimator.parseChargingSymbol(get(KEY_CHARGING_SYMBOL, ""));
++            config.chargingCycle = PlayTimeEstimator.parseEnabled(get(KEY_CHARGING_CYCLE, "0"));
++            config.chargingCycleMs = PlayTimeEstimator.clampCycleMs(
++                    PlayTimeEstimator.parseNonNegativeInt(get(KEY_CHARGING_CYCLE_MS, ""), 1000));
++            config.meters = PlayTimeEstimator.parseMeters(get(KEY_CHARGING_METERS, ""));
++            config.tapToCycle = PlayTimeEstimator.parseEnabled(get(KEY_TAP, "0"));
++            config.textSizeSp = PlayTimeEstimator.clampTextSizeSp(
++                    PlayTimeEstimator.parseNonNegativeInt(get(KEY_TEXT_SIZE, ""), 12));
++            config.capacityMah = PlayTimeEstimator.parseNonNegativeInt(get(KEY_CAPACITY, ""), 0);
++        } catch (Throwable t) {
++            // Defensive: a property read must never take SystemUI down. Keep the defaults.
++            Log.w(TAG, "reading persist.ashfall.batt.* failed, using defaults", t);
++            return new PlayTimeEstimator.Config();
++        }
++        return config;
++    }
++
++    private static String get(String key, String fallback) {
++        try {
++            return SystemProperties.get(key, fallback);
++        } catch (Throwable t) {
++            return fallback;
++        }
++    }
++}
+diff --git a/packages/SystemUI/src/com/android/systemui/statusbar/phone/PhoneStatusBarViewController.kt b/packages/SystemUI/src/com/android/systemui/statusbar/phone/PhoneStatusBarViewController.kt
+index 2d3f497b38d6..cdb3de351f47 100644
+--- a/packages/SystemUI/src/com/android/systemui/statusbar/phone/PhoneStatusBarViewController.kt
++++ b/packages/SystemUI/src/com/android/systemui/statusbar/phone/PhoneStatusBarViewController.kt
+@@ -26,6 +26,7 @@ import android.view.View
+ import android.view.ViewConfiguration
+ import androidx.annotation.VisibleForTesting
+ import com.android.systemui.Gefingerpoken
++import com.android.systemui.ashfall.PlayTimeIndicator
+ import com.android.systemui.display.dagger.SystemUIDisplaySubcomponent.DisplayAware
+ import com.android.systemui.plugins.DarkIconDispatcher
+ import com.android.systemui.res.R
+@@ -94,6 +95,9 @@ private constructor(
+     private lateinit var startSideContainer: View
+     private lateinit var endSideContainer: View
+ 
++    /** AshFall PlayTime battery indicator; null when it could not be attached. */
++    private var playTimeIndicator: PlayTimeIndicator? = null
++
+     private val shadeInvocationSplitRatio: Float =
+         resources.getFloat(R.dimen.config_invocationGestureSplitRatio)
+ 
+@@ -187,6 +191,14 @@ private constructor(
+ 
+         addDarkReceivers()
+ 
++        // AshFall: the PlayTime indicator lives in this View hierarchy and can be switched on and
++        // off at runtime. It hides itself when the settings say so or when the properties are
++        // unreadable, so a failure here must not stop the status bar.
++        playTimeIndicator =
++            PlayTimeIndicator.attach(mView, darkIconDispatcher) {
++                !panelExpansionInteractor.isPanelExpanded
++            }
++
+         if (mView.context.getDisplayId() != DEFAULT_DISPLAY) {
+             // With the StatusBarConnectedDisplays changes, external status bar elements are not
+             // interactive when the shade window can't change displays.
+@@ -257,6 +269,8 @@ private constructor(
+ 
+     @VisibleForTesting
+     public override fun onViewDetached() {
++        playTimeIndicator?.detach()
++        playTimeIndicator = null
+         removeDarkReceivers()
+         startSideContainer.setOnHoverListener(null)
+         endSideContainer.setOnHoverListener(null)
+diff --git a/packages/SystemUI/src/com/android/systemui/statusbar/pipeline/shared/ui/composable/StatusBarRoot.kt b/packages/SystemUI/src/com/android/systemui/statusbar/pipeline/shared/ui/composable/StatusBarRoot.kt
+index ee62df9d3cf1..7ccbad70d99c 100644
+--- a/packages/SystemUI/src/com/android/systemui/statusbar/pipeline/shared/ui/composable/StatusBarRoot.kt
++++ b/packages/SystemUI/src/com/android/systemui/statusbar/pipeline/shared/ui/composable/StatusBarRoot.kt
+@@ -69,6 +69,7 @@ import com.android.compose.modifiers.thenIf
+ import com.android.compose.theme.PlatformTheme
+ import com.android.compose.theme.colorAttr
+ import com.android.systemui.Flags
++import com.android.systemui.ashfall.PlayTimeSettings
+ import com.android.systemui.clock.ClockModernization
+ import com.android.systemui.clock.ui.composable.Clock
+ import com.android.systemui.clock.ui.viewmodel.AmPmStyle
+@@ -599,7 +600,8 @@ private fun addBatteryComposable(
+                     modifier = Modifier.sysUiResTagContainer().wrapContentSize(),
+                     viewModel = viewModel,
+                     isDarkProvider = { statusBarViewModel.areaDark },
+-                    showPercent = viewModel.isBatteryPercentSettingEnabled,
++                    showPercent =
++                        viewModel.isBatteryPercentSettingEnabled && !playTimeReplacesPercent(),
+                 )
+             }
+             setId(R.id.battery_composable_view)
+@@ -609,6 +611,24 @@ private fun addBatteryComposable(
+     }
+ }
+ 
++/**
++ * AshFall: whether the PlayTime indicator owns the battery percent slot
++ * (`persist.ashfall.batt.place=REPLACE_PERCENT`). The status bar text itself is a View added by
++ * [com.android.systemui.ashfall.PlayTimeIndicator]; only the stock percentage is Compose, so it
++ * steps aside here. Settings are property backed and the listener recomposes on change - this is
++ * not a poll.
++ */
++@Composable
++private fun playTimeReplacesPercent(): Boolean {
++    var replaces by remember { mutableStateOf(PlayTimeSettings.replacesBatteryPercent()) }
++    DisposableEffect(Unit) {
++        val listener = Runnable { replaces = PlayTimeSettings.replacesBatteryPercent() }
++        PlayTimeSettings.addListener(listener)
++        onDispose { PlayTimeSettings.removeListener(listener) }
++    }
++    return replaces
++}
++
+ /**
+  * Create a composable that will replace the status_bar_end_side_content. This is added to the end
+  * of the status_bar_end_side_container
+diff --git a/packages/SystemUI/tests/src/com/android/systemui/ashfall/PlayTimeEstimatorTest.java b/packages/SystemUI/tests/src/com/android/systemui/ashfall/PlayTimeEstimatorTest.java
+new file mode 100644
+index 000000000000..7344afa9fe4d
+--- /dev/null
++++ b/packages/SystemUI/tests/src/com/android/systemui/ashfall/PlayTimeEstimatorTest.java
+@@ -0,0 +1,411 @@
++/*
++ * Copyright (C) 2026 The AshFall Project
++ *
++ * Licensed under the Apache License, Version 2.0 (the "License");
++ * you may not use this file except in compliance with the License.
++ * You may obtain a copy of the License at
++ *
++ *      http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++
++package com.android.systemui.ashfall;
++
++import static org.junit.Assert.assertEquals;
++import static org.junit.Assert.assertFalse;
++import static org.junit.Assert.assertTrue;
++
++import com.android.systemui.ashfall.PlayTimeEstimator.ChargingSymbol;
++import com.android.systemui.ashfall.PlayTimeEstimator.Config;
++import com.android.systemui.ashfall.PlayTimeEstimator.Detail;
++import com.android.systemui.ashfall.PlayTimeEstimator.Format;
++import com.android.systemui.ashfall.PlayTimeEstimator.Placement;
++import com.android.systemui.ashfall.PlayTimeEstimator.Reading;
++import com.android.systemui.ashfall.PlayTimeEstimator.TapCycle;
++
++import org.junit.Test;
++
++/** Host tests for the PlayTime maths and formatting; no Android, no emulator. */
++public class PlayTimeEstimatorTest {
++
++    private static final int LEVEL = 50;
++    private static final int VOLTAGE_MV = 3800;
++    private static final int CHARGE_MAH = 3000;
++    private static final int CAPACITY_MAH = 6000;
++
++    /** Controllable clock. */
++    private static final class FakeClock implements PlayTimeEstimator.Clock {
++        long now;
++
++        @Override
++        public long elapsedRealtime() {
++            return now;
++        }
++    }
++
++    private final FakeClock mClock = new FakeClock();
++    private final PlayTimeEstimator mEstimator = new PlayTimeEstimator(mClock);
++    private final Reading mReading = new Reading();
++
++    private Config config() {
++        Config config = new Config();
++        config.windowMinutes = 5;
++        config.intervalSeconds = 5;
++        return config;
++    }
++
++    /** One daemon tick at {@code nowMs}. */
++    private void sample(long nowMs, int currentMa) {
++        mClock.now = nowMs;
++        mEstimator.observe(currentMa, LEVEL, VOLTAGE_MV, false, CHARGE_MAH, CAPACITY_MAH, 0);
++    }
++
++    private void sample(long nowMs, int currentMa, boolean charging) {
++        mClock.now = nowMs;
++        mEstimator.observe(currentMa, LEVEL, VOLTAGE_MV, charging, CHARGE_MAH, CAPACITY_MAH, 0);
++    }
++
++    private Reading reading() {
++        mEstimator.fill(mReading);
++        return mReading;
++    }
++
++    // ---------------------------------------------------------- ready / unknown
++
++    @Test
++    public void noNumberBeforeOneFullInterval() {
++        sample(0, 1000);
++        assertFalse(mEstimator.isEstimateReady());
++        assertEquals(PlayTimeEstimator.UNKNOWN_TEXT, PlayTimeEstimator.render(reading(), config()));
++
++        sample(2_000, 1000);
++        assertFalse("5 s interval, 2 s elapsed", mEstimator.isEstimateReady());
++        assertEquals(PlayTimeEstimator.UNKNOWN_TEXT, PlayTimeEstimator.render(reading(), config()));
++
++        sample(5_000, 1000);
++        assertTrue(mEstimator.isEstimateReady());
++        // 3000 mAh * 60 / 1000 mA = 180 min
++        assertEquals("3h 0m", PlayTimeEstimator.render(reading(), config()));
++    }
++
++    @Test
++    public void singleSampleIsNeverAnEstimate() {
++        mClock.now = 10_000;
++        mEstimator.observe(1000, LEVEL, VOLTAGE_MV, false, CHARGE_MAH, CAPACITY_MAH, 0);
++        mClock.now = 60_000;
++        assertFalse(mEstimator.isEstimateReady());
++    }
++
++    @Test
++    public void noiseCurrentShowsUnknown() {
++        sample(0, 20);
++        sample(5_000, 20);
++        sample(7_000, 20);
++        assertEquals(PlayTimeEstimator.UNKNOWN_TEXT, PlayTimeEstimator.render(reading(), config()));
++    }
++
++    @Test
++    public void unknownLevelAndCapacityShowUnknown() {
++        mClock.now = 0;
++        mEstimator.observe(1000, PlayTimeEstimator.UNKNOWN, VOLTAGE_MV, false,
++                PlayTimeEstimator.UNKNOWN, PlayTimeEstimator.UNKNOWN, 0);
++        mClock.now = 5_000;
++        mEstimator.observe(1000, PlayTimeEstimator.UNKNOWN, VOLTAGE_MV, false,
++                PlayTimeEstimator.UNKNOWN, PlayTimeEstimator.UNKNOWN, 0);
++        assertEquals(PlayTimeEstimator.UNKNOWN, reading().remainingMah);
++        assertEquals("--", PlayTimeEstimator.time(reading(), config()));
++    }
++
++    @Test
++    public void invalidCurrentIsNotSampled() {
++        sample(0, 1000);
++        sample(2_000, 0);
++        sample(4_000, -1);
++        assertEquals(1, mEstimator.getSampleCount());
++    }
++
++    // ---------------------------------------------------------------- window
++
++    @Test
++    public void samplesExpireOutOfTheWindow() {
++        Config config = config();
++        config.windowMinutes = 1;
++        mEstimator.setWindowMinutes(1);
++
++        sample(0, 1000);
++        sample(10_000, 1000);
++        sample(20_000, 1000);
++        assertEquals(1000, mEstimator.getAverageCurrentMa());
++
++        // 100 s in, the 0-20 s samples are outside the 60 s window.
++        sample(100_000, 2000);
++        assertEquals(2000, mEstimator.getAverageCurrentMa());
++        assertEquals(1, mEstimator.getSampleCount());
++    }
++
++    @Test
++    public void averageIsOverTheWholeWindow() {
++        sample(0, 600);
++        sample(5_000, 900);
++        sample(10_000, 1500);
++        assertEquals(1000, mEstimator.getAverageCurrentMa());
++        assertEquals("3h 0m", PlayTimeEstimator.render(reading(), config()));
++    }
++
++    // ------------------------------------------------------------ screen off
++
++    @Test
++    public void screenOffPausesSamplingAndScreenOnPurges() {
++        sample(0, 1000);
++        sample(5_000, 1000);
++        assertTrue(mEstimator.isEstimateReady());
++
++        mEstimator.setScreenOn(false);
++        // No samples are recorded while the screen is off.
++        sample(10_000, 4000);
++        sample(15_000, 4000);
++        assertEquals(2, mEstimator.getSampleCount());
++
++        // Waking up drops the previous session: no number until a full interval again.
++        mEstimator.setScreenOn(true);
++        assertEquals(0, mEstimator.getSampleCount());
++        assertFalse(mEstimator.isEstimateReady());
++        assertEquals(PlayTimeEstimator.UNKNOWN_TEXT,
++                PlayTimeEstimator.render(reading(), config()));
++    }
++
++    @Test
++    public void chargingFlipPurgesTheWindow() {
++        sample(0, 1000, false);
++        sample(5_000, 1000, false);
++        assertEquals(2, mEstimator.getSampleCount());
++
++        // The charger was plugged in: discharge samples would poison the estimate.
++        sample(10_000, 1500, true);
++        assertEquals(1, mEstimator.getSampleCount());
++    }
++
++    // -------------------------------------------------------------- charging
++
++    @Test
++    public void chargingShowsTimeToFull() {
++        Config config = config();
++        // 3000 mAh of 6000 mAh left at 2000 mA -> 3000 * 60 / 2000 = 90 min.
++        sample(0, 2000, true);
++        sample(2_000, 2000, true);
++        sample(4_000, 2000, true);
++        sample(5_000, 2000, true);
++
++        Reading r = reading();
++        assertTrue(r.charging);
++        assertEquals(90, r.minutesToFull);
++        assertEquals("\u21ef1h 30m", PlayTimeEstimator.time(r, config));
++
++        config.chargingSymbol = ChargingSymbol.PLUS;
++        assertEquals("+1h 30m", PlayTimeEstimator.time(r, config));
++        config.chargingSymbol = ChargingSymbol.TEXT;
++        assertEquals("CHG 1h 30m", PlayTimeEstimator.time(r, config));
++        config.chargingSymbol = ChargingSymbol.EMOJI;
++        assertEquals("\u26a11h 30m", PlayTimeEstimator.time(r, config));
++    }
++
++    @Test
++    public void chargingWithoutEnoughCurrentShowsSymbolOnly() {
++        Config config = config();
++        sample(0, 15, true);
++        sample(5_000, 15, true);
++        Reading r = reading();
++        assertTrue(r.charging);
++        assertEquals(PlayTimeEstimator.UNKNOWN, r.minutesToFull);
++        assertEquals("\u21ef", PlayTimeEstimator.time(r, config));
++    }
++
++    @Test
++    public void fullAtOneHundredPercent() {
++        Config config = config();
++        mClock.now = 0;
++        mEstimator.observe(1000, 100, VOLTAGE_MV, true, 6000, CAPACITY_MAH, 0);
++        mClock.now = 5_000;
++        mEstimator.observe(1000, 100, VOLTAGE_MV, true, 6000, CAPACITY_MAH, 0);
++
++        Reading r = reading();
++        assertTrue(r.full);
++        assertEquals("\u21efFULL", PlayTimeEstimator.time(r, config));
++        config.chargingSymbol = ChargingSymbol.PLUS;
++        assertEquals("+FULL", PlayTimeEstimator.time(r, config));
++    }
++
++    @Test
++    public void fullWhenTheChargeCounterHasNoHeadroom() {
++        mClock.now = 0;
++        mEstimator.observe(500, 99, VOLTAGE_MV, true, 6000, CAPACITY_MAH, 0);
++        mClock.now = 5_000;
++        mEstimator.observe(500, 99, VOLTAGE_MV, true, 6000, CAPACITY_MAH, 0);
++        assertTrue(reading().full);
++    }
++
++    @Test
++    public void capacityOverrideWins() {
++        assertEquals(4000, PlayTimeEstimator.totalMah(CAPACITY_MAH, 4000));
++        assertEquals(CAPACITY_MAH, PlayTimeEstimator.totalMah(CAPACITY_MAH, 0));
++        assertEquals(PlayTimeEstimator.UNKNOWN,
++                PlayTimeEstimator.totalMah(PlayTimeEstimator.UNKNOWN, 0));
++        // 4000 mAh at 50 % -> 2000 mAh.
++        assertEquals(2000, PlayTimeEstimator.remainingMah(PlayTimeEstimator.UNKNOWN,
++                CAPACITY_MAH, 4000, 50));
++    }
++
++    // ------------------------------------------------------------ formatting
++
++    @Test
++    public void timeFormats() {
++        assertEquals("2h 45m", PlayTimeEstimator.formatMinutes(165, Format.COMPACT));
++        assertEquals("45m", PlayTimeEstimator.formatMinutes(45, Format.COMPACT));
++        assertEquals("2h45", PlayTimeEstimator.formatMinutes(165, Format.SHORT));
++        assertEquals("2:45", PlayTimeEstimator.formatMinutes(165, Format.COLON));
++        assertEquals("2 hr 45 min", PlayTimeEstimator.formatMinutes(165, Format.DETAILED));
++        assertEquals("--", PlayTimeEstimator.formatMinutes(PlayTimeEstimator.UNKNOWN,
++                Format.COMPACT));
++    }
++
++    @Test
++    public void overFortyEightHoursIsCapped() {
++        assertEquals(">48h", PlayTimeEstimator.formatMinutes(49 * 60, Format.COMPACT));
++        assertEquals(">48h", PlayTimeEstimator.formatMinutes(49 * 60, Format.DETAILED));
++        assertEquals("48h 0m", PlayTimeEstimator.formatMinutes(48 * 60, Format.COMPACT));
++    }
++
++    @Test
++    public void aPositiveEstimateNeverRoundsToZero() {
++        // 1 mAh at 2000 mA is 0.03 min: round up to 1 min instead of showing "0m".
++        assertEquals(1, PlayTimeEstimator.minutesFor(1, 2000));
++        assertEquals(PlayTimeEstimator.UNKNOWN, PlayTimeEstimator.minutesFor(0, 2000));
++    }
++
++    @Test
++    public void detailModes() {
++        sample(0, 1000);
++        sample(5_000, 1000);
++        Reading r = reading();
++        Config config = config();
++
++        config.detail = Detail.TIME;
++        assertEquals("3h 0m", PlayTimeEstimator.render(r, config));
++        config.detail = Detail.TIME_W;
++        assertEquals("3h 0m \u00b7 3.8W", PlayTimeEstimator.render(r, config));
++        config.detail = Detail.TIME_W_V;
++        assertEquals("3h 0m \u00b7 3.8W \u00b7 3.80V", PlayTimeEstimator.render(r, config));
++        config.detail = Detail.TIME_V;
++        assertEquals("3h 0m \u00b7 3.80V", PlayTimeEstimator.render(r, config));
++        config.detail = Detail.W;
++        assertEquals("3.8W", PlayTimeEstimator.render(r, config));
++        config.detail = Detail.V;
++        assertEquals("3.80V", PlayTimeEstimator.render(r, config));
++        config.detail = Detail.W_V;
++        assertEquals("3.8W \u00b7 3.80V", PlayTimeEstimator.render(r, config));
++    }
++
++    @Test
++    public void wattsArePrefixedWhileCharging() {
++        sample(0, 2000, true);
++        sample(5_000, 2000, true);
++        Reading r = reading();
++        assertEquals("+7.6W", PlayTimeEstimator.watts(r));
++    }
++
++    @Test
++    public void unknownValuesRenderAsDashes() {
++        Reading r = new Reading();
++        Config config = config();
++        assertEquals("--", PlayTimeEstimator.watts(r));
++        assertEquals("--", PlayTimeEstimator.volts(r));
++        assertEquals("--", PlayTimeEstimator.percent(r));
++        assertEquals("-- \u00b7 -- \u00b7 --", PlayTimeEstimator.render(r, detail(Detail.TIME_W_V,
++                config)));
++    }
++
++    private static Config detail(Detail detail, Config config) {
++        config.detail = detail;
++        return config;
++    }
++
++    // ------------------------------------------------------------ tap cycle
++
++    @Test
++    public void tapCycleWalksConfigWattsVoltsPercent() {
++        assertEquals(TapCycle.WATTS, TapCycle.CONFIG.next());
++        assertEquals(TapCycle.VOLTS, TapCycle.WATTS.next());
++        assertEquals(TapCycle.PERCENT, TapCycle.VOLTS.next());
++        assertEquals(TapCycle.CONFIG, TapCycle.PERCENT.next());
++    }
++
++    @Test
++    public void tapOverrideReplacesTheConfiguredView() {
++        sample(0, 1000);
++        sample(5_000, 1000);
++        Reading r = reading();
++        Config config = config();
++        assertEquals("3.8W", PlayTimeEstimator.render(r, config, TapCycle.WATTS));
++        assertEquals("3.80V", PlayTimeEstimator.render(r, config, TapCycle.VOLTS));
++        assertEquals("50%", PlayTimeEstimator.render(r, config, TapCycle.PERCENT));
++        assertEquals("3h 0m", PlayTimeEstimator.render(r, config, TapCycle.CONFIG));
++    }
++
++    // -------------------------------------------------------------- parsing
++
++    @Test
++    public void invalidPropertiesFallBackToDefaults() {
++        Config config = new Config();
++        assertEquals(Placement.BATTERY_LEFT, PlayTimeEstimator.parsePlacement("nonsense"));
++        assertEquals(Placement.BATTERY_LEFT, PlayTimeEstimator.parsePlacement(null));
++        assertEquals(Placement.REPLACE_PERCENT,
++                PlayTimeEstimator.parsePlacement("replace_percent"));
++        assertEquals(Detail.TIME, PlayTimeEstimator.parseDetail("TIME_ONLY"));
++        assertEquals(Detail.TIME_W_V, PlayTimeEstimator.parseDetail("time_w_v"));
++        assertEquals(Format.COMPACT, PlayTimeEstimator.parseFormat(""));
++        assertEquals(Format.COLON, PlayTimeEstimator.parseFormat("colon"));
++        assertEquals(ChargingSymbol.BOLT,
++                PlayTimeEstimator.parseChargingSymbol("BOLT_COLOR"));
++        assertEquals(ChargingSymbol.EMOJI, PlayTimeEstimator.parseChargingSymbol("emoji"));
++
++        assertEquals(5, PlayTimeEstimator.clampWindow(7));
++        assertEquals(10, PlayTimeEstimator.clampWindow(10));
++        assertEquals(5, PlayTimeEstimator.clampIntervalSeconds(1));
++        assertEquals(30, PlayTimeEstimator.clampIntervalSeconds(30));
++        assertEquals(12, PlayTimeEstimator.clampTextSizeSp(40));
++        assertEquals(16, PlayTimeEstimator.clampTextSizeSp(16));
++        assertEquals(1000, PlayTimeEstimator.clampCycleMs(100));
++        assertEquals(5000, PlayTimeEstimator.clampCycleMs(5000));
++        assertEquals(config.meters, PlayTimeEstimator.parseMeters("garbage"));
++        assertEquals(Config.METER_TIME | Config.METER_WATTS | Config.METER_VOLTS,
++                PlayTimeEstimator.parseMeters("TIME,WATTS,VOLTS"));
++        assertEquals(7, PlayTimeEstimator.parseNonNegativeInt("7", 0));
++        assertEquals(0, PlayTimeEstimator.parseNonNegativeInt("-7", 0));
++        assertEquals(0, PlayTimeEstimator.parseNonNegativeInt("x", 0));
++    }
++
++    @Test
++    public void cycleMetersFollowTheConfiguredMask() {
++        Config config = new Config();
++        config.meters = Config.METER_TIME | Config.METER_WATTS | Config.METER_VOLTS;
++        PlayTimeEstimator.Meter[] meters = config.cycleMeters();
++        assertEquals(3, meters.length);
++        assertEquals(PlayTimeEstimator.Meter.TIME, meters[0]);
++        assertEquals(PlayTimeEstimator.Meter.WATTS, meters[1]);
++        assertEquals(PlayTimeEstimator.Meter.VOLTS, meters[2]);
++    }
++
++    @Test
++    public void configComparisonDetectsEveryField() {
++        Config a = new Config();
++        Config b = new Config();
++        assertTrue(a.sameAs(b));
++        b.textSizeSp = 16;
++        assertFalse(a.sameAs(b));
++    }
++}
+-- 
+2.53.0
+
