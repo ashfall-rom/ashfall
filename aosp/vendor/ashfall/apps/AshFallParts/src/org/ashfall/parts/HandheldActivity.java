@@ -103,7 +103,6 @@ public class HandheldActivity extends PartsActivity {
                 return true;
             });
             mControllerSummary = new ControllerSummary(requireContext());
-            mControllerRow.setSummaryProvider(mControllerSummary);
             category.addPreference(mControllerRow);
 
             mPowerRow = new Preference(requireContext());
@@ -115,7 +114,6 @@ public class HandheldActivity extends PartsActivity {
                 return true;
             });
             mPowerSummary = new PowerSummary(requireContext());
-            mPowerRow.setSummaryProvider(mPowerSummary);
             category.addPreference(mPowerRow);
 
             mMemoryRow = new Preference(requireContext());
@@ -127,7 +125,6 @@ public class HandheldActivity extends PartsActivity {
                 return true;
             });
             mMemorySummary = new MemorySummary(requireContext());
-            mMemoryRow.setSummaryProvider(mMemorySummary);
             category.addPreference(mMemoryRow);
 
             final Preference note = new Preference(requireContext());
