@@ -47,7 +47,9 @@
  * screen-off hold) it starts at persist.ashfall.fan.kick_pct instead of 100 %
  * for a short moment, then drops to the requested speed.  A 4 000 ns start
  * from rest was reliable in the measurement, so the kick is insurance for a
- * cold unit; persist.ashfall.fan.kick=0 disables it.
+ * cold unit; persist.ashfall.fan.kick=0 disables it.  The raised level is
+ * capped at persist.ashfall.fan.max_pct (docs/phase5.md §7.1) and the safety
+ * override is exempt from that cap.
  */
 #define FAN_KICK_MS 500
 #define FAN_KICK_DEFAULT_PCT 30

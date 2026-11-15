@@ -476,6 +476,49 @@ static void test_limits(void)
     CHECK(!fan.sensor_fault);
     CHECK(!fan.safety);
     CHECK_EQ(fan.out_pct, 0);
+
+    /* The spin-up kick is capped by max_pct: with max 10 and the default kick
+     * level of 30 the fan starts at 10, not 30 (and no kick window opens,
+     * because the clamped level does not raise the target). */
+    fan_state_init(&fan);
+    fan.settings.mode = FAN_MODE_MANUAL;
+    fan.settings.manual_pct = 10;
+    fan.settings.max_pct = 10;
+    fan.settings.kick = true;
+    fan.settings.kick_pct = FAN_KICK_DEFAULT_PCT;
+    CHECK_EQ(fan_control_tick(&fan, 400, 26000, true), 10);
+    CHECK_EQ(fan.out_pct, 10);
+    CHECK_EQ(read_int("/sys/class/gpio5_pwm2/state"), 1);
+    CHECK_EQ(read_int("/sys/class/gpio5_pwm2/duty"), fan_pct_to_duty(10));
+    CHECK(!fan_kick_pending(&fan, 26000));
+    CHECK_EQ(fan.kick_until_ms, 0);
+
+    /* max 100 leaves the kick exactly as before: 30 % for a 5 % target. */
+    fan_state_init(&fan);
+    fan.settings.mode = FAN_MODE_MANUAL;
+    fan.settings.manual_pct = 5;
+    fan.settings.kick = true;
+    fan.settings.kick_pct = FAN_KICK_DEFAULT_PCT;
+    CHECK_EQ(fan_control_tick(&fan, 400, 28000, true), FAN_KICK_DEFAULT_PCT);
+    CHECK(fan_kick_pending(&fan, 28000));
+    CHECK_EQ(read_int("/sys/class/gpio5_pwm2/state"), 1);
+    CHECK_EQ(read_int("/sys/class/gpio5_pwm2/duty"),
+             fan_pct_to_duty(FAN_KICK_DEFAULT_PCT));
+    CHECK_EQ(fan_control_tick(&fan, 400, 28000 + FAN_KICK_MS + 1, true), 5);
+
+    /* The safety path is exempt from the kick clamp as well: 90 C with
+     * max 10 still goes to 100 % at once. */
+    fan_state_init(&fan);
+    fan.settings.mode = FAN_MODE_MANUAL;
+    fan.settings.manual_pct = 2;
+    fan.settings.max_pct = 10;
+    fan.settings.kick = true;
+    fan.settings.kick_pct = FAN_KICK_DEFAULT_PCT;
+    CHECK_EQ(fan_control_tick(&fan, 900, 32000, true), 100);
+    CHECK(fan.safety);
+    CHECK_EQ(fan.out_pct, 100);
+    CHECK_EQ(read_int("/sys/class/gpio5_pwm2/state"), 1);
+    CHECK_EQ(read_int("/sys/class/gpio5_pwm2/duty"), fan_pct_to_duty(100));
 }
 
 static void test_smart(void)

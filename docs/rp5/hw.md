@@ -157,7 +157,8 @@ Phase 5 v3 additions (docs/phase5.md §7.1, issue #121):
 * **Spin-up kick:** a 0 -> nonzero transition runs the fan at
   `persist.ashfall.fan.kick_pct` (10..60, default 30; never 100) for 500 ms
   (`FAN_KICK_MS`) before dropping to the requested speed.  A target at or above
-  the kick level is applied directly (the kick would not add anything).
+  the kick level is applied directly (the kick would not add anything); the
+  raised level is also capped at `persist.ashfall.fan.max_pct` (phase 5 v3).
   `persist.ashfall.fan.kick=0` disables the kick entirely.  This also runs when
   the fan resumes on screen-on.
 * **Screen-off hold:** with `persist.ashfall.fan.screen_off=off` (default) the
@@ -184,7 +185,9 @@ Phase 5 v3 additions (docs/phase5.md §7.1, issue #121):
   preset (`2 %`), so **Quiet stops the fan completely** until the low limit is
   lowered to 0.  Balanced (46 %) and Max (100 %) sit inside the defaults.
 * **Spin-up kick:** it only runs for a non-zero limited target; a target cut to
-  0 writes `state=0` + `duty=0` and cancels a pending kick.
+  0 writes `state=0` + `duty=0` and cancels a pending kick.  When it does run,
+  the level it raises the fan to is itself capped at `max_pct` (never above the
+  high limit, not even for the 500 ms kick); the safety override is exempt.
 
 `ashfall.status.*` (written at most every 2 s, or every 500 ms while
 `ashfall.ui.fan_live=1`; only on change):

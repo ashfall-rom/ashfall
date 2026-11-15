@@ -269,8 +269,19 @@ int fan_apply_pct(fan_state *state, int pct, int64_t now_ms)
             if (!state->safety && configured > kick_pct)
                 kick_pct = configured;
         }
+        /* The high output limit also holds during the kick: the target is
+         * already limited, so clamping the *raised* level to max_pct keeps
+         * "never above max" true for the whole FAN_KICK_MS.  The safety path
+         * above is exempt, and the minimum side is untouched: a cut-off
+         * target arrives here as 0 and stays off.  Only a level the kick
+         * raised above the target is clamped, so an explicit pct from a
+         * caller is never lowered below what it asked for. */
+        if (!state->safety && kick_pct > pct &&
+            kick_pct > state->settings.max_pct)
+            kick_pct = state->settings.max_pct;
         /* The target itself is never clamped: 61..100 % must run at their
-         * real duty (safety/max).  Only the *kick* level is capped at 60. */
+         * real duty (safety/max).  Only the *kick* level is capped, at 60 %
+         * and at persist.ashfall.fan.max_pct. */
         if (sysfs_write_int(FAN_STATE_NODE, 1) != 0 ||
             sysfs_write_int(FAN_DUTY_NODE, fan_pct_to_duty(kick_pct)) != 0) {
             state->out_pct = -1;
