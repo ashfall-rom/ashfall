@@ -369,23 +369,31 @@ public class ControllerActivity extends PartsActivity {
             container.addView(input, new FrameLayout.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
 
-            new AlertDialog.Builder(requireContext())
+            final AlertDialog dialog = new AlertDialog.Builder(requireContext())
                     .setTitle(R.string.fusion_remap_title)
                     .setMessage(R.string.fusion_remap_body)
                     .setView(container)
                     .setNegativeButton(R.string.cancel, null)
-                    .setPositiveButton(R.string.save,
-                            (dialog, which) -> saveRemap(pad, input.getText().toString()))
-                    .show();
+                    .setPositiveButton(R.string.save, null)
+                    .create();
+            // An invalid list must keep the field and the dialog: the built-in
+            // positive button would dismiss and silently drop the edit.
+            dialog.setOnShowListener(shown -> dialog.getButton(AlertDialog.BUTTON_POSITIVE)
+                    .setOnClickListener(view -> {
+                        final String map = input.getText().toString().trim();
+                        if (!map.isEmpty() && !FusionClient.isValidMap(map)) {
+                            Toast.makeText(requireContext(), R.string.fusion_remap_invalid,
+                                    Toast.LENGTH_LONG).show();
+                            return;
+                        }
+                        dialog.dismiss();
+                        saveRemap(pad, map);
+                    }));
+            dialog.show();
         }
 
         private void saveRemap(FusionClient.Pad pad, String text) {
             final String map = text == null ? "" : text.trim();
-            if (!map.isEmpty() && !FusionClient.isValidMap(map)) {
-                Toast.makeText(requireContext(), R.string.fusion_remap_invalid,
-                        Toast.LENGTH_LONG).show();
-                return;
-            }
             FusionClient.setRemapFor(pad.key, map);
             FusionClient.setLayoutFor(pad.key, FusionClient.MODE_CUSTOM);
             if (map.isEmpty()) {

@@ -117,15 +117,53 @@ public class FusionDialog extends Dialog {
 
         updateState(FusionClient.cache());
         rebuild(FusionClient.cache());
-
-        final Window window = getWindow();
-        if (window != null) {
-            window.addFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND);
-            window.clearFlags(WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE);
-            Ui.fitDialog(window, findViewById(R.id.fusion_qs_root),
-                    findViewById(R.id.fusion_qs_scroll), 440, 0f);
-        }
+        fitWindow();
         mSwitch.requestFocus();
+    }
+
+    /**
+     * Sizes the dialog after the runtime rows exist (and again whenever one
+     * expands).  {@code Ui.fitDialog()} is not enough here: it measures the
+     * root at the 85 % cap, so once the expanded pad list reaches that cap the
+     * measured height equals the target and the {@code ScrollView} keeps
+     * {@code wrap_content}, which pushes the footer out of the window.  The
+     * natural height is therefore measured without the cap first, and the
+     * scroll area is the fixed remainder.
+     */
+    private void fitWindow() {
+        final Window window = getWindow();
+        if (window == null) {
+            return;
+        }
+        final View root = findViewById(R.id.fusion_qs_root);
+        final View scroll = findViewById(R.id.fusion_qs_scroll);
+        if (root == null || scroll == null) {
+            return;
+        }
+        final Context context = getContext();
+        final int width = Ui.dp(context, 440);
+        final int screen = root.getResources().getDisplayMetrics().heightPixels;
+        final int maxHeight = Math.round(screen * 0.85f);
+        final int minHeight = Ui.dp(context, 280);
+
+        final ViewGroup.LayoutParams params = scroll.getLayoutParams();
+        params.height = ViewGroup.LayoutParams.WRAP_CONTENT;
+        scroll.setLayoutParams(params);
+        root.measure(View.MeasureSpec.makeMeasureSpec(width, View.MeasureSpec.EXACTLY),
+                View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED));
+        final int natural = root.getMeasuredHeight();
+        final int target = Math.min(Math.max(natural, minHeight), maxHeight);
+        if (natural > maxHeight) {
+            final int chrome = Math.max(0, natural - scroll.getMeasuredHeight());
+            params.height = Math.max(Ui.dp(context, 120), target - chrome);
+            scroll.setLayoutParams(params);
+            root.measure(View.MeasureSpec.makeMeasureSpec(width, View.MeasureSpec.EXACTLY),
+                    View.MeasureSpec.makeMeasureSpec(target, View.MeasureSpec.AT_MOST));
+        }
+
+        window.addFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND);
+        window.clearFlags(WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE);
+        window.setLayout(width, target);
     }
 
     @Override
@@ -202,6 +240,7 @@ public class FusionDialog extends Dialog {
         for (FusionClient.Pad pad : pads) {
             mPads.addView(buildPadRow(inflater, pad));
         }
+        fitWindow();
     }
 
     private View buildPadRow(LayoutInflater inflater, FusionClient.Pad pad) {
@@ -253,6 +292,7 @@ public class FusionDialog extends Dialog {
             if (show) {
                 focusChecked(group);
             }
+            fitWindow();
         });
         return row;
     }

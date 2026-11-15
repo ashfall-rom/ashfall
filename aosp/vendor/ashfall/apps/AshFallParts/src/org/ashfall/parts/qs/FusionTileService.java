@@ -109,13 +109,10 @@ public class FusionTileService extends TileService {
 
         tile.setLabel(getString(R.string.tile_fusion));
         tile.setSubtitle(subtitle(on, available, available ? status.pads.size() : 0));
-        if (on && !available) {
-            // Fusion is on but nothing answers the socket: say so instead of
-            // pretending the merge works.
-            tile.setState(Tile.STATE_UNAVAILABLE);
-        } else {
-            tile.setState(on ? Tile.STATE_ACTIVE : Tile.STATE_INACTIVE);
-        }
+        // Active whenever fusion is on, even if the daemon is silent: an
+        // unusable tile could not be tapped to open the dialog and turn it off
+        // again.  The subtitle is what reports the missing daemon.
+        tile.setState(on ? Tile.STATE_ACTIVE : Tile.STATE_INACTIVE);
         tile.updateTile();
     }
 

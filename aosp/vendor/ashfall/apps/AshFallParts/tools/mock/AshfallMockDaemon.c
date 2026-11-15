@@ -44,11 +44,15 @@
 
 #define SOCKET_PATH "/dev/socket/ashfall_input"
 #define PACKET 8192
+#define LAYOUT_FILE "/data/local/tmp/ashfall-mock-layouts"
 
 /* Fusion (#138) test pads.  The id is the deterministic
  * vendor:product:connection key of docs/phase6.md §9.8; the same two pads the
  * user tests on the RP5 (internal MCU pad + 8BitDo over Bluetooth) stand in for
- * "two pads drive the fusion controller". */
+ * "two pads drive the fusion controller".
+ *
+ * The daemon forks one child per client, so the layout table cannot live only
+ * in memory: it is persisted to LAYOUT_FILE and re-read by the next child. */
 #define PAD_COUNT 2
 static const char *PAD_KEYS[PAD_COUNT] = {"2f24:0001:mcu", "2dc8:3106:bt"};
 static const char *PAD_NAMES[PAD_COUNT] = {"AshFall RP5 Gamepad", "8BitDo Ultimate 2C"};
@@ -97,6 +101,29 @@ static int valid_layout(const char *mode) {
     return 0;
 }
 
+static void load_layouts(void) {
+    FILE *file = fopen(LAYOUT_FILE, "re");
+    if (file == NULL) return;
+    char key[64];
+    char value[16];
+    while (fscanf(file, "%63s %15s", key, value) == 2) {
+        const int index = pad_index(key);
+        if (index >= 0 && valid_layout(value)) {
+            strlcpy(pad_layout[index], value, sizeof(pad_layout[index]));
+        }
+    }
+    fclose(file);
+}
+
+static void save_layouts(void) {
+    FILE *file = fopen(LAYOUT_FILE, "we");
+    if (file == NULL) return;
+    for (int i = 0; i < PAD_COUNT; i++) {
+        fprintf(file, "%s %s\n", PAD_KEYS[i], pad_layout[i]);
+    }
+    fclose(file);
+}
+
 /* FUSION STATUS: the header packet, then one PAD packet per pad - the client
  * must accept both framings, so the mock exercises the harder one. */
 static void send_fusion_status(int fd) {
@@ -131,6 +158,9 @@ static void handle_fusion(int fd, const char *request) {
             reply(fd, "ERR invalid layout");
         } else {
             strlcpy(pad_layout[index], value, sizeof(pad_layout[index]));
+            save_layouts();
+            fprintf(stderr, "FUSION LAYOUT %s %s\n", key, value);
+            fflush(stderr);
             reply(fd, "OK");
         }
     } else if (strncmp(request, "FUSION REMAP ", 13) == 0) {
@@ -177,6 +207,8 @@ static void send_raw(int fd, double start) {
 
 static void handle_client(int fd) {
     char buffer[PACKET];
+    /* The parent forked without knowing the later layout changes. */
+    load_layouts();
     int raw = 0;
     int grab = 0;
     const double start = now_seconds();

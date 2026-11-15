@@ -48,7 +48,9 @@ were wired by the orchestrator before this work started.
 * The **layout dialog** offers Default / Xbox / Nintendo / swap A-B / swap X-Y /
   Custom.  The checked entry is the layout the daemon reports.  A choice writes
   `persist.ashfall.pad.layouts` (survives reboot) and sends
-  `FUSION LAYOUT <key> <MODE>` to apply it live.
+  `FUSION LAYOUT <key> <MODE>` to apply it live; Custom instead goes through the
+  map dialog below, and saving the map is what sets `CUSTOM`, so cancelling it
+  changes nothing.
 * **Custom mapping** (v1, decided in #138 §9.7) is the raw `from->to` code list:
   picking Custom opens a text field pre-filled with the pad's map
   (`304->305,305->304`).  Save validates the list, stores it in
@@ -138,45 +140,57 @@ slot).  Hardware evidence — two pads driving one device, the grab/release
 transition and a layout change on the 8BitDo — belongs to the orchestrator's
 integration run; the daemon PR carries the native side.
 
-### 5.2 Emulator (`Retroid_Pocket_5`, API 36, 1920×1080, `wm density 360`)
+### 5.2 Emulator (`Retroid_Pocket_5`, API 33, 1920×1080, `wm density 360`)
 
 Fusion needs a daemon, and the stock emulator has none, so both states are
-proven:
+proven.  The rendered UI was checked through the accessibility tree
+(`uiautomator dump`), which gives the exact strings, the checked layout entry,
+the tile subtitle and the D-pad focus — screenshots were captured as well
+(`page-day.png`, `page-night.png`, `qs-dialog-day.png`, `qs-dialog-night.png`)
+but a theme *look* review (pure black) is an orchestrator/hardware item.
 
-1. **Daemon unavailable (no feeder).**  The page shows the Fusion category, the
-   switch off, `daemon unavailable` in the state line and in the pad list; the
-   tile reports `unavailable` when switched on.  Nothing crashes, nothing
-   retries in a loop.
+1. **Daemon unavailable (no feeder).**  The Controller page shows the Fusion
+   category above the tester rows, the switch off, `daemon unavailable` in both
+   the pad list and the state line.  With fusion switched on and the feeder
+   stopped, the page and the dialog still say `daemon unavailable` and the tile
+   subtitle is `unavailable` — the tile stays tappable on purpose, so the switch
+   can still be turned off.  Nothing crashes, nothing retries in a loop.
 2. **Fake daemon (`tools/mock/AshfallMockDaemon.c`).**  The existing test-only
    mock now answers the fusion commands as well: two stand-in pads
    (`2f24:0001:mcu` "AshFall RP5 Gamepad" and `2dc8:3106:bt`
    "8BitDo Ultimate 2C"), the state read from `persist.ashfall.pad.fusion`,
-   in-memory layouts and `OK` for REMAP/RESCAN.  It sends the header and each
-   `PAD` line as **separate packets**, which exercises the harder framing.
+   layouts persisted per child in `/data/local/tmp/ashfall-mock-layouts` and
+   `OK` for REMAP/RESCAN.  It sends the header and each `PAD` line as
+   **separate packets**, which exercises the harder framing.  REMAP and RESCAN
+   are logged to `/data/local/tmp/ashfall-mock.log`.
 
 | Check | Result |
 |---|---|
-| Switch off by default, page and tile | pass |
-| `FUSION STATUS` two pads listed with name + layout | pass |
-| Layout dialog: six entries, current one checked, choosing Nintendo sends `FUSION LAYOUT` and the row follows | pass |
-| Custom editor: invalid list refused, valid list stored, empty list clears | pass |
-| Rescan row and dialog button send `FUSION RESCAN` (`ashfall-mock.log`) | pass |
-| State line `2 pads -> Fusion` / `no external pad` / `daemon unavailable` | pass |
-| Homepage summary `Stick deadzone … · 2 pads -> Fusion` | pass |
-| QS tile label/subtitle/active state and dialog (day, night, pure black) | pass |
-| D-pad: switch, pad rows, inline layout options, Rescan, More settings, Done | pass |
-| No feeder: daemon-unavailable state everywhere | pass |
+| Switch off by default; tapping it writes `persist.ashfall.pad.fusion=1` and the state follows | pass |
+| `FUSION STATUS` two pads listed with name + layout (`Layout: Default` / `Layout: Default`) | pass |
+| Layout dialog: six entries, the daemon-reported entry checked; choosing Nintendo wrote `2f24:0001:mcu=NINTENDO` and the mock logged `FUSION LAYOUT 2f24:0001:mcu NINTENDO`; the row then read `Layout: Nintendo` | pass |
+| Custom editor: `abc` refused with the dialog kept open and no property write; an empty list cleared the entry and set `CUSTOM`; `304->305,305->304` stored `2dc8:3106:bt=304->305,305->304` and logged `FUSION REMAP 2dc8:3106:bt 304->305,305->304` | pass |
+| Rescan row and the dialog's button both logged `FUSION RESCAN` | pass |
+| State line `2 pads -> Fusion`; with fusion on and no daemon `daemon unavailable` | pass |
+| QS tile: `Fusion` + `2 pads`, `Fusion` + `Off` when off, `Fusion` + `unavailable` when on without a daemon; active state follows the switch | pass |
+| QS dialog: switch, state line, both pads with layouts, inline layout options (Nintendo checked, choosing Xbox wrote the property and `FUSION LAYOUT`), Rescan, More settings, Done — footer stays on screen while a pad row is expanded | pass |
+| More settings opens `ControllerActivity`; long-press on the tile from the launcher opens `ControllerActivity` | pass |
+| D-pad: focus starts on the switch, centre toggles it, two presses down reach a pad row and centre opens its layout dialog | pass |
+| Day/night: page 232.7 / 30.3 and dialog 158.0 / 35.6 average brightness (`cmd uimode night`) | pass |
+| Homepage summary line | **not exercised**: `HandheldActivity` crashes on resume in the shell (`Preference already has a SummaryProvider set`, `HandheldActivity.java:174`, present on `main` before this change and outside this worker's ownership).  `ControllerSummary` itself is a normal `SummaryProvider` and is exercised by the page's identical `FusionClient.stateText()` path. |
 
 `persist.*` writes need a permissive policy on the stock emulator (a debug
-`/data` APK is not `system_app`): run `adb shell setenforce 0` while exercising
-the page and restore `setenforce 1` afterwards, exactly as the Fan status feeder
-in [parts.md](parts.md) §6.2 documents.  The mock's socket is `chmod 666`d by
+`/data` APK is not `system_app`): `adb shell setenforce 0` while exercising the
+page, `setenforce 1` afterwards, exactly as the Fan status feeder in
+[parts.md](parts.md) §6.2 documents.  The mock's socket is `chmod 666`d by
 `tools/mock/build.sh --run` for the same reason; the real init socket is
 `0660 system:system` and needs neither.
 
 ### 5.3 Build
 
-`preview/prepare.sh && gradle --offline :app:assembleDebug` — see the PR.
+`preview/prepare.sh && gradle --offline :app:assembleDebug` — BUILD SUCCESSFUL.
+The Soong module uses the same `src/` and `res/` (no new dependency, no
+manifest change).
 
 ## 6. Follow-ups (not in this change)
 
