@@ -1,5 +1,13 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Fusion Quick Settings dialog.  Every control applies immediately. -->
+<!-- Fusion Quick Settings dialog.  Every control applies immediately.
+
+     Same chrome and measurement contract as the Fan/Lighting dialogs
+     (docs/parts.md §3): a title + state header that never scrolls, the pad list
+     (with its inline layout options) in the only ScrollView, then a divider, the
+     fixed action rows and Done.  The fit routine (`FusionDialog.fitWindow`, the
+     same contract as `Ui.fitDialog()`) gives the ScrollView the space the fixed
+     header and footer leave over, so the switch and Done are always fully inside
+     the card and only the pad list scrolls (#156 §16). -->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:id="@+id/fusion_qs_root"
     android:layout_width="@dimen/dialog_width"
@@ -14,6 +22,7 @@
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:gravity="center_vertical"
+        android:minHeight="48dp"
         android:orientation="horizontal">
 
         <ImageView
@@ -23,28 +32,33 @@
             android:src="@drawable/ic_gamepad"
             android:tint="?android:attr/textColorPrimary" />
 
-        <TextView
-            style="@style/AshFallDialogTitle"
+        <LinearLayout
             android:layout_width="0dp"
             android:layout_height="wrap_content"
             android:layout_marginStart="16dp"
             android:layout_weight="1"
-            android:text="@string/fusion_dialog_title" />
+            android:orientation="vertical">
+
+            <TextView
+                style="@style/AshFallDialogTitle"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="@string/fusion_dialog_title" />
+
+            <TextView
+                android:id="@+id/fusion_qs_state"
+                style="@style/AshFallDialogSecondary"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content" />
+        </LinearLayout>
 
         <Switch
             android:id="@+id/fusion_qs_switch"
             android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
+            android:layout_height="48dp"
             android:contentDescription="@string/fusion_switch_title"
             android:showText="false" />
     </LinearLayout>
-
-    <TextView
-        android:id="@+id/fusion_qs_state"
-        style="@style/AshFallDialogSecondary"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:layout_marginTop="4dp" />
 
     <ScrollView
         android:id="@+id/fusion_qs_scroll"
@@ -68,39 +82,54 @@
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:orientation="vertical" />
-
-            <Button
-                android:id="@+id/fusion_qs_rescan"
-                style="?android:attr/borderlessButtonStyle"
-                android:layout_width="wrap_content"
-                android:layout_height="48dp"
-                android:gravity="start|center_vertical"
-                android:minWidth="0dp"
-                android:text="@string/fusion_rescan_title"
-                android:textColor="?android:attr/colorAccent" />
         </LinearLayout>
     </ScrollView>
 
+    <View
+        android:layout_width="match_parent"
+        android:layout_height="1dp"
+        android:layout_marginTop="8dp"
+        android:background="?android:attr/listDivider" />
+
     <LinearLayout
         android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:gravity="end|center_vertical"
+        android:layout_height="48dp"
+        android:gravity="center_vertical"
         android:orientation="horizontal">
+
+        <Button
+            android:id="@+id/fusion_qs_rescan"
+            style="?android:attr/borderlessButtonStyle"
+            android:layout_width="wrap_content"
+            android:layout_height="48dp"
+            android:gravity="start|center_vertical"
+            android:minWidth="0dp"
+            android:text="@string/fusion_rescan_title"
+            android:textColor="?android:attr/colorAccent" />
+
+        <Space
+            android:layout_width="0dp"
+            android:layout_height="1dp"
+            android:layout_weight="1" />
 
         <Button
             android:id="@+id/fusion_qs_more"
             style="?android:attr/borderlessButtonStyle"
             android:layout_width="wrap_content"
             android:layout_height="48dp"
+            android:gravity="end|center_vertical"
+            android:minWidth="0dp"
             android:text="@string/fusion_dialog_more"
             android:textColor="?android:attr/colorAccent" />
-
-        <Button
-            android:id="@+id/fusion_qs_done"
-            style="?android:attr/borderlessButtonStyle"
-            android:layout_width="wrap_content"
-            android:layout_height="48dp"
-            android:text="@string/done"
-            android:textColor="?android:attr/colorAccent" />
     </LinearLayout>
+
+    <Button
+        android:id="@+id/fusion_qs_done"
+        style="?android:attr/borderlessButtonStyle"
+        android:layout_width="match_parent"
+        android:layout_height="48dp"
+        android:layout_marginTop="4dp"
+        android:gravity="end|center_vertical"
+        android:text="@string/done"
+        android:textColor="?android:attr/colorAccent" />
 </LinearLayout>

@@ -123,12 +123,23 @@ public class FusionDialog extends Dialog {
 
     /**
      * Sizes the dialog after the runtime rows exist (and again whenever one
-     * expands).  {@code Ui.fitDialog()} is not enough here: it measures the
-     * root at the 85 % cap, so once the expanded pad list reaches that cap the
-     * measured height equals the target and the {@code ScrollView} keeps
-     * {@code wrap_content}, which pushes the footer out of the window.  The
-     * natural height is therefore measured without the cap first, and the
-     * scroll area is the fixed remainder.
+     * expands), with the same contract as {@code Ui.fitDialog()}: the card is
+     * measured at its natural height, clamped to 85 % of the display, and only
+     * the {@code ScrollView} gets the space the fixed header and footer leave
+     * over.
+     *
+     * <p>Unlike {@code Ui.fitDialog()} it measures the natural height without
+     * the cap first.  That helper measures the root at the 85 % cap, so once the
+     * expanded pad list reaches the cap the measured height equals the target
+     * and the {@code ScrollView} keeps {@code wrap_content}, which pushes the
+     * footer out of the window (#156 §16).
+     *
+     * <p>The display height comes from the window manager's maximum window
+     * metrics, not from the dialog context's {@code DisplayMetrics}.  A
+     * {@code TileService} context can keep the orientation it was created in;
+     * when that reports the portrait height while the dialog is drawn in
+     * landscape, the 85 % cap is larger than the screen and the centred card is
+     * clipped at the top (switch) and bottom (Done) — the #156 §16 report.
      */
     private void fitWindow() {
         final Window window = getWindow();
@@ -142,9 +153,9 @@ public class FusionDialog extends Dialog {
         }
         final Context context = getContext();
         final int width = Ui.dp(context, 440);
-        final int screen = root.getResources().getDisplayMetrics().heightPixels;
-        final int maxHeight = Math.round(screen * 0.85f);
+        final int screen = displayHeightPx();
         final int minHeight = Ui.dp(context, 280);
+        final int maxHeight = Math.max(minHeight, Math.round(screen * 0.85f));
 
         final ViewGroup.LayoutParams params = scroll.getLayoutParams();
         params.height = ViewGroup.LayoutParams.WRAP_CONTENT;
@@ -164,6 +175,23 @@ public class FusionDialog extends Dialog {
         window.addFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND);
         window.clearFlags(WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE);
         window.setLayout(width, target);
+    }
+
+    /**
+     * The display height in the window's current rotation.  The service
+     * context's resources are not authoritative here (see {@link #fitWindow()}).
+     */
+    private int displayHeightPx() {
+        try {
+            final WindowManager wm =
+                    (WindowManager) getContext().getSystemService(Context.WINDOW_SERVICE);
+            if (wm != null) {
+                return wm.getMaximumWindowMetrics().getBounds().height();
+            }
+        } catch (RuntimeException ignored) {
+            // Fall back to the context metrics below.
+        }
+        return getContext().getResources().getDisplayMetrics().heightPixels;
     }
 
     @Override

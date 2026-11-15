@@ -94,15 +94,25 @@ One tile, following the Fan/Lighting pattern:
 * Refresh: `onStartListening()` (2 s tick while the panel is open),
   `onTileAdded()`, and after every dialog change through
   `FusionDialog.Listener.onChanged()`.
-* The dialog: the switch, the state line, the connected-pad list and Rescan,
-  with **More settings** and **Done** in the footer.  The layout options expand
-  **in place** under the pad row — a second dialog window would be drawn behind
-  the Quick Settings window and be unreachable (the Lighting dialog keeps its
-  colour picker inline for the same reason).  Custom mapping itself is edited on
-  the Controller page; the inline hint says so and More settings is one press
-  away.
-* The dialog is sized with `Ui.fitDialog()` after the runtime pad rows exist, so
-  the footer is always on screen and only the pad list scrolls.
+* The dialog uses the Fan/Lighting chrome (docs/parts.md §3): the header
+  (gamepad icon, **Fusion** title, the state line and the switch) and the footer
+  never scroll, and the connected-pad list with its inline layout options is the
+  only scrolling area.  Under the list sit a divider and the fixed action row —
+  **Rescan / restart** on the start, **More settings** on the end — then **Done**
+  across the bottom.  The layout options expand **in place** under the pad row —
+  a second dialog window would be drawn behind the Quick Settings window and be
+  unreachable (the Lighting dialog keeps its colour picker inline for the same
+  reason).  Custom mapping itself is edited on the Controller page; the inline
+  hint says so and More settings is one press away.
+* The dialog is measured after the runtime pad rows exist: the card's natural
+  height, clamped to 85 % of the display's **window metrics** (the current
+  rotation, not the service context's resources), with the remainder given to
+  the `ScrollView`.  The header, action row and Done therefore stay fully inside
+  the card and only the pad list scrolls when it genuinely overflows (#156 §16).
+  The measurement is the same contract as `Ui.fitDialog()` and the layout is
+  ready for that shared helper — the local copy in `FusionDialog.fitWindow`
+  measures the uncapped height first and uses the window metrics, both of which
+  the helper needs before this dialog can switch to it.
 
 ## 4. Socket protocol
 
