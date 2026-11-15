@@ -52,8 +52,11 @@ public final class Fan {
     public static final int DEFAULT_MANUAL_PCT = 50;
     public static final int DEFAULT_MIN_PCT = 5;
     public static final int DEFAULT_MAX_PCT = 100;
-    /** Built-in Quiet preset output (docs/phase5.md §7.1, {@code FAN_PRESET_QUIET_PCT}). */
-    public static final int QUIET_PCT = 2;
+    /**
+     * Built-in Quiet preset output (issue #156 §10, previously 2 %).  Only used
+     * for the fan-limit note; the daemon owns the value it actually applies.
+     */
+    public static final int QUIET_PCT = 15;
     public static final int DEFAULT_KICK_PCT = 30;
     public static final int MIN_KICK_PCT = 10;
     public static final int MAX_KICK_PCT = 60;

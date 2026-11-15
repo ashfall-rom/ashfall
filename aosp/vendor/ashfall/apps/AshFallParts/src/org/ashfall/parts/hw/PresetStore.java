@@ -48,6 +48,11 @@ public final class PresetStore {
     public static final String ID_OFF = "builtin.off";
     public static final String ID_QUIET = "builtin.quiet";
     public static final String ID_BALANCED = "builtin.balanced";
+    /**
+     * The Performance preset.  The id and its {@code max} mode keep the
+     * original names for compatibility; only the display name changed from
+     * "Maximum" ({@code docs/parts.md} §2.1).
+     */
     public static final String ID_MAX = "builtin.max";
     public static final String ID_MANUAL = "builtin.manual";
     public static final String ID_SMART = "builtin.smart";
@@ -267,7 +272,10 @@ public final class PresetStore {
         ensureBuiltin(ID_OFF, "Off", Preset.MODE_OFF);
         ensureBuiltin(ID_QUIET, "Quiet", Preset.MODE_QUIET);
         ensureBuiltin(ID_BALANCED, "Balanced", Preset.MODE_BALANCED);
-        ensureBuiltin(ID_MAX, "Maximum", Preset.MODE_MAX);
+        // This also migrates the stored name: ensureBuiltin() rewrites the
+        // name of a preset that was persisted as "Maximum" on every load, so
+        // an existing builtin.max shows Performance without a version bump.
+        ensureBuiltin(ID_MAX, "Performance", Preset.MODE_MAX);
         Preset manual = byId(ID_MANUAL);
         if (manual == null) {
             manual = Preset.builtin(ID_MANUAL, "Manual", Preset.MODE_MANUAL);

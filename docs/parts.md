@@ -149,9 +149,9 @@ immediately to the properties from §2 of the contract; there is no Apply button
 * **Presets** are single-choice rows.  Selecting one calls `Fan.apply()`:
   `mode`, then `manual_pct` for Manual or `curve` for Smart, then the preset id
   in `persist.ashfall.fan.preset`.  The daemon only ever sees the active values.
-  The built-ins are Off / Quiet / Balanced / Max / **Manual** / Smart, so the
-  daemon's `manual` mode is reachable from the UI and the output slider always
-  has a preset to write back to.
+  The built-ins are Off / Quiet / Balanced / Performance / **Manual** / Smart,
+  so the daemon's `manual` mode is reachable from the UI and the output slider
+  always has a preset to write back to.
 * **Curve** row opens the curve editor for the active preset (falling back to
   the built-in Smart preset when the active one has no curve).
 * **Manual output** slider is enabled only in Manual mode; moving it writes
@@ -165,7 +165,7 @@ immediately to the properties from §2 of the contract; there is no Apply button
   immediately.  Below the minimum the daemon stops the fan **completely**
   (`0` = no low cut-off), above the maximum it never runs higher (`100` = no
   upper limit); the summaries state that, and the minimum row adds the
-  consequence for the built-in Quiet preset (2 %), which the shipped 5 %
+  consequence for the built-in Quiet preset (15 %), which the shipped 5 %
   minimum stops completely.  The two rows keep `min <= max` by moving the
   other slider along (a minimum pushed above the maximum takes the maximum
   with it, and vice versa); a pair read back as `min > max` (invalid for the
@@ -220,16 +220,20 @@ before the first unlock:
   {"id":"builtin.off",     "name":"Off",            "mode":"off",      "manual_pct":50, "curve":"45:0,...","builtin":true},
   {"id":"builtin.quiet",   "name":"Quiet",          "mode":"quiet",    ...},
   {"id":"builtin.balanced","name":"Balanced",       "mode":"balanced", ...},
-  {"id":"builtin.max",     "name":"Max",            "mode":"max",      ...},
+  {"id":"builtin.max",     "name":"Performance",    "mode":"max",      ...},
   {"id":"builtin.manual",  "name":"Manual",         "mode":"manual",   "manual_pct":50, "builtin":true},
   {"id":"builtin.smart",   "name":"Smart (default)","mode":"smart",    "curve":"45:0,55:30,65:55,75:80,82:100","builtin":true},
   {"id":"user.129648e1",   "name":"Preset 1",       "mode":"smart",    "curve":"48:2,55:30,...","builtin":false}
 ]}
 ```
 
-* Built-ins are re-seeded on load and cannot be renamed or deleted.  Their
-  **mode is fixed** by the contract (Off/Quiet/Balanced/Max/Manual/Smart), so
-  the UI does not offer “Change mode” for them and `PresetStore.save()` keeps
+* Built-ins are re-seeded on load and cannot be renamed or deleted.  The
+  **Performance** preset keeps the id `builtin.max` and the mode `max` for
+  compatibility; only its display name changed from "Maximum" (issue #156
+  §10), and the re-seed renames a preset stored under the old name on load.
+  Their **mode is fixed** by the contract
+  (Off/Quiet/Balanced/Performance/Manual/Smart), so the UI does not offer
+  “Change mode” for them and `PresetStore.save()` keeps
   the re-seeded mode/name even if a future caller tries to change it.  The
   built-in **Smart** curve is editable (it is the “Smart default” curve); the
   built-in **Manual** keeps the last output set with the Fan page slider; every
@@ -242,10 +246,11 @@ before the first unlock:
   editable, which is the supported way to customise a fixed mode.
 * The **active preset** is resolved in one place, `Fan.activePreset(store)`:
   use `persist.ashfall.fan.preset` when it still names a preset, otherwise map
-  the daemon-visible `mode` to the matching built-in (Off/Quiet/Balanced/Max/
-  Manual/Smart).  The Fan page, the AshFall settings summary, the QS tile, the
-  QS dialog and the curve editor all use this helper, so an empty id on a fresh
-  install (mode `smart`) shows Smart and an ACTIVE tile instead of Off.
+  the daemon-visible `mode` to the matching built-in
+  (Off/Quiet/Balanced/Performance/Manual/Smart).  The Fan page, the AshFall
+  settings summary, the QS tile, the QS dialog and the curve editor all use
+  this helper, so an empty id on a fresh install (mode `smart`) shows Smart and
+  an ACTIVE tile instead of Off.
 * Deleting the active user preset, or “Reset presets”, clears/remaps
   `persist.ashfall.fan.preset` to the built-in for the current mode
   (`builtin.manual` for Manual), so the recorded id can never go stale.
@@ -553,7 +558,7 @@ Screenshots (all 1920×1080; light and dark):
   (`Smart (default) · 56 °C`, `Static · #FF2020`, `Stick deadzone 5% · 3%`).
 * Fan page: D-pad focuses rows (row LinearLayout 1920×164), D-pad center
   activates; activating Quiet wrote `mode=quiet, preset=builtin.quiet`; the
-  saved preset list renders Off/Quiet/Balanced/Max/Smart and the user
+  saved preset list renders Off/Quiet/Balanced/Performance/Smart and the user
   “Preset 1”.  (The emulator has no RP5 pad; it was driven with
   `KEYCODE_DPAD_CENTER`/`BACK`.  The hardware A/B path is the platform
   `Generic.kcm` fallback described in §4.1 and is verified on the RP5 in
@@ -610,8 +615,8 @@ Screenshots (all 1920×1080; light and dark):
   page, i.e. the fallback path, not `DPAD_CENTER`/`BACK`.
 * **#78** – built-ins no longer offer **Change mode** (verified: the built-in
   Smart action list is Activate/Curve/Duplicate), `PresetStore.save()` keeps
-  the fixed built-in mode/name, and the built-in label is **Max**.  The list
-  renders Off/Quiet/Balanced/Max/Smart (default).
+  the fixed built-in mode/name, and the built-in label is **Performance**.
+  The list renders Off/Quiet/Balanced/Performance/Smart (default).
 * **#79** – the tile, QS dialog, Fan page, Handheld summary and curve editor
   all use `Fan.activePreset()`.  With an empty preset id and mode `smart` the
   QS tile label is **Smart (default)** (not Off) and the tile is ACTIVE.
@@ -639,7 +644,7 @@ except where noted.
 | Settings homepage | **Handheld — Fan, lighting, controller** row appears at the bottom of the homepage (after Accessibility) with the tinted icon; tapping opens `HandheldActivity` in the Settings task. |
 | All pages | Handheld, Fan, Lighting and Controller open on A17 without `InflateException` (the `SwitchCompat` crash is gone; the framework `Switch` renders). |
 | Fan live status | Temperature/output/RPM/safety update every 2 s (`43 °C`, `0 %`, `0 rpm` in Off). |
-| Fan presets | Built-ins render Off/Quiet/Balanced/Max/Smart. Activating Quiet wrote `mode=quiet, preset=builtin.quiet` and the daemon wrote `state=1, duty=4920` (spin-up kick). User preset `user.33d52efd` was created, renamed, duplicated, activated, and deleted; deleting the active preset remapped `persist.ashfall.fan.preset` to `builtin.smart`. |
+| Fan presets | Built-ins render Off/Quiet/Balanced/Performance/Smart. Activating Quiet wrote `mode=quiet, preset=builtin.quiet` and the daemon wrote `state=1, duty=4920` (spin-up kick). User preset `user.33d52efd` was created, renamed, duplicated, activated, and deleted; deleting the active preset remapped `persist.ashfall.fan.preset` to `builtin.smart`. |
 | Curve editor | Opened for the active user preset and for `builtin.smart`; real D-pad HAT events changed points, and the changes reached `persist.ashfall.fan.curve` (`46:1…` then `47:2…`). With an empty/derived active id this covers #76 on hardware. Reset restored the default curve. |
 | Lighting | Main switch off/on wrote `led.mode=off/static`; target Left wrote `sync=0` and `color_left=2979FF`; Both wrote `sync=1` with both colours; brightness 60/79 and breathing speed 8 applied. Restored to `static`, `FF2020` both, `sync=1`, `brightness=60`, `speed=5`, `screen_off=off`. |
 | Controller tester | Real stick and trigger input displayed (`Left 0.61 -0.31`, `R2 0.78`, pressed A); the daemon `RAW ON` values were shown (`raw lx 140 ly 25 …`) and Select toggled the raw overlay. |
