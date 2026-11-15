@@ -31,8 +31,49 @@ _cmd() {
 }
 
 # --- container ---------------------------------------------------------------
+# Device lease (scripts/device/lock.sh): only one owner may use the RP5 at a
+# time.  Two workers on it at once has already cost this project a build
+# (#50/#51 vs #52), and a second fastboot session can wedge the ABL (#54).
+#
+# Every adb/fastboot call in this repo goes through dev_sh/dev_interactive_sh,
+# so they check the lease before running:
+#   * no lease      -> allowed, with a one-line reminder;
+#   * our lease     -> allowed (ASH_DEVICE_OWNER matches the holder);
+#   * someone else  -> refused with the holder and the remaining time.
+# The check is cached per process, so a script pays for it once.  Raw
+# `ssh ... adb` cannot be intercepted: take the lease before touching the
+# device, not after.
+dev_lease_owner_path() {
+  printf '%s/locks/%s.lease/owner' "$REMOTE_ROOT" "${ASH_DEVICE_LEASE_NAME:-device}"
+}
+
+dev_lease_check() {
+  [[ ${ASH_DEVICE_LOCK_BYPASS:-0} == 1 ]] && return 0
+  [[ ${_ASH_DEVICE_LEASE_OK:-0} == 1 ]] && return 0
+  local holder
+  holder=$(host_sh "cat $(printf %q "$(dev_lease_owner_path)") 2>/dev/null" 2>/dev/null || true)
+  holder=$(printf '%s' "$holder" | tr -d '[:space:]')
+  if [[ -z $holder ]]; then
+    if [[ ${_ASH_DEVICE_LEASE_WARNED:-0} != 1 ]]; then
+      warn "device lease: not held; take one: scripts/device/lock.sh run <owner> -- <command>"
+      export _ASH_DEVICE_LEASE_WARNED=1
+    fi
+    export _ASH_DEVICE_LEASE_OK=1
+    return 0
+  fi
+  if [[ -n ${ASH_DEVICE_OWNER:-} && $holder == "${ASH_DEVICE_OWNER}" ]]; then
+    export _ASH_DEVICE_LEASE_OK=1
+    return 0
+  fi
+  die "device busy: the RP5 lease is held by '$holder' (scripts/device/lock.sh status).
+      Wait for the holder to release it, or run your command under your own lease:
+        scripts/device/lock.sh run <owner> -- <command>
+      Never bypass this unless you are only reading state: ASH_DEVICE_LOCK_BYPASS=1."
+}
+
 # dev_sh <command string>: run a bash command inside $DEV_BOX on the build host.
 dev_sh() {
+  dev_lease_check
   local inner; inner=$(_dq "$1")
   host_sh "timeout 1800 distrobox enter --name $(_dq "$DEV_BOX") --no-tty -- bash -lc $inner"
 }
@@ -43,6 +84,7 @@ host_sh_tty() {
 }
 
 dev_interactive_sh() {
+  dev_lease_check
   local inner; inner=$(_dq "$1")
   host_sh_tty "distrobox enter --name $(_dq "$DEV_BOX") -- bash -lc $inner"
 }
