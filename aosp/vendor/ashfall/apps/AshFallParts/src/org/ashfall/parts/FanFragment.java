@@ -21,12 +21,15 @@ import android.content.Intent;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
+import android.view.View;
 import android.widget.Toast;
 
 import androidx.preference.Preference;
 import androidx.preference.PreferenceCategory;
 import androidx.preference.PreferenceFragmentCompat;
 import androidx.preference.PreferenceScreen;
+import androidx.recyclerview.widget.LinearLayoutManager;
+import androidx.recyclerview.widget.RecyclerView;
 
 import org.ashfall.parts.hw.Curve;
 import org.ashfall.parts.hw.Fan;
@@ -63,6 +66,8 @@ public class FanFragment extends PreferenceFragmentCompat {
     private Preference mEditRow;
     private Preference mCurveRow;
     private SliderPreference mManual;
+    private SliderPreference mMinPct;
+    private SliderPreference mMaxPct;
     private TogglePreference mKick;
     private TogglePreference mScreenOff;
     private TogglePreference mThrottle;
@@ -106,6 +111,11 @@ public class FanFragment extends PreferenceFragmentCompat {
         mScreen.addPreference(statusCategory);
         mStatus = new StatusPreference(requireContext());
         mStatus.setKey("fan_status");
+        // A fresh page starts a fresh 60 s window: the history lives in memory
+        // only and the daemon keeps no samples (docs/phase5.md §7.2).  The
+        // preference is new per page, so this is a guard (and documents the
+        // reset point) rather than a recovery path.
+        mStatus.resetHistory();
         statusCategory.addPreference(mStatus);
 
         mPresetCategory = new PreferenceCategory(requireContext());
@@ -148,6 +158,41 @@ public class FanFragment extends PreferenceFragmentCompat {
             updateLiveSummaries();
         });
         manualCategory.addPreference(mManual);
+
+        // Output limits (docs/phase5.md §7.1/§7.3).  The app only writes the
+        // two properties; the daemon is the single enforcement point, so the
+        // output is never clamped here.
+        final PreferenceCategory limitsCategory = new PreferenceCategory(requireContext());
+        limitsCategory.setTitle(R.string.fan_limits_category);
+        mScreen.addPreference(limitsCategory);
+
+        mMinPct = new SliderPreference(requireContext());
+        mMinPct.setKey("fan_min_pct");
+        mMinPct.setTitle(R.string.fan_limit_min_title);
+        mMinPct.setRange(0, 100);
+        mMinPct.setValueFormat(getString(R.string.percent_value_format));
+        mMinPct.setValueChangedListener((preference, value) -> onMinPctChanged(value));
+        limitsCategory.addPreference(mMinPct);
+
+        mMaxPct = new SliderPreference(requireContext());
+        mMaxPct.setKey("fan_max_pct");
+        mMaxPct.setTitle(R.string.fan_limit_max_title);
+        mMaxPct.setRange(0, 100);
+        mMaxPct.setValueFormat(getString(R.string.percent_value_format));
+        mMaxPct.setValueChangedListener((preference, value) -> onMaxPctChanged(value));
+        limitsCategory.addPreference(mMaxPct);
+
+        mMinPct.setValue(Fan.minPct());
+        mMaxPct.setValue(Fan.maxPct());
+        if (mMinPct.getValue() > mMaxPct.getValue()) {
+            // min > max is an invalid pair (the daemon would fall back to both
+            // defaults), so the page normalises it once instead of showing an
+            // impossible range.  The minimum follows the maximum: normalising
+            // never raises a cap the user set.
+            mMinPct.setValue(mMaxPct.getValue());
+            Fan.setMinPct(mMaxPct.getValue());
+        }
+        updateLimitSummaries();
 
         final PreferenceCategory behaviour = new PreferenceCategory(requireContext());
         behaviour.setTitle(R.string.fan_behaviour_category);
@@ -234,6 +279,35 @@ public class FanFragment extends PreferenceFragmentCompat {
         refreshToggles();
         updateStatus();
         updateLiveSummaries();
+    }
+
+    @Override
+    public void onViewCreated(View view, Bundle savedInstanceState) {
+        super.onViewCreated(view, savedInstanceState);
+        final RecyclerView list = getListView();
+        if (list == null) {
+            return;
+        }
+        // The framework's D-pad focus search only sees the rows RecyclerView
+        // has attached.  Once a focused row ends flush with the list edge, the
+        // row below it is detached, the search finds nothing and the D-pad
+        // stops there - even though more settings follow (a disabled row such
+        // as Manual output is skipped only when its neighbours are attached).
+        // Keeping one screen of rows attached on either side makes the whole
+        // page reachable in both directions; the focused view is scrolled into
+        // view by RecyclerView itself.
+        final RecyclerView.LayoutManager manager = list.getLayoutManager();
+        if (manager instanceof LinearLayoutManager) {
+            final LinearLayoutManager linear = (LinearLayoutManager) manager;
+            final int orientation = linear.getOrientation();
+            final boolean reversed = linear.getReverseLayout();
+            list.setLayoutManager(new LinearLayoutManager(list.getContext(), orientation, reversed) {
+                @Override
+                protected int getExtraLayoutSpace(RecyclerView.State state) {
+                    return Math.max(super.getExtraLayoutSpace(state), getHeight());
+                }
+            });
+        }
     }
 
     @Override
@@ -359,6 +433,53 @@ public class FanFragment extends PreferenceFragmentCompat {
             active.manualPct = value;
             mStore.save(active);
         }
+    }
+
+    /** Low limit moved: take the maximum with it if it fell below, then write. */
+    private void onMinPctChanged(int value) {
+        if (value > mMaxPct.getValue()) {
+            // min above max is invalid, so the maximum follows the minimum.
+            // The follower is written first: the daemon must never read
+            // min > max, not even for one tick (it would apply both defaults).
+            mMaxPct.setValue(value);
+            Fan.setMaxPct(value);
+        }
+        Fan.setMinPct(value);
+        updateLimitSummaries();
+    }
+
+    /** High limit moved: take the minimum with it if it rose above, then write. */
+    private void onMaxPctChanged(int value) {
+        if (value < mMinPct.getValue()) {
+            // max below min is invalid, so the minimum follows the maximum.
+            mMinPct.setValue(value);
+            Fan.setMinPct(value);
+        }
+        Fan.setMaxPct(value);
+        updateLimitSummaries();
+    }
+
+    /** The summaries state what the daemon does at the two ends of the range. */
+    private void updateLimitSummaries() {
+        if (mMinPct == null || mMaxPct == null) {
+            return;
+        }
+        final int min = mMinPct.getValue();
+        final int max = mMaxPct.getValue();
+        if (min == 0) {
+            mMinPct.setSummaryText(getString(R.string.fan_limit_min_summary_none));
+        } else {
+            String summary = getString(R.string.fan_limit_min_summary, min);
+            if (min > Fan.QUIET_PCT) {
+                // docs/phase5.md §7.1: the shipped 5 % minimum already stops
+                // the built-in Quiet preset (2 %), and the row has to say so.
+                summary += "\n" + getString(R.string.fan_limit_min_quiet_note, Fan.QUIET_PCT);
+            }
+            mMinPct.setSummaryText(summary);
+        }
+        mMaxPct.setSummaryText(max == 100
+                ? getString(R.string.fan_limit_max_summary_none)
+                : getString(R.string.fan_limit_max_summary, max));
     }
 
     private void refreshToggles() {

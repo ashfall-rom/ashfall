@@ -29,6 +29,10 @@ public final class Fan {
 
     public static final String MODE = "persist.ashfall.fan.mode";
     public static final String MANUAL_PCT = "persist.ashfall.fan.manual_pct";
+    /** Low output limit: below it the daemon stops the fan completely. */
+    public static final String MIN_PCT = "persist.ashfall.fan.min_pct";
+    /** High output limit: the daemon never runs the fan above it. */
+    public static final String MAX_PCT = "persist.ashfall.fan.max_pct";
     public static final String CURVE = "persist.ashfall.fan.curve";
     public static final String PRESET = "persist.ashfall.fan.preset";
     public static final String KICK = "persist.ashfall.fan.kick";
@@ -46,6 +50,10 @@ public final class Fan {
     public static final String STATUS_SAFETY = "ashfall.status.fan.safety";
 
     public static final int DEFAULT_MANUAL_PCT = 50;
+    public static final int DEFAULT_MIN_PCT = 5;
+    public static final int DEFAULT_MAX_PCT = 100;
+    /** Built-in Quiet preset output (docs/phase5.md §7.1, {@code FAN_PRESET_QUIET_PCT}). */
+    public static final int QUIET_PCT = 2;
     public static final int DEFAULT_KICK_PCT = 30;
     public static final int MIN_KICK_PCT = 10;
     public static final int MAX_KICK_PCT = 60;
@@ -70,6 +78,31 @@ public final class Fan {
 
     public static void setManualPct(int pct) {
         Props.setInt(MANUAL_PCT, clamp(pct, 0, 100));
+    }
+
+    /**
+     * Low output limit in percent (docs/phase5.md §7.1), {@code 0..100}.
+     * Below it the daemon stops the fan completely; {@code 0} disables the
+     * cut-off.  The daemon enforces it, the app only writes the property.
+     */
+    public static int minPct() {
+        return clamp(Props.getInt(MIN_PCT, DEFAULT_MIN_PCT), 0, 100);
+    }
+
+    public static void setMinPct(int pct) {
+        Props.setInt(MIN_PCT, clamp(pct, 0, 100));
+    }
+
+    /**
+     * High output limit in percent, {@code 0..100}.  The daemon never runs the
+     * fan above it; {@code 100} means no cap.
+     */
+    public static int maxPct() {
+        return clamp(Props.getInt(MAX_PCT, DEFAULT_MAX_PCT), 0, 100);
+    }
+
+    public static void setMaxPct(int pct) {
+        Props.setInt(MAX_PCT, clamp(pct, 0, 100));
     }
 
     public static String curve() {
