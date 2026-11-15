@@ -72,15 +72,12 @@ allow ashfall_hwd ashfall_cpu_sysfs:dir r_dir_perms;
 allow ashfall_hwd ashfall_cpu_sysfs:lnk_file read;
 allow ashfall_hwd ashfall_cpu_sysfs:file rw_file_perms;
 
-# Battery telemetry (phase 6, #124/#137).  /sys/class/power_supply is already
-# labelled sysfs_batteryinfo by the platform policy (a public type), so the
-# Class dir, its symlinks and the resolved attributes only need a read grant.
-# No ashfall_power_sysfs relabel is necessary; docs/rp5/hw.md §11 carries the
-# enforcing check (a denial naming another label means the vendor policy moved
-# the attributes and exact-path relabels must be added then).
-allow ashfall_hwd sysfs_batteryinfo:dir r_dir_perms;
-allow ashfall_hwd sysfs_batteryinfo:lnk_file read;
-allow ashfall_hwd sysfs_batteryinfo:file r_file_perms;
+# Battery telemetry (phase 6, #124/#137): a coredomain may not read
+# sysfs_batteryinfo (system/sepolicy/private/domain.te neverallow), and the RP5
+# battery attributes are actually vendor_sysfs_battery_supply, a vendor type
+# system_ext cannot name.  Relabelling them would break the vendor health HAL.
+# The sampler therefore lives in SystemUI/Settings/AshFall Parts and uses
+# BatteryManager; this daemon has no battery sysfs access.
 
 # zram (phase 6, #141): /dev/block/zram0 and /sys/block/zram0/* (resolved
 # /sys/devices/virtual/block/zram0).  swapon/swapoff open the block device.
