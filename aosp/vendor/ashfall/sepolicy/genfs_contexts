@@ -14,6 +14,21 @@
 #   /sys/class/gpio5_pwm2/{state,duty,speed,period,thermal,en_backlight,...}
 genfscon sysfs /class/gpio5_pwm2     u:object_r:ashfall_fan_sysfs:s0
 
+# GPU devfreq cap (phase 6).  Fallback labels only: the stock vendor policy
+# labels these paths vendor_sysfs_kgsl through vendor_file_contexts, and
+# userspace (ueventd) applies a stored xattr, so the *file_contexts* exact-path
+# entries in this directory are what actually win.  These deep genfscon paths
+# are longer than the vendor `/class/kgsl` prefix and cover the case where the
+# vendor file_contexts rule is absent (e.g. a future stock image).
+#   readlink -f /sys/class/kgsl/kgsl-3d0/devfreq/max_freq on the RP5:
+#   /sys/devices/platform/soc/3d00000.qcom,kgsl-3d0/devfreq/3d00000.qcom,kgsl-3d0/max_freq
+genfscon sysfs /devices/platform/soc/3d00000.qcom,kgsl-3d0/kgsl/kgsl-3d0/gpu_available_frequencies u:object_r:ashfall_gpu_sysfs:s0
+genfscon sysfs /devices/platform/soc/3d00000.qcom,kgsl-3d0/devfreq/3d00000.qcom,kgsl-3d0/max_freq u:object_r:ashfall_gpu_sysfs:s0
+genfscon sysfs /devices/platform/soc/3d00000.qcom,kgsl-3d0/devfreq/3d00000.qcom,kgsl-3d0/min_freq u:object_r:ashfall_gpu_sysfs:s0
+genfscon sysfs /devices/soc/3d00000.qcom,kgsl-3d0/kgsl/kgsl-3d0/gpu_available_frequencies u:object_r:ashfall_gpu_sysfs:s0
+genfscon sysfs /devices/soc/3d00000.qcom,kgsl-3d0/devfreq/3d00000.qcom,kgsl-3d0/max_freq u:object_r:ashfall_gpu_sysfs:s0
+genfscon sysfs /devices/soc/3d00000.qcom,kgsl-3d0/devfreq/3d00000.qcom,kgsl-3d0/min_freq u:object_r:ashfall_gpu_sysfs:s0
+
 # Stick LED controllers (sn3112l / sn3112r).  Each class has one device named
 # "led"; `/sys/class/sn3112{l,r}/led` are symlinks to these device dirs, which
 # is where enable/brightness/breath actually live:

@@ -12,6 +12,20 @@ type ashfall_hwd_exec, system_file_type, exec_type, file_type;
 type ashfall_fan_sysfs, fs_type, sysfs_type;
 type ashfall_led_sysfs, fs_type, sysfs_type;
 
+# GPU devfreq cap (phase 6, docs/phase6.md section 3).  The stock vendor policy
+# labels /sys/devices/.../kgsl-3d0/** vendor_sysfs_kgsl (a vendor type that the
+# system_ext policy build cannot reference).  Three *resolved* attributes are
+# relabelled with this type via exact-path file_contexts entries - and
+# genfs_contexts as a fallback - so a coredomain may use them without any
+# generic sysfs access (ashfall-hwd must not follow the /sys/class/kgsl
+# symlinks, which stay vendor-labelled; issue #115):
+#   .../kgsl/kgsl-3d0/gpu_available_frequencies   (read: DT step table)
+#   .../devfreq/3d00000.qcom,kgsl-3d0/max_freq    (read/write: the cap)
+#   .../devfreq/3d00000.qcom,kgsl-3d0/min_freq    (write: devfreq floor rescue)
+# Directory traversal is covered by the stock vendor rule
+# `allow { domain - isolated_app_all } vendor_sysfs_kgsl:dir search`.
+type ashfall_gpu_sysfs, fs_type, sysfs_type;
+
 typeattribute ashfall_hwd coredomain;
 
 init_daemon_domain(ashfall_hwd)
@@ -34,6 +48,12 @@ allow ashfall_hwd ashfall_fan_sysfs:file rw_file_perms;
 allow ashfall_hwd ashfall_led_sysfs:dir r_dir_perms;
 allow ashfall_hwd ashfall_led_sysfs:lnk_file read;
 allow ashfall_hwd ashfall_led_sysfs:file rw_file_perms;
+
+# GPU devfreq cap (phase 6): the three kgsl attributes relabelled with
+# ashfall_gpu_sysfs.  max_freq is 0660 root:root, the other two are read-only;
+# the daemon runs as root and is the only writer of the cap.
+allow ashfall_hwd ashfall_gpu_sysfs:file rw_file_perms;
+allow ashfall_hwd ashfall_gpu_sysfs:lnk_file read;
 
 # persist.ashfall.fan.* / persist.ashfall.led.* come from ashfall_props.te;
 # the screen state for the fan screen-off hold and the LED screen-off policy is

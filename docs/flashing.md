@@ -267,6 +267,34 @@ Logs: `out/device/<ts>/flash-gsi.log`.
 | flash succeeds, Android bootloops | boot to recovery, then `scripts/device/logs.sh`; bail out with `restore-stock.sh` |
 | `adb: unauthorized` | accept the prompt on the device (user builds); userdebug GSIs with `ro.adb.secure=0` have no prompt |
 
+### GPU OC vendor_boot (`flash-vendor-boot.sh`)
+
+The phase-6 GPU OC lives in the `vendor_boot` DTB.  `vendor_boot` and `vbmeta`
+are **non-slotted** on the RP5, so the script never passes `--slot` for them
+(the active-slot guard is still read once).  It also follows issue #54:
+
+* **Flash the content-only image**, not the 96 MiB zero-padded partition image.
+  A padded `Sending 'vendor_boot'` wedges the ABL; the phase-6 content-only
+  image is 12,931,072 B and flashes in ~0.3 s.
+* The build emits `vendor_boot.img` (content-only) and
+  `vendor_boot-padded.img` (partition fit proof/backup).  The flash script
+  trims any padded image it is given to the v4 header's `content_end` before
+  the batch; `--stock` trims the stock `lun4_vendor_boot_*.bin` the same way.
+* The whole write is one detached `fastboot` batch (`dev_fastboot_batch`):
+  `--disable-verity --disable-verification flash vbmeta <stock>` (no `--slot`)
+  → `flash vendor_boot <content-only>` (no `--slot`) → `reboot`.  There are no
+  `partition-size` getvars and no getvars between transfers.
+
+```bash
+scripts/device/flash-vendor-boot.sh <artifact>/vendor_boot.img --dry-run
+scripts/device/flash-vendor-boot.sh <artifact>/vendor_boot.img --yes
+scripts/device/flash-vendor-boot.sh --stock --yes   # last-resort recovery only
+```
+
+Do **not** restore stock between OC debug variants: flash the next variant over
+the failed one.  See `docs/rp5/gpu.md` §2/§5 for the 8-entry RPMh limit and the
+10-minute 1 GHz stability result.
+
 ## 6. Phase 3 user-test checklist
 
 Have the user confirm, in this order (it maps to the risks in `docs/PLAN.md`):
