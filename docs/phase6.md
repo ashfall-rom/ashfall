@@ -1,6 +1,7 @@
-# Phase 6 contract: GPU performance (Adreno 650) and sidebar
+# Phase 6 contract: GPU performance (Adreno 650), feature rebuilds and sidebar
 
-Status: contract, 2026-11-14. Decisions taken with the user:
+Status: contract, 2026-11-14; §8 added 2026-11-15 (GamepadFusion and the
+PlayTime indicator re-included by the user). Decisions taken with the user:
 
 - Phase 6 starts with the **GPU**. The ROM keeps the stock **5.15.148 Android
   GKI** kernel (`Linux version 5.15.148-android13-8-gbfe94e95c709`). There is no
@@ -16,8 +17,10 @@ Status: contract, 2026-11-14. Decisions taken with the user:
   a kernel source change.
 - OC steps up to **1000 MHz**, opt-in. The boot/default cap stays the stock
   **670 MHz**; 1 GHz is the top selectable step, never the default.
-- The **sidebar** follows the GPU work. Gamepad fusion and battery indicators
-  stay out of scope (user decision). The kernel/CPU overclock is not in scope.
+- The **sidebar** follows the GPU work. The kernel/CPU overclock is not in
+  scope, and neither are the charging-LED indicators. **GamepadFusion and the
+  PlayTime battery indicator were re-included by the user on 2026-11-15**
+  (#138, #137) and run in parallel with the GPU work; see §8.
 
 ## 1. Stock facts (measured on build `20261114-led109-bf3c952`)
 
@@ -198,9 +201,9 @@ User:
 ## 6. Sidebar (next)
 
 Deferred until the GPU work is verified. Scope: a side panel with app shortcuts,
-recent apps and quick controls, matching Settings/Material theming; no gamepad
-fusion and no battery indicators. The concrete contract/issue is written when
-the GPU work lands.
+recent apps and quick controls, matching Settings/Material theming. The concrete
+contract/issue is written when the GPU work lands. It is independent of the §8
+feature rebuilds and does not include them.
 
 ## 7. Ownership
 
@@ -212,3 +215,36 @@ the GPU work lands.
 
 Only the native worker uses the RP5; the app worker uses the emulator and
 mocks the daemon properties. No two workers share a worktree/branch.
+
+## 8. Feature rebuilds re-included (2026-11-15)
+
+The first version of this contract scoped both features out (§3, §6). The user
+re-included them on 2026-11-15, with the same rule as everything else in phase 6:
+**rebuild the stock-OS apps from the ground up as ROM features**, do not port
+them. The issues are the systems of record for behaviour, design, risks and
+checklists; this section only fixes scope and boundaries.
+
+- **#137 PlayTime Indicator** - native SystemUI battery-telemetry indicator
+  (active-only rolling estimate, status-bar slot or in-place battery-%
+  replacement) with its settings on the platform **Settings > Battery** page
+  (the project's first `packages/apps/Settings` patch). No Xposed/Vector, no
+  companion APK, no Quick Settings tile. Power telemetry is sampled once, in
+  `ashfall-hwd`, and shared with #124.
+- **#138 GamepadFusion** - a fusion mode of `ashfall-rp5-input`: one uinput
+  device, external pads grabbed while it is on, per-pad Xbox/Nintendo layout and
+  custom remap. Settings in the Controller page, plus one Quick Settings tile
+  that opens a settings dialog. No Magisk module, no second daemon, no
+  hide/per-app modes.
+
+Boundaries:
+
+- Both are independent of §1-§5 (GPU) and can run as parallel workers. They do
+  not share files: #137 touches SystemUI, the Settings app and `rp5/hw` (#124's
+  sampler), #138 touches `rp5/input` and `AshFallParts`.
+- The charging-LED indicators stay out of scope (they are the "battery
+  indicators" of the `docs/phase5.md` decisions), and so does the kernel/CPU
+  overclock.
+- The sidebar (§6) is unaffected and still starts after the GPU work is
+  verified.
+- Verification rules are unchanged: static + host tests, emulator for UI, RP5
+  for hardware, orchestrator does the builds and the only device flash.
