@@ -21,9 +21,16 @@
 #
 # Usage:
 #   scripts/device/flash-vendor-boot.sh <image|host:/path> [options]
+#   scripts/device/flash-vendor-boot.sh --release [<tag>] [options]
 #   scripts/device/flash-vendor-boot.sh --stock [options]
 #
 # Options:
+#   --release [TAG]    download a published artifact from $VENDOR_BOOT_REPO
+#                      (default: the pinned $VENDOR_BOOT_TAG), verify its
+#                      sha256 and flash that image.  The pinned tag must match
+#                      $VENDOR_BOOT_SHA256; an explicit older/newer tag is
+#                      verified against its own .sha256 asset.  Content-only
+#                      images only (issue #54).
 #   --stock            restore the stock image for the active slot
 #                      ($REMOTE_FIRMWARE/img/lun4_vendor_boot_<slot>.bin);
 #                      last-resort recovery only - do not use it between debug
@@ -67,6 +74,8 @@ PARTITION_SIZE=""
 DRY_RUN=0
 NO_DEVICE=0
 ASSUME_YES=0
+RELEASE=0
+RELEASE_TAG=""
 STOCK_VENDOR_BOOT_SIZE=100663296
 
 usage() { awk 'NR==1{next} /^set -euo/{exit} {sub(/^# ?/,""); print}' "$0"; }
@@ -75,6 +84,10 @@ die_usage() { printf 'err %s\n' "$*" >&2; printf 'try --help\n' >&2; exit 2; }
 while (($#)); do
   case $1 in
     --stock) STOCK=1; shift ;;
+    --release)
+      RELEASE=1
+      if [[ -n ${2:-} && ${2:-} != -* ]]; then RELEASE_TAG=$2; shift 2; else shift; fi
+      ;;
     --slot) SLOT=${2:?--slot needs a|b}; SLOT_GIVEN=1; shift 2 ;;
     --serial) SERIAL=${2:?--serial needs a value}; shift 2 ;;
     --vbmeta) VBMETA=${2:?--vbmeta needs a path}; shift 2 ;;
@@ -90,7 +103,11 @@ while (($#)); do
 done
 
 ((STOCK)) && [[ -n $IMG ]] && die_usage "--stock and an image argument are mutually exclusive"
-((STOCK)) || [[ -n $IMG ]] || die_usage "missing <vendor_boot.img> (or --stock)"
+((STOCK)) && ((RELEASE)) && die_usage "--stock and --release are mutually exclusive"
+((RELEASE)) && [[ -n $IMG ]] && die_usage "--release and an image argument are mutually exclusive"
+if ((STOCK || RELEASE)); then :; else
+  [[ -n $IMG ]] || die_usage "missing <vendor_boot.img> (or --release [tag], or --stock)"
+fi
 [[ -z $SLOT || $SLOT == a || $SLOT == b ]] || die_usage "--slot must be a or b"
 if ((NO_DEVICE)) && ((!DRY_RUN)); then die_usage "--no-device only makes sense with --dry-run"; fi
 [[ -z $PARTITION_SIZE || $PARTITION_SIZE =~ ^[0-9]+$ ]] || die_usage "--partition-size must be a number"
@@ -101,6 +118,39 @@ mkdir -p "$LOG_DIR"
 LOG="$LOG_DIR/flash-vendor-boot.log"
 exec > >(tee -a "$LOG") 2>&1
 log "log: $LOG"
+
+# --- published artifact (--release) -----------------------------------------
+# One-way from $VENDOR_BOOT_REPO: download the content-only image, verify its
+# sha256, then hand it to the normal flash path.  The pinned tag must match the
+# pinned hash; any other tag is checked against its own .sha256 asset.
+if ((RELEASE)); then
+  need gh
+  [[ -n ${VENDOR_BOOT_REPO:-} ]] || die "VENDOR_BOOT_REPO is not set in config/ashfall.conf"
+  [[ -n $RELEASE_TAG ]] || RELEASE_TAG=${VENDOR_BOOT_TAG:-}
+  [[ -n $RELEASE_TAG ]] || die "no release tag: pass --release <tag> or set VENDOR_BOOT_TAG"
+  REL_DIR="$LOCAL_ARTIFACTS/vendor_boot/$RELEASE_TAG"
+  REL_IMG="$REL_DIR/vendor_boot-$RELEASE_TAG.img"
+  REL_SUM="$REL_DIR/vendor_boot-$RELEASE_TAG.img.sha256"
+  mkdir -p "$REL_DIR"
+  if [[ ! -f $REL_IMG || ! -f $REL_SUM ]]; then
+    log "downloading $VENDOR_BOOT_REPO@$RELEASE_TAG"
+    gh release download "$RELEASE_TAG" --repo "$VENDOR_BOOT_REPO" \
+      --pattern "vendor_boot-$RELEASE_TAG.img" \
+      --pattern "vendor_boot-$RELEASE_TAG.img.sha256" --dir "$REL_DIR" \
+      || die "cannot download release $RELEASE_TAG from $VENDOR_BOOT_REPO"
+  fi
+  WANT_SHA=$(awk '{print $1}' "$REL_SUM")
+  GOT_SHA=$(sha256sum "$REL_IMG" | awk '{print $1}')
+  [[ -n $WANT_SHA ]] || die "empty checksum asset: $REL_SUM"
+  [[ $GOT_SHA == "$WANT_SHA" ]] || die "release $RELEASE_TAG: image sha256 $GOT_SHA does not match its .sha256 asset ($WANT_SHA)"
+  if [[ $RELEASE_TAG == "${VENDOR_BOOT_TAG:-}" && -n ${VENDOR_BOOT_SHA256:-} ]]; then
+    [[ $GOT_SHA == "$VENDOR_BOOT_SHA256" ]] || die "release $RELEASE_TAG sha256 $GOT_SHA does not match the pinned VENDOR_BOOT_SHA256 ($VENDOR_BOOT_SHA256)"
+    log "release: $VENDOR_BOOT_REPO@$RELEASE_TAG (pinned, sha256 $GOT_SHA)"
+  else
+    warn "release: $VENDOR_BOOT_REPO@$RELEASE_TAG is not the pinned tag (sha256 $GOT_SHA)"
+  fi
+  IMG=$REL_IMG
+fi
 
 # --- helpers -----------------------------------------------------------------
 host_file_exists() { [[ $(host_sh "test -f $(_dq "$1") && echo yes || echo no") == yes ]]; }

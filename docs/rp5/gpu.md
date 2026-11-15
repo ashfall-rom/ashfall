@@ -334,6 +334,38 @@ logs the fallback.  The `adb shell` examples below may keep the class path:
 
 ## 5. Flashing and recovery
 
+### 5.1 Published artifacts (release repo)
+
+The built image is a **hash-pinned release** in the private artifact repo
+`ashfall-rom/rp5-vendor_boot` (images are release assets, never git objects;
+the repo carries the provenance and the DTB sources). `config/ashfall.conf`
+pins what the ROM expects:
+
+```bash
+VENDOR_BOOT_REPO="ashfall-rom/rp5-vendor_boot"
+VENDOR_BOOT_TAG="vb-oc8-20261115"
+VENDOR_BOOT_SHA256="804c2f08…3eee"
+```
+
+- **Publish** a new build: `scripts/gpu/publish-vendor_boot.sh --dir out/gpu/<id> --tag <tag>`.
+  It verifies the image against its own `manifest.json` (size, sha256, header v4,
+  content-only, `reproducible: yes`, no debug variant), uploads the image +
+  `.sha256` + manifest + all-FDT DTS tarball + checksums, then downloads the
+  asset back and re-hashes it. Tags are immutable: bump the tag instead of
+  re-uploading; `--force` exists only for a tag that was never flashed.
+- **Flash** the pinned release: `scripts/device/flash-vendor-boot.sh --release`
+  (or `--release <older-tag>` to roll back). It downloads to
+  `out/vendor_boot/<tag>/`, verifies the asset's `.sha256`, additionally
+  requires the pinned hash when the tag is the pinned one, then runs the normal
+  one-batch flash.
+- **Content-only only.** The padded 96 MiB variant is never published and must
+  never be flashed (issue #54); the release script refuses a partition-sized
+  image and the artifact repo's `.gitignore`/rules forbid committing images.
+- The repo is **private** because the image wraps the stock vendor ramdisk and
+  the 222 vendor modules. Keep it that way.
+
+### 5.2 Flashing
+
 `scripts/device/flash-vendor-boot.sh` writes the **active slot only**.  The
 `vendor_boot` and `vbmeta` partitions are **non-slotted** on the RP5: the script
 flashes plain `vendor_boot`/`vbmeta` (never `--slot`), while the active-slot
@@ -349,9 +381,17 @@ table) in `$REMOTE_ARTIFACTS/device/upload/` before the batch; a content-only
 image is used as-is.  `--stock` likewise trims the stock `lun4_vendor_boot_*.bin`.
 
 ```bash
-# OC image (host path or local path; a local file is uploaded first)
+# the pinned release (recommended: download + verify + flash in one step)
+scripts/device/flash-vendor-boot.sh --release --dry-run
+scripts/device/flash-vendor-boot.sh --release --yes
+
+# a just-built or host-side image (host path or local path; a local file is
+# uploaded first)
 scripts/device/flash-vendor-boot.sh out/gpu/vendor-boot-oc-c6e49741/vendor_boot.img --dry-run
 scripts/device/flash-vendor-boot.sh /var/home/epickitrolaz/ashfall/artifacts/gpu/<id>/vendor_boot.img --yes
+
+# roll back to an older published artifact
+scripts/device/flash-vendor-boot.sh --release vb-oc8-20261114 --yes
 
 # last-resort recovery only (device unreachable, bootloader cannot be entered)
 scripts/device/flash-vendor-boot.sh --stock --yes
