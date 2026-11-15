@@ -1,4 +1,4 @@
-From 18b4e361443ac68c9851ba5b1cf5144be4599ed7 Mon Sep 17 00:00:00 2001
+From 5ffada932b9c1470d91a0ffb52d0b1a947cf0ee0 Mon Sep 17 00:00:00 2001
 From: AshFall UI <ui@ashfall.local>
 Date: Sun, 15 Nov 2026 16:28:21 +0000
 Subject: [PATCH] SystemUI: AshFall PlayTime battery indicator
@@ -6,14 +6,24 @@ Subject: [PATCH] SystemUI: AshFall PlayTime battery indicator
 Stock Android predicts remaining battery life from long-term averages that
 include hours of standby, so a handheld shows "18 h remaining" and then
 collapses to two hours under a 3D emulator. Add an active-only estimate to
-the status bar: the power daemon's current samples are averaged over a
-rolling window of the current screen-on session and turned into remaining
-time (discharging) or time to full (charging).
+the status bar: the current is averaged over a rolling window of the
+current screen-on session and turned into remaining time (discharging) or
+time to full (charging).
 
 The estimator is pure Java with an injected clock, no Android dependency,
 so the maths is unit tested on the host: window expiry, the screen-off
 purge, "--" before one full interval, charging time-to-full, FULL, the four
 time formats, the >48h cap and the tap cycle.
+
+Telemetry comes from BatteryManager, not from a daemon property: a coredomain
+may not read sysfs_batteryinfo (platform neverallow) and on the RP5 those
+nodes carry a vendor label. The sticky ACTION_BATTERY_CHANGED broadcast
+supplies level, voltage, charging state and the charge counter (capacity is
+derived from counter and level), and BATTERY_PROPERTY_CURRENT_NOW supplies
+the current in uA, rectified to mA. Unsupported properties stay unknown and
+render "--"; nothing reads sysfs and nothing polls a service in the
+background - the receiver only exists while the indicator is shown and the
+screen is on.
 
 The status bar element is a TextView in the PhoneStatusBarView hierarchy
 tinted from the same DarkIconDispatcher source as the clock, placed left or
@@ -24,20 +34,20 @@ suppresses the stock percentage there.
 
 Settings are read from persist.ashfall.batt.* through a property listener
 (no poll, no timers while the indicator is off) and every value is clamped
-to a documented default. A missing view, a malformed property or an absent
-daemon leaves the indicator hidden instead of crashing SystemUI; "--" is
-shown until a real estimate exists and FULL/ >48h are explicit.
+to a documented default. A missing view, a missing broadcast or an
+unsupported battery property leaves the indicator hidden or on "--" instead
+of crashing SystemUI; FULL and >48h are explicit.
 
 Refs #137
 ---
  .../systemui/ashfall/PlayTimeEstimator.java   | 692 ++++++++++++++++++
- .../systemui/ashfall/PlayTimeIndicator.java   | 475 ++++++++++++
+ .../systemui/ashfall/PlayTimeIndicator.java   | 571 +++++++++++++++
  .../ashfall/PlayTimeIndicatorView.java        |  50 ++
  .../systemui/ashfall/PlayTimeSettings.java    | 161 ++++
  .../phone/PhoneStatusBarViewController.kt     |  14 +
  .../shared/ui/composable/StatusBarRoot.kt     |  22 +-
  .../ashfall/PlayTimeEstimatorTest.java        | 411 +++++++++++
- 7 files changed, 1824 insertions(+), 1 deletion(-)
+ 7 files changed, 1920 insertions(+), 1 deletion(-)
  create mode 100644 packages/SystemUI/src/com/android/systemui/ashfall/PlayTimeEstimator.java
  create mode 100644 packages/SystemUI/src/com/android/systemui/ashfall/PlayTimeIndicator.java
  create mode 100644 packages/SystemUI/src/com/android/systemui/ashfall/PlayTimeIndicatorView.java
@@ -744,10 +754,10 @@ index 000000000000..b097d8050961
 +}
 diff --git a/packages/SystemUI/src/com/android/systemui/ashfall/PlayTimeIndicator.java b/packages/SystemUI/src/com/android/systemui/ashfall/PlayTimeIndicator.java
 new file mode 100644
-index 000000000000..145debcb68d5
+index 000000000000..28301cc853a0
 --- /dev/null
 +++ b/packages/SystemUI/src/com/android/systemui/ashfall/PlayTimeIndicator.java
-@@ -0,0 +1,475 @@
+@@ -0,0 +1,571 @@
 +/*
 + * Copyright (C) 2026 The AshFall Project
 + *
@@ -766,10 +776,14 @@ index 000000000000..145debcb68d5
 +
 +package com.android.systemui.ashfall;
 +
++import android.content.BroadcastReceiver;
++import android.content.Context;
++import android.content.Intent;
++import android.content.IntentFilter;
++import android.os.BatteryManager;
 +import android.os.Handler;
 +import android.os.Looper;
 +import android.os.SystemClock;
-+import android.os.SystemProperties;
 +import android.util.Log;
 +import android.util.TypedValue;
 +import android.view.View;
@@ -788,37 +802,38 @@ index 000000000000..145debcb68d5
 +/**
 + * Drives the PlayTime text in the status bar.
 + *
-+ * <p>Owns one {@link PlayTimeIndicatorView} in the {@link PhoneStatusBarView} hierarchy. The view
-+ * samples the {@code ashfall.status.power.*} properties the power daemon publishes (never sysfs,
-+ * never a second sampler), feeds {@link PlayTimeEstimator} and writes the resulting string once per
-+ * tick. Nothing is scheduled while the indicator is off, and nothing is scheduled while the screen
-+ * is off; the estimator drops its window when the screen comes back so standby drain can never leak
-+ * into the estimate.
++ * <p>Owns one {@link PlayTimeIndicatorView} in the {@link PhoneStatusBarView} hierarchy. The
++ * telemetry comes from {@link BatteryManager}: the sticky {@link Intent#ACTION_BATTERY_CHANGED}
++ * broadcast for level, voltage, charging state and the charge counter, and {@code
++ * BATTERY_PROPERTY_CURRENT_NOW} for the current. Nothing reads sysfs, nothing reads a daemon
++ * property, nothing polls a service in the background: the broadcast updates the cached state and a
++ * tick at the configured sample interval feeds {@link PlayTimeEstimator} and writes the resulting
++ * string. Nothing is scheduled while the indicator or the screen is off; the estimator drops its
++ * window when the screen comes back so standby drain can never leak into the estimate.
 + *
-+ * <p>Everything is guarded: a missing view, a malformed property or an absent daemon leaves the
-+ * indicator hidden instead of taking SystemUI down.
++ * <p>Everything is guarded: a missing view, a missing broadcast or an unsupported battery property
++ * leaves the indicator showing {@code --} instead of taking SystemUI down.
 + */
 +public final class PlayTimeIndicator {
 +
 +    private static final String TAG = "PlayTimeIndicator";
 +    private static final boolean DEBUG = false;
 +
-+    /** Telemetry published by ashfall-hwd, see docs/phase6.md 9.3. */
-+    private static final String PROP_CURRENT_MA = "ashfall.status.power.current_ma";
-+    private static final String PROP_VOLTAGE_MV = "ashfall.status.power.voltage_mv";
-+    private static final String PROP_LEVEL = "ashfall.status.power.level";
-+    private static final String PROP_CHARGING = "ashfall.status.power.charging";
-+    private static final String PROP_CHARGE_MAH = "ashfall.status.power.charge_mah";
-+    private static final String PROP_CAPACITY_MAH = "ashfall.status.power.capacity_mah";
++    private static final IntentFilter BATTERY_FILTER = new IntentFilter(
++            Intent.ACTION_BATTERY_CHANGED);
 +
 +    /** Plausibility bounds for this device; anything outside is treated as unknown. */
 +    private static final int MAX_PLAUSIBLE_MA = 10_000;
 +    private static final int MIN_PLAUSIBLE_MV = 2_500;
 +    private static final int MAX_PLAUSIBLE_MV = 5_500;
 +
++    /** {@link BatteryManager#getIntProperty} reports this for an unsupported property. */
++    private static final int UNSUPPORTED_PROPERTY = Integer.MIN_VALUE;
++
 +    private static final int PADDING_DP = 4;
 +
 +    private final PhoneStatusBarView mBarView;
++    private final Context mContext;
 +    private final DarkIconDispatcher mDarkIconDispatcher;
 +    private final BooleanSupplier mPanelCollapsed;
 +    private final Handler mHandler = new Handler(Looper.getMainLooper());
@@ -829,6 +844,8 @@ index 000000000000..145debcb68d5
 +
 +    private ScreenLifecycle mScreenLifecycle;
 +    private KeyguardStateController mKeyguardStateController;
++    private BatteryManager mBatteryManager;
++    private boolean mBatteryReceiverRegistered;
 +
 +    private final Runnable mTick = this::tick;
 +    private final Runnable mCycle = this::advanceCycle;
@@ -840,13 +857,37 @@ index 000000000000..145debcb68d5
 +                public void onScreenTurnedOn() {
 +                    mEstimator.setScreenOn(true);
 +                    mTap = PlayTimeEstimator.TapCycle.CONFIG;
++                    registerBatteryReceiver();
 +                    startTicking();
 +                }
 +
 +                @Override
 +                public void onScreenTurnedOff() {
 +                    mEstimator.setScreenOn(false);
++                    unregisterBatteryReceiver();
 +                    stopTimers();
++                }
++            };
++
++    // State of the latest ACTION_BATTERY_CHANGED, refreshed by the receiver.
++    private int mLevelPct = PlayTimeEstimator.UNKNOWN;
++    private int mVoltageMv = PlayTimeEstimator.UNKNOWN;
++    private boolean mCharging;
++    private int mChargeMah = PlayTimeEstimator.UNKNOWN;
++    private int mCapacityMah = PlayTimeEstimator.UNKNOWN;
++
++    private final BroadcastReceiver mBatteryReceiver =
++            new BroadcastReceiver() {
++                @Override
++                public void onReceive(Context context, Intent intent) {
++                    try {
++                        updateFromBatteryIntent(intent);
++                        if (mAttached && mConfig.show && isScreenOn()) {
++                            sample();
++                        }
++                    } catch (Throwable t) {
++                        fail("battery broadcast failed", t);
++                    }
 +                }
 +            };
 +
@@ -880,9 +921,10 @@ index 000000000000..145debcb68d5
 +    private PlayTimeIndicator(PhoneStatusBarView view, DarkIconDispatcher darkIconDispatcher,
 +            BooleanSupplier panelCollapsed) {
 +        mBarView = view;
++        mContext = view.getContext();
 +        mDarkIconDispatcher = darkIconDispatcher;
 +        mPanelCollapsed = panelCollapsed;
-+        mIndicatorView = new PlayTimeIndicatorView(view.getContext());
++        mIndicatorView = new PlayTimeIndicatorView(mContext);
 +        int padding = Math.round(PADDING_DP * view.getResources().getDisplayMetrics().density);
 +        mIndicatorView.setPaddingRelative(padding, 0, padding, 0);
 +    }
@@ -903,6 +945,12 @@ index 000000000000..145debcb68d5
 +        } catch (Throwable t) {
 +            mKeyguardStateController = null;
 +        }
++        try {
++            mBatteryManager = mContext.getSystemService(BatteryManager.class);
++        } catch (Throwable t) {
++            mBatteryManager = null;
++            Log.w(TAG, "no battery manager, the estimate stays unavailable", t);
++        }
 +
 +        PlayTimeSettings.addListener(mOnSettingsChanged);
 +        if (mDarkIconDispatcher != null) {
@@ -919,6 +967,7 @@ index 000000000000..145debcb68d5
 +        }
 +        mAttached = false;
 +        stopTimers();
++        unregisterBatteryReceiver();
 +        PlayTimeSettings.removeListener(mOnSettingsChanged);
 +        try {
 +            if (mScreenLifecycle != null) {
@@ -963,11 +1012,13 @@ index 000000000000..145debcb68d5
 +            return;
 +        }
 +        mIndicatorView.setVisibility(View.VISIBLE);
++        registerBatteryReceiver();
 +        startTicking();
 +    }
 +
 +    private void hide() {
 +        stopTimers();
++        unregisterBatteryReceiver();
 +        removeFromParent();
 +        mEstimator.purge();
 +        mLastText = "";
@@ -1098,8 +1149,7 @@ index 000000000000..145debcb68d5
 +            return;
 +        }
 +        try {
-+            observe();
-+            render();
++            sample();
 +        } catch (Throwable t) {
 +            fail("sampling failed", t);
 +            return;
@@ -1107,31 +1157,96 @@ index 000000000000..145debcb68d5
 +        mHandler.postDelayed(mTick, mConfig.intervalSeconds * 1000L);
 +    }
 +
-+    /** One daemon tick: read the published power telemetry and feed the estimator. */
-+    private void observe() {
-+        int currentMa = intProperty(PROP_CURRENT_MA);
-+        if (currentMa > MAX_PLAUSIBLE_MA) {
-+            currentMa = PlayTimeEstimator.UNKNOWN;
-+        }
-+        int voltageMv = intProperty(PROP_VOLTAGE_MV);
-+        if (voltageMv < MIN_PLAUSIBLE_MV || voltageMv > MAX_PLAUSIBLE_MV) {
-+            voltageMv = PlayTimeEstimator.UNKNOWN;
-+        }
-+        int level = intProperty(PROP_LEVEL);
-+        if (level < 0 || level > 100) {
-+            level = PlayTimeEstimator.UNKNOWN;
-+        }
-+        int chargeMah = intProperty(PROP_CHARGE_MAH);
-+        if (chargeMah <= 0) {
-+            chargeMah = PlayTimeEstimator.UNKNOWN;
-+        }
-+        int capacityMah = intProperty(PROP_CAPACITY_MAH);
-+        if (capacityMah <= 0) {
-+            capacityMah = PlayTimeEstimator.UNKNOWN;
-+        }
++    /** One sample: the cached broadcast state plus the current from BatteryManager. */
++    private void sample() {
++        mEstimator.observe(readCurrentMa(), mLevelPct, mVoltageMv, mCharging, mChargeMah,
++                mCapacityMah, mConfig.capacityMah);
++        render();
++    }
 +
-+        mEstimator.observe(currentMa, level, voltageMv, intProperty(PROP_CHARGING) == 1,
-+                chargeMah, capacityMah, mConfig.capacityMah);
++    private void registerBatteryReceiver() {
++        if (mBatteryReceiverRegistered) {
++            return;
++        }
++        try {
++            // Sticky: returns the latest battery state and keeps it updated from then on.
++            Intent sticky = mContext.registerReceiver(mBatteryReceiver, BATTERY_FILTER,
++                    Context.RECEIVER_NOT_EXPORTED);
++            mBatteryReceiverRegistered = true;
++            if (sticky != null) {
++                updateFromBatteryIntent(sticky);
++            }
++        } catch (Throwable t) {
++            mBatteryReceiverRegistered = false;
++            Log.w(TAG, "cannot register for battery updates", t);
++        }
++    }
++
++    private void unregisterBatteryReceiver() {
++        if (!mBatteryReceiverRegistered) {
++            return;
++        }
++        mBatteryReceiverRegistered = false;
++        try {
++            mContext.unregisterReceiver(mBatteryReceiver);
++        } catch (Throwable t) {
++            Log.w(TAG, "cannot unregister from battery updates", t);
++        }
++    }
++
++    /**
++     * Caches level, voltage, charging state, remaining charge and the derived capacity from an
++     * {@link Intent#ACTION_BATTERY_CHANGED} intent. Anything missing becomes {@link
++     * PlayTimeEstimator#UNKNOWN}.
++     */
++    private void updateFromBatteryIntent(Intent intent) {
++        if (intent == null) {
++            return;
++        }
++        int level = intent.getIntExtra(BatteryManager.EXTRA_LEVEL, PlayTimeEstimator.UNKNOWN);
++        int scale = intent.getIntExtra(BatteryManager.EXTRA_SCALE, PlayTimeEstimator.UNKNOWN);
++        mLevelPct = (level < 0 || scale <= 0 || level > scale)
++                ? PlayTimeEstimator.UNKNOWN
++                : (int) ((long) level * 100 / scale);
++
++        int voltageMv = intent.getIntExtra(BatteryManager.EXTRA_VOLTAGE,
++                PlayTimeEstimator.UNKNOWN);
++        mVoltageMv = (voltageMv < MIN_PLAUSIBLE_MV || voltageMv > MAX_PLAUSIBLE_MV)
++                ? PlayTimeEstimator.UNKNOWN
++                : voltageMv;
++
++        int status = intent.getIntExtra(BatteryManager.EXTRA_STATUS, PlayTimeEstimator.UNKNOWN);
++        mCharging = status == BatteryManager.BATTERY_STATUS_CHARGING
++                || status == BatteryManager.BATTERY_STATUS_FULL;
++
++        int chargeUah = property(BatteryManager.BATTERY_PROPERTY_CHARGE_COUNTER);
++        mChargeMah = chargeUah >= 0 ? chargeUah / 1000 : PlayTimeEstimator.UNKNOWN;
++        // Design capacity is not exposed: derive it from the charge counter and the level.
++        mCapacityMah = (mChargeMah > 0 && mLevelPct > 0)
++                ? (int) ((long) mChargeMah * 100 / mLevelPct)
++                : PlayTimeEstimator.UNKNOWN;
++    }
++
++    /** Instantaneous current in mA, rectified: {@code BATTERY_PROPERTY_CURRENT_NOW} is uA, signed. */
++    private int readCurrentMa() {
++        int microAmps = property(BatteryManager.BATTERY_PROPERTY_CURRENT_NOW);
++        if (microAmps == PlayTimeEstimator.UNKNOWN || microAmps == 0) {
++            return PlayTimeEstimator.UNKNOWN;
++        }
++        int milliAmps = Math.abs(microAmps) / 1000;
++        return milliAmps > MAX_PLAUSIBLE_MA ? PlayTimeEstimator.UNKNOWN : milliAmps;
++    }
++
++    private int property(int id) {
++        if (mBatteryManager == null) {
++            return PlayTimeEstimator.UNKNOWN;
++        }
++        try {
++            int value = mBatteryManager.getIntProperty(id);
++            return value == UNSUPPORTED_PROPERTY ? PlayTimeEstimator.UNKNOWN : value;
++        } catch (Throwable t) {
++            return PlayTimeEstimator.UNKNOWN;
++        }
 +    }
 +
 +    private void render() {
@@ -1204,15 +1319,6 @@ index 000000000000..145debcb68d5
 +    private boolean isScreenOn() {
 +        return mScreenLifecycle == null
 +                || mScreenLifecycle.getScreenState() == ScreenLifecycle.SCREEN_ON;
-+    }
-+
-+    private static int intProperty(String key) {
-+        try {
-+            return PlayTimeEstimator.parseNonNegativeInt(
-+                    SystemProperties.get(key, ""), PlayTimeEstimator.UNKNOWN);
-+        } catch (Throwable t) {
-+            return PlayTimeEstimator.UNKNOWN;
-+        }
 +    }
 +
 +    private void fail(String message, Throwable t) {
