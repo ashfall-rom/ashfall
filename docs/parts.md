@@ -109,7 +109,7 @@ immediately to the properties from §2 of the contract; there is no Apply button
 | Lighting | `LightingActivity` | switch, target, live colour picker, brightness, effect, speed |
 | Controller | `ControllerActivity` | tester, calibration wizard, factory reset, deadzones, fusion |
 | Power | `PowerActivity` | presets, CPU caps, governor, GPU cap, throttle override, live graph ([parts-power.md](parts-power.md)) |
-| Memory | `MemoryActivity` | zram and swapfile ([parts-memory.md](parts-memory.md)) |
+| Memory | `MemoryActivity` | swapfile ([parts-memory.md](parts-memory.md)) |
 | Tester | `TesterActivity` | drawn handheld, live buttons/sticks/triggers, raw stream |
 | Calibration | `CalibrationActivity` | four-step wizard, review, `SET CAL` |
 

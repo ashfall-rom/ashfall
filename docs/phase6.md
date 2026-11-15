@@ -267,7 +267,7 @@ Wave 1, parallel and device-free:
   `Settings > Battery` rows.
 - **#138** GamepadFusion: `ashfall-rp5-input` fusion mode, Controller page and
   one QS tile/dialog.
-- **#141** AshFall Memory page: zram and swapfile.
+- **#141** AshFall Memory page: swapfile (zram removed in #156).
 
 Wave 2, gated:
 
@@ -307,8 +307,7 @@ second timer and no second sysfs reader.
 |---|---|---|
 | `ashfall.status.perf.cpu_mhz_silver/gold/prime` | int | effective `scaling_cur_freq`; `-1` unavailable |
 | `ashfall.status.perf.gpu_mhz` | int | effective kgsl clock; `-1` unavailable |
-| `ashfall.status.mem.zram_mb` / `swap_mb` | int | applied sizes; `0` off; `-1` unavailable |
-| `ashfall.status.mem.zram_used_kb` / `zram_saved_kb` | int | `mm_stat`; `-1` unavailable |
+| `ashfall.status.mem.swap_mb` | int | applied swapfile size; `0` off; `-1` unavailable |
 | `ashfall.status.mem.swap_total_kb` / `swap_used_kb` | int | `/proc/meminfo`; `-1` unavailable |
 
 Battery telemetry is **not** in `ashfall-hwd`: a coredomain may not read
@@ -338,7 +337,7 @@ daemon workers cannot drift):
 | `persist.ashfall.perf.cpu_max_prime` | `ashfall_perf_prop` | app -> hwd | MHz cap, `0` = stock max |
 | `persist.ashfall.perf.cpu_gov` | `ashfall_perf_prop` | app -> hwd | one governor for all three policies; default `schedutil` |
 | `persist.ashfall.power.preset` | `ashfall_prop` | app only | active preset id (UI state; the daemon applies the caps) |
-| `persist.ashfall.mem.zram_mb` / `swap_mb` | `ashfall_prop` | app -> hwd | `0` = off |
+| `persist.ashfall.mem.swap_mb` | `ashfall_prop` | app -> hwd | `0` = off |
 | `persist.ashfall.batt.*` | `ashfall_prop` | Settings -> SystemUI | PlayTime settings (#137), read with `get_prop(system_app, ashfall_prop)` |
 | `persist.ashfall.pad.fusion` / `.layouts` / `.remap` | `ashfall_prop` | app -> `ashfall-rp5-input` | fusion (#138) |
 
@@ -387,8 +386,9 @@ before any worker starts, so no two workers edit the same page shell.
 - Fusion off by default; v1 custom remap is the raw `from->to` code list
   (record-a-button later); a motion-only node is never opened or grabbed.
 - PlayTime off by default; `capacity_mah=0` means auto; View status bar.
-- Memory off by default; zram (priority 1) and the swapfile (priority 2)
-  coexist; the 16 GiB cap is enforced in the daemon as well as the UI.
+- Memory off by default; the swapfile is the only control (priority 2).
+  Android init owns zram0, so the zram feature was removed in #156; the 16 GiB
+  cap is enforced in the daemon as well as the UI.
 - Power presets exactly as #124 (Low power GPU 305, Balanced 670, Performance
   850); 940/1000 MHz stay manual-only.
 - #120 (vendor PERFD-SERVER denial on `ashfall_gpu_sysfs`) and #129 (fan
