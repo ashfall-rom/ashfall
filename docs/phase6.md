@@ -145,6 +145,15 @@ App (AshFall Parts, existing Performance section on the Fan page):
   `firmware/img/lun4_vendor_boot_a.bin` (last-resort recovery only).  The
   Android build/flash of `system.img` stays with `scripts/build.sh` /
   `flash-gsi.sh`.
+- Published artifacts: the built image is a hash-pinned release in the private
+  repo `ashfall-rom/rp5-vendor_boot` (images as release assets, never git
+  objects; provenance + DTB sources in the repo).  `config/ashfall.conf` pins
+  `VENDOR_BOOT_REPO`/`VENDOR_BOOT_TAG`/`VENDOR_BOOT_SHA256`;
+  `scripts/gpu/publish-vendor_boot.sh` publishes (verifies the manifest,
+  uploads, re-downloads and re-hashes), and
+  `scripts/device/flash-vendor-boot.sh --release [<tag>]` downloads, verifies
+  and flashes.  Content-only images only - the padded variant is never
+  published (issue #54).
 - Workers do not run `scripts/build.sh` or `m`, and do not flash system,
   super, userdata, vendor or the other slot. The GPU worker may run the
   host-side `build-vendor-boot.sh` and static checks; the orchestrator flashes
