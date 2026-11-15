@@ -20,7 +20,23 @@ import android.content.Context;
 
 import androidx.preference.Preference;
 
-/** Live summary of the Power row; the #124 app worker replaces this file. */
+import org.ashfall.parts.hw.Power;
+import org.ashfall.parts.hw.PowerPreset;
+import org.ashfall.parts.hw.PowerPresetStore;
+
+import java.util.Locale;
+
+/**
+ * Live summary of the Handheld "Power" row (#124).
+ *
+ * <ul>
+ *   <li>daemon running: active preset, battery power and the fastest CPU clock
+ *       and the GPU clock — {@code —} for a value the daemon has not published
+ *       yet (power is {@code —} while charging, by contract);</li>
+ *   <li>daemon absent: the preset and the documented unavailable state, never
+ *       a fabricated value.</li>
+ * </ul>
+ */
 public class PowerSummary implements Preference.SummaryProvider<Preference> {
 
     private final Context mContext;
@@ -31,6 +47,26 @@ public class PowerSummary implements Preference.SummaryProvider<Preference> {
 
     @Override
     public CharSequence provideSummary(Preference preference) {
-        return mContext.getString(R.string.home_power_summary_empty);
+        final PowerPresetStore store = PowerPresetStore.get(mContext);
+        final PowerPreset preset = Power.activePreset(store);
+        final String name = preset == null
+                ? mContext.getString(R.string.power_preset_balanced)
+                : preset.displayName(mContext);
+        if (!Power.daemonAlive()) {
+            return mContext.getString(R.string.power_home_offline, name);
+        }
+        final int powerMw = Power.powerMw();
+        final String watts = powerMw < 0
+                ? mContext.getString(R.string.power_unknown)
+                : mContext.getString(R.string.power_home_watts,
+                        String.format(Locale.US, "%.1f", powerMw / 1000f));
+        return mContext.getString(R.string.power_home_summary, name, watts,
+                mhzText(Power.cpuMhzMax()), mhzText(Power.gpuMhz()));
+    }
+
+    private String mhzText(int mhz) {
+        return mhz < 0
+                ? mContext.getString(R.string.power_unknown)
+                : mContext.getString(R.string.power_home_mhz, mhz);
     }
 }
