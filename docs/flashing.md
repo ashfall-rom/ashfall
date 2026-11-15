@@ -40,6 +40,7 @@ wraps all of that.
 | `scripts/device/snapshot.sh` | read-only collector (runs on the build host) |
 | `scripts/device/info.sh` | snapshot -> `out/device/<ts>/`, redacted, with `SUMMARY.md` |
 | `scripts/device/flash-gsi.sh` | flash a `system.img` GSI (fastbootd + vbmeta + optional wipe) |
+| `scripts/device/fix-rotation.sh` | diagnose/fix the 90-degree rotated UI after a flash without `--wipe` |
 | `scripts/device/collect-logs.sh` | log collector (runs on the build host) |
 | `scripts/device/logs.sh` | pull logcat/dmesg/pstore/tombstones/ANRs/bugreport |
 | `scripts/device/restore-stock.sh` | bail-out: flash stock boot/vendor_boot/.../super |
@@ -242,6 +243,32 @@ never touched.
 
 Logs: `out/device/<ts>/flash-gsi.log`.
 
+### Post-flash step: rotation after a flash **without** `--wipe`
+
+A no-wipe flash keeps the stock `/data`, and stock `.31` can leave
+`Settings.System user_rotation=1` (auto-rotate off) behind. AshFall's panel is
+natively landscape, so that inherited lock rotates the UI another 90 degrees:
+portrait UI on a landscape handheld. **Do not reflash and do not wipe for it** -
+one settings write fixes it, and the script refuses to write anything if the
+signature does not match:
+
+```bash
+# read-only: SF property, wm size/density, both settings, display_size_forced,
+# the rotation lines of dumpsys window displays / dumpsys display
+scripts/device/lock.sh run <owner> -- scripts/device/fix-rotation.sh
+# one-time fix: wm user-rotation lock 0, only when all four preconditions hold
+scripts/device/lock.sh run <owner> -- scripts/device/fix-rotation.sh --apply
+scripts/device/fix-rotation.sh --self-test   # offline decision table, no adb
+```
+
+`flash-gsi.sh` prints these two lines in its summary when `--wipe` was not used
+(it never runs them and never waits for boot). Preconditions for the write:
+`ro.surface_flinger.primary_display_orientation=ORIENTATION_90`, effective
+`wm size` 1920x1080, `accelerometer_rotation=0`, `user_rotation=1`. Any other
+combination is a refusal that prints the next diagnostic step. Rationale,
+offline evidence from the stock images and the measured before/after format are
+in [`docs/rp5/display.md`](rp5/display.md#no-wipe-flash-from-stock).
+
 ### Timings on this device
 
 | Step | Time |
@@ -265,6 +292,7 @@ Logs: `out/device/<ts>/flash-gsi.log`.
 | `device did not enter fastbootd` | check the screen; from the bootloader run `fastboot reboot recovery`, confirm `adb devices` shows `recovery`, then `adb reboot fastboot`; if nothing helps, hard power-off 15 s |
 | `FAILED (remote: 'Device is locked')` | bootloader not unlocked -- do not try to bypass it |
 | flash succeeds, Android bootloops | boot to recovery, then `scripts/device/logs.sh`; bail out with `restore-stock.sh` |
+| UI is portrait / 90 degrees rotated after flashing **without** `--wipe` | inherited stock `Settings.System user_rotation=1` on a landscape panel - `scripts/device/fix-rotation.sh --apply` (do not wipe, do not reflash) |
 | `adb: unauthorized` | accept the prompt on the device (user builds); userdebug GSIs with `ro.adb.secure=0` have no prompt |
 
 ### GPU OC vendor_boot (`flash-vendor-boot.sh`)
@@ -301,8 +329,10 @@ Have the user confirm, in this order (it maps to the risks in `docs/PLAN.md`):
 
 1. Boots to the launcher; no "internal problem with your device" dialog (the
    VINTF target-level risk -- check the vintf files in the snapshot).
-2. Display: correct rotation (panel is natively portrait), touch alignment,
-   brightness slider, no tearing, HDMI out if used.
+2. Display: correct rotation (panel is natively portrait; after a flash without
+   `--wipe` the inherited stock rotation lock is fixed with
+   `scripts/device/fix-rotation.sh --apply`), touch alignment, brightness
+   slider, no tearing, HDMI out if used.
 3. Gamepad: sticks, triggers, face buttons, MCU/mode switch, mapping.
 4. Wi-Fi + Bluetooth (scan/connect); USB MTP + adb.
 5. Audio: speakers, headphone jack, mic; volume keys.
