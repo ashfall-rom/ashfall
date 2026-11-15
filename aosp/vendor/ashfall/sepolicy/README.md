@@ -25,7 +25,7 @@ merged into the contexts the image build and libselinux use.  The old
 
 | file | contents |
 |---|---|
-| `ashfall_hwd.te` | `ashfall_hwd` domain, sysfs types for fan/LED attributes, thermal read + trip write for the performance override, GPU devfreq cap type, CPU cpufreq type, zram/swap, battery read |
+| `ashfall_hwd.te` | `ashfall_hwd` domain, sysfs types for fan/LED attributes, thermal read + trip write for the performance override, GPU devfreq cap type, CPU cpufreq type, zram/swap |
 | `ashfall_rp5_input.te` | `ashfall_rp5_input` domain, `/data/misc/ashfall`, control socket |
 | `ashfall_props.te` | `ashfall_prop` (`persist.ashfall.`), `ashfall_status_prop` (`ashfall.status.`), `ashfall_ui_prop` (`ashfall.ui.`) and `ashfall_perf_prop` (`ashfall.perf.`, `persist.ashfall.perf.`); `system_app` writes the settings and reads them (`persist.ashfall.batt.*`, #137) |
 | `file_contexts` | binaries, `/dev/socket/ashfall_input`, `/data/misc/ashfall`, `/dev/block/zram0`, `/data/ashfall`, the cpufreq attributes |
@@ -88,14 +88,13 @@ merged into the contexts the image build and libselinux use.  The old
     `genfs_contexts`, escaped dots) for `ashfall.status.perf.gpu_mhz`.  Only this
     attribute was added; `min_freq`/`max_freq` and the #120 vendor-perf-HAL
     question are unchanged.
-  * **Battery telemetry.**  `/sys/class/power_supply` is already
-    `sysfs_batteryinfo` in the platform policy, so the daemon only gets a read
-    grant; **no `ashfall_power_sysfs` relabel is needed** unless an enforcing
-    build denies a differently-labelled vendor node (then add exact-path
-    relabels like the kgsl ones).  docs/rp5/hw.md §11 has the check.
+  * **Battery telemetry.**  Not in this policy: `domain.te` neverallows
+    coredomain access to `sysfs_batteryinfo` and the RP5 nodes are vendor
+    (`vendor_sysfs_battery_supply`), so battery data is read through
+    BatteryManager in the app/SystemUI processes (docs/rp5/hw.md §11).
   * **zram / swap.**  `/dev/block/zram0` -> `ashfall_zram_device`,
-    `/sys/block/zram0/*` (resolved `/sys/devices/virtual/block/zram0`) ->
-    `ashfall_zram_sysfs`, `/data/ashfall(/.*)?` -> `ashfall_swap_file` (created
+    `/sys/block/zram0/*` keeps the platform's `sysfs_zram` (no AshFall type or
+    genfscon), `/data/ashfall(/.*)?` -> `ashfall_swap_file` (created
     by init at post-fs-data in `ashfall-hwd.rc` so the label is inherited by the
     runtime-created swapfile), plus `sys_admin` for swapon/swapoff.
   * `persist.ashfall.mem.*` stays `ashfall_prop`; `persist.ashfall.perf.cpu_*`

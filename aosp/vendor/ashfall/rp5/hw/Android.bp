@@ -13,7 +13,6 @@ cc_binary {
         "led.c",
         "mem.c",
         "plat.c",
-        "power.c",
         "thermal.c",
         "throttle.c",
     ],
