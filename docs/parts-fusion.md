@@ -94,15 +94,25 @@ One tile, following the Fan/Lighting pattern:
 * Refresh: `onStartListening()` (2 s tick while the panel is open),
   `onTileAdded()`, and after every dialog change through
   `FusionDialog.Listener.onChanged()`.
-* The dialog: the switch, the state line, the connected-pad list and Rescan,
-  with **More settings** and **Done** in the footer.  The layout options expand
-  **in place** under the pad row — a second dialog window would be drawn behind
-  the Quick Settings window and be unreachable (the Lighting dialog keeps its
-  colour picker inline for the same reason).  Custom mapping itself is edited on
-  the Controller page; the inline hint says so and More settings is one press
-  away.
-* The dialog is sized with `Ui.fitDialog()` after the runtime pad rows exist, so
-  the footer is always on screen and only the pad list scrolls.
+* The dialog uses the Fan/Lighting chrome (docs/parts.md §3): the header
+  (gamepad icon, **Fusion** title, the state line and the switch) and the footer
+  never scroll, and the connected-pad list with its inline layout options is the
+  only scrolling area.  Under the list sit a divider and the fixed action row —
+  **Rescan / restart** on the start, **More settings** on the end — then **Done**
+  across the bottom.  The layout options expand **in place** under the pad row —
+  a second dialog window would be drawn behind the Quick Settings window and be
+  unreachable (the Lighting dialog keeps its colour picker inline for the same
+  reason).  Custom mapping itself is edited on the Controller page; the inline
+  hint says so and More settings is one press away.
+* The dialog is measured after the runtime pad rows exist: the card's natural
+  height, clamped to 85 % of the display's **window metrics** (the current
+  rotation, not the service context's resources), with the remainder given to
+  the `ScrollView`.  The header, action row and Done therefore stay fully inside
+  the card and only the pad list scrolls when it genuinely overflows (#156 §16).
+  The measurement is the same contract as `Ui.fitDialog()` and the layout is
+  ready for that shared helper — the local copy in `FusionDialog.fitWindow`
+  measures the uncapped height first and uses the window metrics, both of which
+  the helper needs before this dialog can switch to it.
 
 ## 4. Socket protocol
 
@@ -173,11 +183,43 @@ but a theme *look* review (pure black) is an orchestrator/hardware item.
 | Rescan row and the dialog's button both logged `FUSION RESCAN` | pass |
 | State line `2 pads -> Fusion`; with fusion on and no daemon `daemon unavailable` | pass |
 | QS tile: `Fusion` + `2 pads`, `Fusion` + `Off` when off, `Fusion` + `unavailable` when on without a daemon; active state follows the switch | pass |
-| QS dialog: switch, state line, both pads with layouts, inline layout options (Nintendo checked, choosing Xbox wrote the property and `FUSION LAYOUT`), Rescan, More settings, Done — footer stays on screen while a pad row is expanded | pass |
+| QS dialog: switch, state line, both pads with layouts, inline layout options (Nintendo checked, choosing Xbox wrote the property and `FUSION LAYOUT`), Rescan, More settings, Done — header and footer fixed, see the geometry below | pass |
 | More settings opens `ControllerActivity`; long-press on the tile from the launcher opens `ControllerActivity` | pass |
 | D-pad: focus starts on the switch, centre toggles it, two presses down reach a pad row and centre opens its layout dialog | pass |
 | Day/night: page 232.7 / 30.3 and dialog 158.0 / 35.6 average brightness (`cmd uimode night`) | pass |
 | Homepage summary line | **not exercised**: `HandheldActivity` crashes on resume in the shell (`Preference already has a SummaryProvider set`, `HandheldActivity.java:174`, present on `main` before this change and outside this worker's ownership).  `ControllerSummary` itself is a normal `SummaryProvider` and is exercised by the page's identical `FusionClient.stateText()` path. |
+
+#### Dialog geometry (#156 §16)
+
+`uiautomator dump` on the same AVD (`wm size 1920x1080`, `wm density 360`),
+fresh install, mock running: the switch and Done must be inside both the screen
+and the card, and the pad list must be the only scrolling view.  Values are
+`[x1,y1][x2,y2]` screen pixels.
+
+| State | Card | Switch | Done | ScrollView |
+|---|---|---|---|---|
+| collapsed (day and night) | `[465,172][1455,908]` | `[1385,218][1455,326]` | `[519,773][1455,881]` | `[519,345][1455,636]` |
+| pad row expanded (day and night) | `[465,81][1455,999]` | `[1385,127][1455,235]` | `[519,864][1455,972]` | `[519,254][1455,727]` |
+
+* The expanded card is exactly 918 px, i.e. the 85 % cap of 1080; Done ends at
+  972, 108 px above the card's bottom edge and fully on screen.  Nothing is
+  clipped at the top either: the switch starts at 127, 46 px below the card.
+* `uiautomator` reports `scrollable=true` for `fusion_qs_scroll` and `false` for
+  the root, the switch, the action row and Done.  After a swipe inside the
+  scroll area the first pad row left the view while the switch and Done bounds
+  were unchanged, so only the pad list scrolls.
+* The same bounds hold in day and night; the card surface probe is
+  `(255,255,255)` in day and `(66,66,66)` with `cmd uimode night yes`.  A
+  `TileService` context only picks up the ui mode when it is (re)created, so the
+  night check force-stops the app after the mode change.
+* Daemon unavailable (mock killed with the dialog open): same geometry, the
+  state line reads `daemon unavailable` and the pad list is replaced by the
+  note, with Done still inside the card.
+
+Screenshots (`final-day.png`, `final-day-expanded.png`, `final-night.png`,
+`final-night-expanded.png`, `final-unavailable.png`) and the `uiautomator` XML
+dumps were captured on the emulator; only the bounds above are needed to
+re-check the contract.
 
 `persist.*` writes need a permissive policy on the stock emulator (a debug
 `/data` APK is not `system_app`): `adb shell setenforce 0` while exercising the
