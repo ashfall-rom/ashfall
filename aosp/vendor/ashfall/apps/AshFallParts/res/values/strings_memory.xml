@@ -1,0 +1,68 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Copyright (C) 2026 The AshFall Project
+
+  Licensed under the Apache License, Version 2.0 (the "License");
+  you may not use this file except in compliance with the License.
+  You may obtain a copy of the License at
+
+       http://www.apache.org/licenses/LICENSE-2.0
+
+  Unless required by applicable law or agreed to in writing, software
+  distributed under the License is distributed on an "AS IS" BASIS,
+  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+  See the License for the specific language governing permissions and
+  limitations under the License.
+-->
+<resources>
+    <!-- Memory page (issue #141, docs/phase6.md §9.3).  Every string of the
+         page carries the mem_ prefix and lives in this file, so the other
+         wave-2 pages can change res/values/strings.xml without conflicts. -->
+
+    <!-- Shared -->
+    <string name="mem_dash">—</string>
+    <string name="mem_off">Off</string>
+    <string name="mem_size_mb">%1$d MB</string>
+    <string name="mem_size_gb">%1$s GB</string>
+    <string name="mem_applied_mismatch">Requested %1$d MB — ashfall-hwd reports %2$d MB.</string>
+
+    <!-- Live status (ashfall.status.mem.*) -->
+    <string name="mem_status_category">Status</string>
+    <string name="mem_zram_status_title">zram</string>
+    <string name="mem_swap_status_title">Swap</string>
+    <string name="mem_storage_status_title">Free storage</string>
+    <string name="mem_zram_status_value">%1$s compressed · %2$s:1</string>
+    <string name="mem_swap_status_value">%1$s used of %2$s</string>
+    <string name="mem_storage_status_value">%1$s free of %2$s</string>
+
+    <!-- zram -->
+    <string name="mem_zram_category">zram</string>
+    <string name="mem_zram_title">Enable zram</string>
+    <string name="mem_zram_size_title">zram size</string>
+    <string name="mem_zram_on">On, %1$d MB</string>
+    <string name="mem_zram_off">Off — no compressed swap</string>
+    <string name="mem_zram_summary">%1$d %% of RAM · maximum %2$d MB</string>
+    <!-- The documented unavailable state (issue #141): the row is disabled and
+         says why, instead of failing at write time. -->
+    <string name="mem_zram_unavailable">zram not available on this kernel</string>
+    <string name="mem_zram_no_meminfo">Cannot read /proc/meminfo, so the zram limit cannot follow half of RAM</string>
+
+    <!-- Swapfile.  The warning is part of the feature, not decoration: it is
+         always in the row summary and repeated in a non-dismissible
+         confirmation before swap is switched on. -->
+    <string name="mem_swap_category">Swapfile</string>
+    <string name="mem_swap_size_title">Swapfile size</string>
+    <string name="mem_swap_free">%1$s free on /data</string>
+    <string name="mem_swap_warning">A swapfile lives on the UFS flash: writes are orders of magnitude slower than RAM, the device will feel sluggish once it actually swaps, and heavy swapping wears the flash out. Swap is a last-resort overflow for memory pressure. It is much slower than RAM.</string>
+    <string name="mem_swap_too_large">Larger than the free space on /data — ashfall-hwd will refuse it.</string>
+    <string name="mem_swap_unavailable">The swapfile is not available on this build</string>
+    <string name="mem_swap_confirm_title">Create a swapfile?</string>
+    <string name="mem_swap_confirm_body">The swapfile (%1$s) is created on the internal UFS flash and used as overflow memory when RAM is full. It is orders of magnitude slower than RAM, so the device will feel sluggish once it actually swaps, and heavy swapping wears the flash out. Swap is a last-resort overflow for memory pressure. It is much slower than RAM — not a performance option.</string>
+    <string name="mem_swap_confirm_enable">Create</string>
+
+    <!-- Handheld row summary -->
+    <string name="mem_home_summary">zram %1$s · swap %2$s</string>
+    <string name="mem_home_unavailable">Not reporting</string>
+
+    <string name="mem_footer">This page only writes the two settings. ashfall-hwd applies them, reports what it actually did, and refuses anything it cannot apply. zram is priority 1 and the swapfile priority 2, so compressed RAM is used before the flash.</string>
+</resources>
