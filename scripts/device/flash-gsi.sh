@@ -661,5 +661,15 @@ printf '\nnext:\n'
 printf '  fastboot reboot           # boot Android; first GSI boot can take 2-5 min\n'
 printf '  scripts/device/logs.sh     # if it boots but misbehaves\n'
 printf '  scripts/device/restore-stock.sh   # bail-out to stock\n'
+if ((!WIPE)); then
+  printf '\nno-wipe flash: the inherited stock /data can carry a locked\n'
+  printf 'Settings.System user_rotation=1, which renders the UI 90 degrees rotated\n'
+  printf 'on this landscape-native panel (issue #42). Do NOT reflash or wipe for it.\n'
+  printf 'After the first boot, check and fix it with:\n'
+  printf '  scripts/device/lock.sh run <owner> -- scripts/device/fix-rotation.sh --dry-run\n'
+  printf '  scripts/device/lock.sh run <owner> -- scripts/device/fix-rotation.sh --apply\n'
+  printf '(--apply only writes wm user-rotation lock 0 when all preconditions hold;\n'
+  printf ' see docs/rp5/display.md "No-wipe flash from stock".)\n'
+fi
 printf '======================================\n'
 

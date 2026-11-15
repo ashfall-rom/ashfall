@@ -11,6 +11,13 @@ only landscape with auto-rotate on. Live state: `ro.bootanim.set_orientation_log
 set, `user_rotation=0`, `accelerometer_rotation=0`, `wm size 1080x1920`,
 `DisplayRotation mRotation=0`. The `def_user_rotation` overlay did not apply.
 
+Third iteration (2026-11-15, no rebuild): the landscape properties are verified
+in every recent build's `build.prop` and are correct. A flash **without a wipe**
+over the stock ROM can still show a 90-degree rotated UI, because the inherited
+stock `/data` carries a locked `user_rotation=1` that survives the flash - see
+[No-wipe flash from stock](#no-wipe-flash-from-stock). Fix: one-time
+`wm user-rotation lock 0` (`scripts/device/fix-rotation.sh --apply`), not a wipe.
+
 ## Root cause
 
 The RP5 panel is **1080x1920 native portrait** (`Built-in Screen`,
@@ -193,6 +200,10 @@ screenshot; it was reverted.
 
 * `aosp/vendor/ashfall/rp5/display.mk` - two SF properties + IDC copy rule.
 * `aosp/vendor/ashfall/rp5/display/idc/fts_ts.idc` - touchscreen orientation.
+* `scripts/device/fix-rotation.sh` - no-wipe flash: diagnostic (`--dry-run`,
+  the default), the one-write fix (`--apply`) and the offline `--self-test`.
+* `scripts/device/flash-gsi.sh` - summary hint only (no auto-run) for flashes
+  without `--wipe`.
 * `docs/rp5/display.md` - this document.
 * (removed) `aosp/vendor/ashfall/rp5/display/overlay/.../defaults.xml` and the
   `PRODUCT_PACKAGE_OVERLAYS` hookup from PR #46.
@@ -231,6 +242,143 @@ Expected in the build output:
 7. No regression in brightness, display sleep/wake, or a secondary HDMI/dock
    display if attached (display 2 / port 130 is untouched by the primary
    orientation prop).
+8. **No-wipe flash only**: run `scripts/device/fix-rotation.sh --dry-run` under
+   the lease first; if it says `APPLY`, run `--apply` and confirm the display
+   goes upright without a wipe (see below).
+
+## No-wipe flash from stock
+
+A flash of the GSI **over the stock system without `--wipe`** keeps the stock
+`/data`. Two different rotation "frames" then meet:
+
+| | stock Android 13 (`/data` creator) | AshFall GSI (no wipe, `/data` kept) |
+|---|---|---|
+| panel natural orientation | 1080x1920 portrait | landscape: SF `ORIENTATION_90`, logical mode 1920x1080 |
+| `user_rotation` | `1` (ROTATION_90, locked) | inherited `1` -> still ROTATION_90 |
+| `accelerometer_rotation` | `0` (locked) | inherited `0` -> `USER_ROTATION_LOCKED` |
+| result | panel is portrait, WM rotates it 90 -> upright landscape | panel is already landscape, WM rotates it another 90 -> **portrait, 90 degrees rotated** |
+
+**Symptom:** the whole UI (launcher, status bar, recents) is portrait on a
+landscape handheld while touch still maps correctly, and it stays that way with
+auto-rotate off. A wiped flash boots landscape because the settings database is
+re-created from the GSI defaults.
+
+### Why the value is Settings.System and not something else
+
+In A17 the **primary** display's rotation comes from `Settings.System` only
+(`frameworks/base/services/core/java/com/android/server/wm/`):
+
+* `DisplayRotation.updateSettings()` reads `Settings.System.USER_ROTATION`
+  (default `Surface.ROTATION_0`) and treats `ACCELEROMETER_ROTATION == 0` as
+  `USER_ROTATION_LOCKED`; `updateRotationUncheckedLocked()` then uses
+  `mUserRotation` as the display rotation.
+* `DisplayRotation.restoreSettings()` (fed by `DisplayWindowSettings`, i.e.
+  `/data/system/display_settings.xml`) **returns early for the default
+  display**, so the panel's per-display override cannot be the cause here.
+* `DisplayRotation.setUserRotation()` writes `ACCELEROMETER_ROTATION` and
+  `USER_ROTATION` for the default display, which is exactly what
+  `wm user-rotation lock 0` does.
+
+So a rotated primary display on a landscape-native panel means the settings
+row is `1`. `settings get system user_rotation` prints `null` when the row does
+not exist; both the stock ROM and the GSI then fall back to `def_user_rotation`
+(see below), i.e. `0`.
+
+### What was proved offline (and what was not)
+
+Proved on 2026-11-15, host-only, from the stock `.31` images on the build host
+(`$REMOTE_FIRMWARE/img/super/system_a.img`, no device access):
+
+* `debugfs` -> `/system/priv-app/SettingsProvider/SettingsProvider.apk` ->
+  `resources.arsc`, parsed with a small `ResTable` reader:
+
+  ```
+  com.android.providers.settings/integer/def_user_rotation        -> INT_DEC 0
+  com.android.providers.settings/bool/def_accelerometer_rotation  -> INT_BOOLEAN 0
+  ```
+
+  **Retroid did not patch the SettingsProvider defaults.** The "stock ships
+  `def_user_rotation=1`" variant of the hypothesis is therefore **disproved**;
+  a fresh stock `/data` starts at `0/false` as well.
+* stock `/system/build.prop:207`: `persist.panel.orientation=90`, i.e. the
+  stock 90-degree start is the in-memory `DisplayRotation` patch documented in
+  [Root cause](#root-cause), not a settings default.
+* `SettingsProvider` seeds its defaults into the database **only when the
+  database is created**, so an inherited (non-wiped) `/data` keeps whatever
+  rows it already has - the GSI's `def_user_rotation=0` never applies to it.
+
+Not proved offline: that *this* unit's `/data` actually contains
+`user_rotation=1`. That needs a `/data` dump, and the RP5 is single-tenant and
+busy. The value would have to have been written on stock at runtime (a
+`wm user-rotation lock 1`, a stock-time rotation lock, or an app calling
+`setUserRotation`); the script below does not assume it - it reads the four
+live values and only acts on the exact pattern.
+
+### Commands
+
+Take the device lease first (the RP5 is single-tenant; `dev_adb` refuses while
+another owner holds it):
+
+```bash
+# read-only: prints prop, wm size/density, both settings, display_size_forced
+# and the rotation lines of dumpsys window displays / dumpsys display
+scripts/device/lock.sh run <owner> -- scripts/device/fix-rotation.sh
+
+# the one write, and only when all four preconditions hold
+scripts/device/lock.sh run <owner> -- scripts/device/fix-rotation.sh --apply
+```
+
+`--apply` runs `wm user-rotation lock 0` **only** when
+
+1. `ro.surface_flinger.primary_display_orientation` is `ORIENTATION_90`,
+2. `wm size` (effective, i.e. override if set) is `1920x1080`,
+3. `settings get system accelerometer_rotation` is `0`,
+4. `settings get system user_rotation` is `1`.
+
+Anything else is a refusal that changes nothing and names the next diagnostic
+step (missing SF property -> the build, forced `1080x1920` -> `wm size reset`,
+auto-rotate `1` -> a locked rotation cannot apply, other `user_rotation` ->
+inspect further). The decision is a pure function and has an offline test:
+
+```bash
+scripts/device/fix-rotation.sh --self-test   # no adb, no device, no lease
+```
+
+### Measured before/after
+
+```
+scripts/device/lock.sh run orchestrator-flash -- scripts/device/fix-rotation.sh --apply
+
+--- rotation state (before) ---
+ro.surface_flinger.primary_display_orientation = ORIENTATION_90
+debug.sf.ignore_hwc_physical_display_orientation = true
+wm size (effective): 1920x1080
+wm density         : Physical density: 480|
+settings get system user_rotation          = 1 (effective 1)
+settings get system accelerometer_rotation = 0 (effective 0)
+settings get global display_size_forced    = null
+dumpsys window displays (rotation/orientation lines):
+    init=1920x1080 480dpi cur=1080x1920 app=1080x1920 rot=1
+==> applying: adb shell wm user-rotation lock 0
+--- rotation state (after) ---
+settings get system user_rotation          = 0 (effective 0)
+settings get system accelerometer_rotation = 0 (effective 0)
+dumpsys window displays (rotation/orientation lines):
+    init=1920x1080 480dpi cur=1920x1080 app=1920x1080 rot=0
+
+measured: user_rotation 1 -> 0, accelerometer_rotation 0 -> 0, wm size 1920x1080 -> 1920x1080
+measured: dumpsys window displays cur=1080x1920 rot=1 -> cur=1920x1080 rot=0
+```
+
+(The before block is the expected stale-stock signature; the after block is the
+target state. Real output is captured by the orchestrator on the next no-wipe
+flash and pasted here.)
+
+Rules: do **not** wipe and do **not** reflash to fix this - both throw away the
+user's data for a single settings row. `wm user-rotation lock 0` persists (it is
+the same write the Settings app performs), so it is a one-time step per
+inherited `/data`. No framework or app migration is part of this change; the
+durable option is described in the PR body.
 
 ## Notes / alternatives
 
