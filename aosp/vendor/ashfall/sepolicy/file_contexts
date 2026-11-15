@@ -22,6 +22,34 @@
 # the factory file).  Created by init at post-fs-data.
 /data/misc/ashfall(/.*)?             u:object_r:ashfall_data_file:s0
 
+# CPU frequency caps/governor (phase 6, #124).  The kona policy dirs are
+# symlinks into cpuN/cpufreq; genfs_contexts labels the trees recursively and
+# these exact paths document the attributes the daemon opens.  There are no
+# dots in these names, so no escaping is needed (unlike the kgsl paths below).
+/sys/devices/system/cpu/cpufreq/policy0/scaling_available_frequencies u:object_r:ashfall_cpu_sysfs:s0
+/sys/devices/system/cpu/cpufreq/policy0/scaling_available_governors u:object_r:ashfall_cpu_sysfs:s0
+/sys/devices/system/cpu/cpufreq/policy0/scaling_cur_freq u:object_r:ashfall_cpu_sysfs:s0
+/sys/devices/system/cpu/cpufreq/policy0/scaling_max_freq u:object_r:ashfall_cpu_sysfs:s0
+/sys/devices/system/cpu/cpufreq/policy0/scaling_governor u:object_r:ashfall_cpu_sysfs:s0
+/sys/devices/system/cpu/cpufreq/policy4/scaling_available_frequencies u:object_r:ashfall_cpu_sysfs:s0
+/sys/devices/system/cpu/cpufreq/policy4/scaling_available_governors u:object_r:ashfall_cpu_sysfs:s0
+/sys/devices/system/cpu/cpufreq/policy4/scaling_cur_freq u:object_r:ashfall_cpu_sysfs:s0
+/sys/devices/system/cpu/cpufreq/policy4/scaling_max_freq u:object_r:ashfall_cpu_sysfs:s0
+/sys/devices/system/cpu/cpufreq/policy4/scaling_governor u:object_r:ashfall_cpu_sysfs:s0
+/sys/devices/system/cpu/cpufreq/policy7/scaling_available_frequencies u:object_r:ashfall_cpu_sysfs:s0
+/sys/devices/system/cpu/cpufreq/policy7/scaling_available_governors u:object_r:ashfall_cpu_sysfs:s0
+/sys/devices/system/cpu/cpufreq/policy7/scaling_cur_freq u:object_r:ashfall_cpu_sysfs:s0
+/sys/devices/system/cpu/cpufreq/policy7/scaling_max_freq u:object_r:ashfall_cpu_sysfs:s0
+/sys/devices/system/cpu/cpufreq/policy7/scaling_governor u:object_r:ashfall_cpu_sysfs:s0
+
+# zram block device (phase 6, #141).  The node is created by ueventd.
+/dev/block/zram0                    u:object_r:ashfall_zram_device:s0
+
+# Swap file (phase 6, #141): /data/ashfall is created by init at post-fs-data
+# (ashfall-hwd.rc) so the directory and the file share the same type; a
+# runtime-created swapfile inherits it from the directory.
+/data/ashfall(/.*)?                  u:object_r:ashfall_swap_file:s0
+
 # GPU devfreq cap (phase 6).  The stock vendor_file_contexts labels the whole
 # kgsl tree vendor_sysfs_kgsl with regexes, and system_ext_file_contexts is
 # loaded *before* vendor_file_contexts.  These entries therefore escape every

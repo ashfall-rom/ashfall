@@ -29,6 +29,10 @@ daemon applies settings at boot and at runtime.
 | `/sys/class/sn3112l/led/brightness` | write `"<mode>-<r>:<g>:<b>"` | left ring colour (mode `1` = static) |
 | `/sys/class/sn3112r/led/{enable,brightness}` | same | right stick ring |
 | `/sys/class/thermal/thermal_zone*/{type,temp}` | read | SoC temperatures (millidegrees C) |
+| `/sys/class/power_supply/*/{current_now,voltage_now,capacity,status,charge_counter,charge_full_design}` | read | battery telemetry (§11); the device is resolved at runtime (`battery`, then `bms`) |
+| `/sys/devices/system/cpu/cpufreq/policy*/scaling_*` | read/write | per-cluster max frequency and governor (§12) |
+| `/sys/block/zram0/*`, `/dev/block/zram0` | read/write | zram swap device (§13) |
+| `/data/ashfall/swapfile` | create/read/unlink | swapfile (§13) |
 
 The vendor init script already `chmod 0666`s the fan and sn3112 attributes
 (`init.qcom.rc`), so no additional boot-time permission fix is needed.
@@ -407,6 +411,9 @@ device (build `20261113-213314`):
 |---|---|---|
 | `ashfall_fan_sysfs` | `/class/gpio5_pwm2` | the driver registers class-level attributes, so `state`/`duty`/`speed` live directly in the class directory (it is a real directory, not a device symlink); `avc` confirms `path="/sys/class/gpio5_pwm2/state"` |
 | `ashfall_led_sysfs` | `/devices/virtual/sn3112l`, `/devices/virtual/sn3112r` | `/sys/class/sn3112{l,r}/led` are symlinks into these device dirs; `avc` confirms `path="/sys/devices/virtual/sn3112l/led/brightness"` |
+| `ashfall_cpu_sysfs` | `/devices/system/cpu/cpufreq`, `/devices/system/cpu/cpu{0..7}/cpufreq` | phase 6 (#124): the `policy*` dirs are symlinks into `cpuN/cpufreq`; the platform label `sysfs_devices_system_cpu` is not writable by a coredomain (§12) |
+| `ashfall_zram_sysfs` | `/devices/virtual/block/zram0`, `/block/zram0` | phase 6 (#141): `/sys/block/zram0/*` is a class symlink to the virtual block device (§13) |
+| `ashfall_swap_file` | `/data/ashfall(/.*)?` | phase 6 (#141): the swapfile directory and file; created by init at `post-fs-data` so the label is inherited (§13) |
 
 On the test build the nodes were still labelled `u:object_r:sysfs:s0` (and the
 `shell` domain that ran the test binary is a permissive domain in userdebug),
@@ -414,6 +421,11 @@ so the enforcing behaviour of these `genfscon` entries has to be confirmed on
 the first integration build: after flashing, `ls -lZ` must show
 `ashfall_fan_sysfs` / `ashfall_led_sysfs` and `dmesg | grep avc` must be clean
 while fan and LEDs are driven.
+
+Phase 6 also relabels `/dev/block/zram0` (`ashfall_zram_device`) and grants
+`sys_admin` for swapon/swapoff; `/sys/class/power_supply` already carries the
+platform `sysfs_batteryinfo` type, so the battery telemetry only needs a read
+grant (no `ashfall_power_sysfs` relabel, §11).
 
 Thermal zones need no new type: the stock vendor policy (still in place under
 the GSI) labels `/devices/virtual/thermal` and `/class/thermal` as
@@ -469,6 +481,8 @@ Run on a build that contains `ashfall-hwd` (a manually pushed binary runs as
    untouched (§9).
 9. `adb shell dmesg | grep avc` (and `logcat -b events | grep avc`) is clean
    after exercising all of the above on an **enforcing** build.
+10. Phase 6 telemetry: §11 (battery/power), §12 (CPU caps and governor) and
+    §13 (zram/swapfile) carry their own property tables and enforcing checks.
 
 ## 7. On-device verification (2026-11-13, build 20261113-213314)
 
@@ -729,3 +743,189 @@ builds `integ/phase5` and hands the RP5 over serially).  The checks to run:
 6. Wake re-apply (#109): the 20-cycle power-button test in §4 -> both rings
    lit after every unlock, one `ashfall-hwd` line per transition, no write
    errors and no retries while the screen is off.
+
+## 11. Battery / power telemetry (#124, #137)
+
+One sampler, one owner (docs/phase6.md §9.3): `ashfall-hwd` is the only reader
+of `/sys/class/power_supply`, and SystemUI (PlayTime) and the Power page read
+properties.  The read happens on the existing status tick (`STATUS_INTERVAL_MS`,
+2 s; 500 ms while `ashfall.ui.fan_live=1`), there is no second timer and no
+second sysfs reader.
+
+| property | type | meaning |
+|---|---|---|
+| `ashfall.status.power.current_ma` | int | rectified magnitude in mA, `-1` unknown |
+| `ashfall.status.power.voltage_mv` | int | battery voltage in mV, `-1` unknown |
+| `ashfall.status.power.level` | int | 0..100, `-1` unknown |
+| `ashfall.status.power.charging` | int | `1` charging, `0` not charging/`Full`, `-1` unknown |
+| `ashfall.status.power.charge_mah` | int | remaining charge, `-1` when no node exists |
+| `ashfall.status.power.capacity_mah` | int | design capacity, `-1` when no node exists |
+| `ashfall.status.perf.power_mw` | int | `current_ma * voltage_mv / 1000` from the same read; `-1` while charging and when unknown |
+
+**Device discovery.**  The stock unit exposes both a `battery` class device and
+a `bms` fuel gauge, and which one carries `current_now` is not fixed.  The
+daemon walks `/sys/class/power_supply` and keeps only devices whose `type` is
+`Battery`, in the order `battery`, `bms`, then the rest; every attribute is
+taken from the first candidate that has it (so `charge_counter` may come from
+the gauge while `voltage_now` comes from the pack).  The resolved paths are
+logged once at start (`power: battery=... current=...`).
+
+**Units and validation.**  The power-supply class documents `current_now` in uA
+and `voltage_now` in uV, but some gauges report mA/mV.  A value `>= 10000` of
+the plausible scale is treated as the micro unit (a 10 A draw in mA would be
+implausible on this unit).  A current of `0`, `-1` or more than 20 000 mA is
+`-1`, a voltage outside 2.0..6.0 V is `-1`, and a `capacity` outside 0..100 is
+`-1`: never a fabricated number.  `charging=1` only for the kernel status
+`Charging`; `Full`/`Not charging`/`Discharging` are `0` and the pack wattage is
+`-1` while charging, because a battery-side number is meaningless then.
+
+Verification on the device (enforcing build):
+
+```bash
+adb shell 'for d in /sys/class/power_supply/*; do echo "$d"; cat $d/type \
+    $d/current_now $d/voltage_now $d/capacity $d/status \
+    $d/charge_counter $d/charge_full_design 2>/dev/null; done'
+adb shell 'getprop | grep -E "ashfall.status.(power|perf.power_mw)"'
+adb shell dmesg | grep avc      # must be clean (sysfs_batteryinfo read)
+```
+
+Expected: `current_ma` follows a 3D load within one tick, `power_mw` is a few
+thousand while idle and `-1` on the charger, `charge_mah`/`capacity_mah` are
+`-1` if the gauge has no such node (that is a correct answer, not a bug).  If
+`dmesg | grep avc` names a label other than `sysfs_batteryinfo` for a
+power-supply attribute, the vendor policy moved it: add exact-path
+`file_contexts` relabels to `ashfall_power_sysfs` following the kgsl pattern
+(§5) and grant `ashfall_hwd` read.
+
+## 12. CPU clock caps and governor (#124)
+
+| property | type | meaning |
+|---|---|---|
+| `persist.ashfall.perf.cpu_max_silver` / `_gold` / `_prime` | `ashfall_perf_prop` | MHz cap, `0` = stock max |
+| `persist.ashfall.perf.cpu_gov` | `ashfall_perf_prop` | one governor for all three policies, default `schedutil` |
+| `ashfall.status.perf.cpu_mhz_silver` / `_gold` / `_prime` | `ashfall_status_prop` | effective `scaling_cur_freq`, `-1` unavailable |
+
+**Policy discovery.**  The three policies are found by walking
+`/sys/devices/system/cpu/cpufreq` (not by assuming `policy0/4/7`): each
+`policy*` directory must expose `scaling_available_frequencies`, and the
+cluster comes from its `affected_cpus` list (kona: silver = CPU 0..3, gold =
+4..6, prime = 7).  If the CPU ids do not map, the remaining policies are
+assigned in ascending top-frequency order (slowest silver, fastest prime), and
+the resolved policy is logged once:
+
+```
+I/ashfall-hwd: cpu: silver policy0 300..1804 MHz, governor walt conservative powersave performance schedutil
+```
+
+**Clamp rules.** `scaling_available_frequencies` is in kHz and is sorted
+descending.  A request of `0` writes the highest step (stock), any other
+request writes the highest step whose MHz (floored) is `<=` the request, and a
+request below the lowest step writes the lowest step.  The presets from #124
+name the floored step (`1171` for 1171.2 MHz), which is why the comparison
+floors the step and not the request.  Raising above stock is impossible: the
+table's top *is* stock.  `scaling_max_freq` and `scaling_governor` are
+re-applied at boot (the kernel resets both) and on every property change, and
+are re-validated each time because a property can come from `adb shell`.
+
+**Governor.** Validated against `scaling_available_governors`; only
+`schedutil`, `conservative` and `powersave` are accepted (the editor exposes
+exactly those).  `walt`/`performance` and unknown names become `schedutil`; if
+`schedutil` is not in the list, the first of the three that is.  With
+`powersave` the caps are inert (the governor pins the lowest step), as the app
+documents.
+
+**SELinux.**  The `policy*` directories are symlinks into `cpuN/cpufreq`, which
+is `sysfs_devices_system_cpu` and not writable by a coredomain.  The cpufreq
+tree is relabelled `ashfall_cpu_sysfs` via `genfs_contexts` (both the
+`/devices/system/cpu/cpufreq` and every `cpuN/cpufreq` prefix, applied
+recursively), with the exact attribute paths also listed in `file_contexts`.
+Enforcing check:
+
+```bash
+adb shell ls -Z /sys/devices/system/cpu/cpu7/cpufreq/scaling_max_freq
+#   -> u:object_r:ashfall_cpu_sysfs:s0
+adb shell ls -Z /sys/devices/system/cpu/cpufreq/policy7 | head
+adb shell 'setprop persist.ashfall.perf.cpu_max_prime 1516; \
+           setprop persist.ashfall.perf.cpu_gov conservative'
+adb shell 'cat /sys/devices/system/cpu/cpufreq/policy7/scaling_max_freq \
+                /sys/devices/system/cpu/cpufreq/policy7/scaling_governor'
+#   -> 1516800 / conservative
+adb shell 'getprop ashfall.status.perf.cpu_mhz_prime'
+adb shell dmesg | grep avc      # must be clean
+```
+
+`setprop` from `adb shell` is denied for `persist.ashfall.*` by design (§5); use
+the Power page, and treat a denial in an `ashfall_hwd` line (not a `setprop`
+line) as the policy bug.
+
+`ashfall.status.perf.gpu_mhz` from docs/phase6.md §9.3 is **not** published by
+this change: the effective kgsl clock lives in an attribute next to
+`gpu_available_frequencies`, and the GPU relabel is frozen for #120.  The GPU
+cap keeps its existing `ashfall.status.perf.{gpu_max_mhz,gpu_oc}` properties.
+
+## 13. Memory: zram and swapfile (#141)
+
+| property | type | meaning |
+|---|---|---|
+| `persist.ashfall.mem.zram_mb` | `ashfall_prop` | zram size, `0` = off, clamped to `MemTotal/2` |
+| `persist.ashfall.mem.swap_mb` | `ashfall_prop` | swapfile size, `0` = off, clamped to 16384 MB |
+| `ashfall.status.mem.zram_mb` / `swap_mb` | `ashfall_status_prop` | applied sizes; `0` off, `-1` unavailable |
+| `ashfall.status.mem.zram_used_kb` / `zram_saved_kb` | `ashfall_status_prop` | `mm_stat`: compressed size and `orig - compressed` |
+| `ashfall.status.mem.swap_total_kb` / `swap_used_kb` | `ashfall_status_prop` | `/proc/meminfo` `SwapTotal`/`SwapFree` |
+
+**zram.** `/dev/block/zram0` plus `/sys/block/zram0/{disksize,reset,
+comp_algorithm,comp_available,mm_stat}`.  Apply order: `swapoff` (when the
+device is in use) -> `reset` -> `comp_algorithm` -> `disksize` -> `swapon`
+(priority 1).  The compressor is `lz4` when `comp_available` lists it, else the
+first available one, logged once (`mem: zram compressor lz4`); there is no UI
+option.  The size is clamped to `MemTotal/2` (4000 MB on the 8 GB unit, 6000 on
+12 GB) and to 6144 MB, so the stock 4096 MB is never applied on an 8 GB unit.
+The same size is idempotent: boot and a daemon restart only re-run `swapon`
+instead of reallocating the device.
+
+**swap.** A file at `/data/ashfall/swapfile` on the f2fs data partition,
+created with `fallocate` (a sparse `ftruncate` when the filesystem refuses) and
+a v1 swap header written by the daemon, then `swapon` with priority 2 (zram
+stays preferred, both coexist).  The request is clamped to 16384 MB (the daemon
+enforces the UI cap too) and to `/data` free space minus a 2048 MB reserve; a
+rejected request logs one line and publishes the effective value.  Disabling
+swaps off, unlinks the file and returns the space.
+
+**Missing nodes.**  No `/dev/block/zram0` (module not in `vendor_dlkm`) or no
+`/data` mount is a logged no-op: the size is published as `-1` and the daemon
+keeps running.  A swapfile allocation of several GB can take seconds on the
+first enable (and at boot if the property is set); the daemon is single-threaded,
+so the fan holds its last applied duty for that window.  This is documented, not
+a regression: no new daemon or thread is added.
+
+**SELinux / init.**  `/dev/block/zram0` is `ashfall_zram_device`,
+`/sys/block/zram0/*` -> `ashfall_zram_sysfs`, `/data/ashfall(/.*)?` ->
+`ashfall_swap_file`, and `swapon`/`swapoff` need `sys_admin`.
+`ashfall-hwd.rc` creates `/data/ashfall` at `post-fs-data` with
+`restorecon_recursive`, so both the directory and a runtime-created swapfile
+carry `ashfall_swap_file` (a directory created by the daemon itself would
+inherit the `/data` label).  Enforcing check:
+
+```bash
+adb shell 'ls -Zd /data/ashfall /data/ashfall/swapfile'
+#   -> u:object_r:ashfall_swap_file:s0
+adb shell ls -Z /dev/block/zram0 /sys/block/zram0/disksize
+#   -> ashfall_zram_device / ashfall_zram_sysfs
+adb shell 'setprop persist.ashfall.mem.zram_mb 2048; cat /proc/swaps'
+adb shell 'getprop | grep ashfall.status.mem'
+adb shell dmesg | grep avc      # must be clean
+```
+
+`/proc/meminfo` is `proc_meminfo`, readable by every domain in the platform
+policy, so it needs no AshFall rule.
+
+## 14. Fan output limit during the spin-up kick (#129)
+
+`persist.ashfall.fan.max_pct` is enforced for the whole kick window, not only
+when the kick is created.  When the cap is lowered while a kick is still open,
+`fan_apply_pct()` drops `kick_until_ms` and writes the already limited target
+on that tick instead of returning the stored (now too high) level.  The safety
+override (90 °C) and the no-sensor fail-safe stay exempt.  Regression test:
+`test_kick_max_lowered` in `rp5/hw/tests/test_hw.c` (kick to 30 % with max 100,
+lower max to 10, next tick -> 5 % and `ashfall.status.fan.pct` 5, duty
+`fan_pct_to_duty(5)`).

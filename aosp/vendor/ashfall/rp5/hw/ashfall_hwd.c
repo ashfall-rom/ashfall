@@ -11,13 +11,17 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+#include "cpu.h"
 #include "fan.h"
 #include "gpu.h"
 #include "led.h"
+#include "mem.h"
 #include "plat.h"
+#include "power.h"
 #include "thermal.h"
 #include "throttle.h"
 
+#include <limits.h>
 #include <signal.h>
 #include <stdbool.h>
 #include <stdint.h>
@@ -49,6 +53,13 @@
 #define PROP_PERF_OVERRIDE "ashfall.perf.throttle_override"
 #define PROP_PERF_PERMANENT "persist.ashfall.perf.throttle_override_permanent"
 #define PROP_GPU_MAX_MHZ "persist.ashfall.perf.gpu_max_mhz"
+#define PROP_CPU_MAX_SILVER "persist.ashfall.perf.cpu_max_silver"
+#define PROP_CPU_MAX_GOLD "persist.ashfall.perf.cpu_max_gold"
+#define PROP_CPU_MAX_PRIME "persist.ashfall.perf.cpu_max_prime"
+#define PROP_CPU_GOV "persist.ashfall.perf.cpu_gov"
+
+#define PROP_MEM_ZRAM_MB "persist.ashfall.mem.zram_mb"
+#define PROP_MEM_SWAP_MB "persist.ashfall.mem.swap_mb"
 
 #define STATUS_FAN_TEMP "ashfall.status.fan.temp"
 #define STATUS_FAN_PCT "ashfall.status.fan.pct"
@@ -57,6 +68,24 @@
 #define STATUS_PERF_THROTTLE "ashfall.status.perf.throttle"
 #define STATUS_GPU_MAX_MHZ "ashfall.status.perf.gpu_max_mhz"
 #define STATUS_GPU_OC "ashfall.status.perf.gpu_oc"
+
+/* Phase 6 wave 2 telemetry (docs/phase6.md §9.3): one sampler, one owner. */
+#define STATUS_POWER_CURRENT_MA "ashfall.status.power.current_ma"
+#define STATUS_POWER_VOLTAGE_MV "ashfall.status.power.voltage_mv"
+#define STATUS_POWER_LEVEL "ashfall.status.power.level"
+#define STATUS_POWER_CHARGING "ashfall.status.power.charging"
+#define STATUS_POWER_CHARGE_MAH "ashfall.status.power.charge_mah"
+#define STATUS_POWER_CAPACITY_MAH "ashfall.status.power.capacity_mah"
+#define STATUS_PERF_POWER_MW "ashfall.status.perf.power_mw"
+#define STATUS_PERF_CPU_SILVER "ashfall.status.perf.cpu_mhz_silver"
+#define STATUS_PERF_CPU_GOLD "ashfall.status.perf.cpu_mhz_gold"
+#define STATUS_PERF_CPU_PRIME "ashfall.status.perf.cpu_mhz_prime"
+#define STATUS_MEM_ZRAM_MB "ashfall.status.mem.zram_mb"
+#define STATUS_MEM_SWAP_MB "ashfall.status.mem.swap_mb"
+#define STATUS_MEM_ZRAM_USED_KB "ashfall.status.mem.zram_used_kb"
+#define STATUS_MEM_ZRAM_SAVED_KB "ashfall.status.mem.zram_saved_kb"
+#define STATUS_MEM_SWAP_TOTAL_KB "ashfall.status.mem.swap_total_kb"
+#define STATUS_MEM_SWAP_USED_KB "ashfall.status.mem.swap_used_kb"
 
 #define STATUS_INTERVAL_MS 2000
 /* ashfall.ui.fan_live=1: a fan page/editor/QS dialog is visible, publish the
@@ -71,6 +100,11 @@
 #define THERMAL_SWEEP_MS 300000
 /* Retry while the kgsl devfreq node is not up yet (vendor init/class core). */
 #define GPU_RETRY_MS 5000
+/* Retry while cpufreq / the zram module is not up yet (class core ordering). */
+#define CPU_RETRY_MS 5000
+#define MEM_RETRY_MS 5000
+/* Bounded retries (60 s) for a memory request that is not in effect yet. */
+#define MEM_RETRY_BUDGET 12
 
 static volatile sig_atomic_t g_running = 1;
 
@@ -229,6 +263,139 @@ static bool perf_override_requested(bool *requested)
     return true;
 }
 
+/* --- phase 6: CPU caps / governor and memory settings --------------------- */
+
+struct cpu_settings {
+    int max_mhz[CPU_CLUSTER_COUNT];
+    char governor[CPU_GOV_LEN];
+};
+
+struct mem_settings {
+    int zram_mb;
+    int swap_mb;
+};
+
+static void cpu_settings_default(struct cpu_settings *out)
+{
+    memset(out, 0, sizeof(*out));
+    snprintf(out->governor, sizeof(out->governor), "schedutil");
+}
+
+/* Everything is re-read and clamped every loop like the fan settings; the
+ * daemon is the only writer of cpufreq and a property can come from adb. */
+static void read_cpu_settings(struct cpu_settings *out, bool *changed)
+{
+    struct cpu_settings next;
+    char buf[CPU_GOV_LEN];
+
+    cpu_settings_default(&next);
+    next.max_mhz[CPU_CLUSTER_SILVER] =
+        prop_get_int_range(PROP_CPU_MAX_SILVER, 0, 0, CPU_MAX_MHZ);
+    next.max_mhz[CPU_CLUSTER_GOLD] =
+        prop_get_int_range(PROP_CPU_MAX_GOLD, 0, 0, CPU_MAX_MHZ);
+    next.max_mhz[CPU_CLUSTER_PRIME] =
+        prop_get_int_range(PROP_CPU_MAX_PRIME, 0, 0, CPU_MAX_MHZ);
+    if (prop_get_str(PROP_CPU_GOV, buf, sizeof(buf)) > 0 && buf[0])
+        snprintf(next.governor, sizeof(next.governor), "%s", buf);
+
+    if (memcmp(&next, out, sizeof(next)) != 0) {
+        *out = next;
+        *changed = true;
+    }
+}
+
+static void mem_settings_default(struct mem_settings *out)
+{
+    memset(out, 0, sizeof(*out));
+}
+
+/* A request that is still not in effect: cpufreq/zram were not up at class
+ * core, /data was not mounted, or a write failed.  Retried on MEM_RETRY_MS for
+ * a bounded number of attempts so a permanent failure (a policy denial, a full
+ * /data) cannot turn into a 5 s retry loop that re-allocates a swapfile. */
+static bool mem_needs_retry(const struct mem_settings *set, const mem_state *mem)
+{
+    if (set->zram_mb > 0 && (!mem->zram_supported || mem->zram_mb < 0))
+        return true;
+    if (set->swap_mb > 0 && mem->swap_mb < 0)
+        return true;
+    return false;
+}
+
+static void read_mem_settings(struct mem_settings *out, bool *changed)
+{
+    struct mem_settings next;
+
+    mem_settings_default(&next);
+    /* Read unclamped: mem_clamp_zram()/mem_clamp_swap() do the real clamping
+     * (MemTotal/2, 16384 MB, /data free space), so a request above the UI cap
+     * is clamped rather than falling back to 0 = off. */
+    next.zram_mb = prop_get_int(PROP_MEM_ZRAM_MB, 0);
+    next.swap_mb = prop_get_int(PROP_MEM_SWAP_MB, 0);
+    if (next.zram_mb < 0)
+        next.zram_mb = 0;
+    if (next.swap_mb < 0)
+        next.swap_mb = 0;
+
+    if (memcmp(&next, out, sizeof(next)) != 0) {
+        *out = next;
+        *changed = true;
+    }
+}
+
+/* Publish an int only when it changed.  The caller's cache starts at INT_MIN,
+ * so the first tick always publishes (including the -1 unavailable values). */
+static void publish_int(const char *name, int value, int *cache)
+{
+    if (*cache == value)
+        return;
+    prop_set_int(name, value);
+    *cache = value;
+}
+
+static void publish_power_status(power_state *power, int *cache)
+{
+    power_sample sample;
+
+    /* Fills every field with -1 when the battery nodes are unavailable. */
+    power_sample_read(power, &sample);
+    publish_int(STATUS_POWER_CURRENT_MA, sample.current_ma, &cache[0]);
+    publish_int(STATUS_POWER_VOLTAGE_MV, sample.voltage_mv, &cache[1]);
+    publish_int(STATUS_POWER_LEVEL, sample.level, &cache[2]);
+    publish_int(STATUS_POWER_CHARGING, sample.charging, &cache[3]);
+    publish_int(STATUS_POWER_CHARGE_MAH, sample.charge_mah, &cache[4]);
+    publish_int(STATUS_POWER_CAPACITY_MAH, sample.capacity_mah, &cache[5]);
+    publish_int(STATUS_PERF_POWER_MW, sample.power_mw, &cache[6]);
+}
+
+static void publish_cpu_status(const cpu_state *cpu, int *cache)
+{
+    publish_int(STATUS_PERF_CPU_SILVER, cpu_status_mhz(cpu, CPU_CLUSTER_SILVER),
+                &cache[0]);
+    publish_int(STATUS_PERF_CPU_GOLD, cpu_status_mhz(cpu, CPU_CLUSTER_GOLD),
+                &cache[1]);
+    publish_int(STATUS_PERF_CPU_PRIME, cpu_status_mhz(cpu, CPU_CLUSTER_PRIME),
+                &cache[2]);
+}
+
+static void publish_mem_status(const mem_state *mem, int *cache)
+{
+    int zram_used = -1;
+    int zram_saved = -1;
+    int swap_total = -1;
+    int swap_used = -1;
+
+    mem_status_zram(mem, &zram_used, &zram_saved);
+    mem_status_swap(&swap_total, &swap_used);
+
+    publish_int(STATUS_MEM_ZRAM_MB, mem->zram_mb, &cache[0]);
+    publish_int(STATUS_MEM_SWAP_MB, mem->swap_mb, &cache[1]);
+    publish_int(STATUS_MEM_ZRAM_USED_KB, zram_used, &cache[2]);
+    publish_int(STATUS_MEM_ZRAM_SAVED_KB, zram_saved, &cache[3]);
+    publish_int(STATUS_MEM_SWAP_TOTAL_KB, swap_total, &cache[4]);
+    publish_int(STATUS_MEM_SWAP_USED_KB, swap_used, &cache[5]);
+}
+
 static void publish_gpu_status(const gpu_state *gpu,
                                struct gpu_status_cache *cache)
 {
@@ -307,12 +474,23 @@ int main(void)
     led_screen screen;
     throttle_state throttle;
     gpu_state gpu;
+    cpu_state cpu;
+    mem_state mem;
+    power_state power;
+    struct cpu_settings cpu_settings;
+    struct mem_settings mem_settings;
     struct status_cache status;
     struct gpu_status_cache gpu_status;
+    int power_status_cache[7];
+    int cpu_status_cache[CPU_CLUSTER_COUNT];
+    int mem_status_cache[6];
     int throttle_status_cache = -2; /* force the first publish */
     int gpu_request = GPU_STOCK_MHZ;
     bool gpu_override = false;
     int64_t next_gpu_ms = 0;
+    int64_t next_cpu_ms = 0;
+    int64_t next_mem_ms = 0;
+    int mem_retry_left = MEM_RETRY_BUDGET;
     int64_t now;
     int64_t next_fan_ms;
     int64_t next_led_ms = 0;
@@ -342,6 +520,17 @@ int main(void)
     memset(&status, 0, sizeof(status));
     memset(&gpu_status, 0, sizeof(gpu_status));
     gpu_state_init(&gpu);
+    cpu_state_init(&cpu);
+    mem_state_init(&mem);
+    power_state_init(&power);
+    cpu_settings_default(&cpu_settings);
+    mem_settings_default(&mem_settings);
+    for (size_t i = 0; i < sizeof(power_status_cache) / sizeof(power_status_cache[0]); i++)
+        power_status_cache[i] = INT_MIN;
+    for (size_t i = 0; i < sizeof(cpu_status_cache) / sizeof(cpu_status_cache[0]); i++)
+        cpu_status_cache[i] = INT_MIN;
+    for (size_t i = 0; i < sizeof(mem_status_cache) / sizeof(mem_status_cache[0]); i++)
+        mem_status_cache[i] = INT_MIN;
 
     /* Apply the persisted settings once at boot: the daemon is the only
      * writer of the fan/LED nodes, so nothing else restores them. */
@@ -380,6 +569,26 @@ int main(void)
     gpu_apply(&gpu, gpu_request, gpu_override);
     publish_gpu_status(&gpu, &gpu_status);
     next_gpu_ms = now + (gpu.available && gpu.applied ? 0 : GPU_RETRY_MS);
+
+    /* CPU caps/governor and memory (#124, #141): the kernel resets
+     * scaling_max_freq/governor at boot and zram/swap are runtime state, so
+     * the daemon re-applies the persisted settings here, clamped exactly like
+     * a runtime property change. */
+    {
+        bool unused = false;
+
+        read_cpu_settings(&cpu_settings, &unused);
+        read_mem_settings(&mem_settings, &unused);
+    }
+    cpu_apply(&cpu, cpu_settings.max_mhz[CPU_CLUSTER_SILVER],
+              cpu_settings.max_mhz[CPU_CLUSTER_GOLD],
+              cpu_settings.max_mhz[CPU_CLUSTER_PRIME], cpu_settings.governor);
+    next_cpu_ms = cpu_needs_retry(&cpu) ? now + CPU_RETRY_MS : 0;
+    mem_apply_zram(&mem, mem_settings.zram_mb);
+    mem_apply_swap(&mem, mem_settings.swap_mb);
+    next_mem_ms = mem_needs_retry(&mem_settings, &mem) && mem_retry_left > 0
+                      ? now + MEM_RETRY_MS
+                      : 0;
 
     while (g_running) {
         bool changed = false;
@@ -458,6 +667,36 @@ int main(void)
             }
         }
 
+        /* --- CPU caps / governor and memory ------------------------------
+         * Same re-evaluate-on-change rule as the GPU cap, plus a retry while
+         * cpufreq or the zram module is not available yet. */
+        {
+            bool cpu_changed = false;
+            bool mem_changed = false;
+            bool retry;
+
+            read_cpu_settings(&cpu_settings, &cpu_changed);
+            read_mem_settings(&mem_settings, &mem_changed);
+            retry = cpu_needs_retry(&cpu) && now >= next_cpu_ms;
+            if (cpu_changed || retry) {
+                cpu_apply(&cpu, cpu_settings.max_mhz[CPU_CLUSTER_SILVER],
+                          cpu_settings.max_mhz[CPU_CLUSTER_GOLD],
+                          cpu_settings.max_mhz[CPU_CLUSTER_PRIME],
+                          cpu_settings.governor);
+                next_cpu_ms = now + (cpu_needs_retry(&cpu) ? CPU_RETRY_MS : 0);
+            }
+            retry = mem_settings.zram_mb > 0 && !mem.zram_supported &&
+                    now >= next_mem_ms;
+            if (mem_changed || retry) {
+                mem_apply_zram(&mem, mem_settings.zram_mb);
+                mem_apply_swap(&mem, mem_settings.swap_mb);
+                next_mem_ms =
+                    now + ((mem_settings.zram_mb > 0 && !mem.zram_supported)
+                               ? MEM_RETRY_MS
+                               : 0);
+            }
+        }
+
         /* A settings, curve-preview or screen change must re-evaluate the
          * smart target immediately, even when the temperature sits inside the
          * 3 C hysteresis band; reset the anchor (the EMA is temperature-only
@@ -532,12 +771,21 @@ int main(void)
         if (now >= next_status_ms) {
             fan.rpm = fan_read_rpm();
             publish_status(&fan, last_temp, &status, &next_status_ms, now);
+            /* One battery read per status tick feeds every consumer (#124 and
+             * #137 share this sampler, docs/phase6.md §9.3). */
+            publish_power_status(&power, power_status_cache);
+            publish_cpu_status(&cpu, cpu_status_cache);
+            publish_mem_status(&mem, mem_status_cache);
         }
 
         /* --- sleep until something happens ------------------------------- */
         deadline = next_fan_ms;
         if (next_status_ms > 0 && next_status_ms < deadline)
             deadline = next_status_ms;
+        if (next_cpu_ms > 0 && next_cpu_ms < deadline)
+            deadline = next_cpu_ms;
+        if (next_mem_ms > 0 && next_mem_ms < deadline)
+            deadline = next_mem_ms;
         if (next_led_ms > 0 && next_led_ms < deadline)
             deadline = next_led_ms;
         screen_ms = led_screen_next_ms(&screen);

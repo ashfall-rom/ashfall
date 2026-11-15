@@ -55,6 +55,56 @@ allow ashfall_hwd ashfall_led_sysfs:file rw_file_perms;
 allow ashfall_hwd ashfall_gpu_sysfs:file rw_file_perms;
 allow ashfall_hwd ashfall_gpu_sysfs:lnk_file read;
 
+# CPU frequency caps/governor (phase 6, #124).  /sys/devices/system/cpu is
+# sysfs_devices_system_cpu in the platform policy and a coredomain may not
+# write it, so the cpufreq tree gets a dedicated type exactly like the GPU
+# relabel (#115).  The kona policy directories are symlinks into
+# /sys/devices/system/cpu/cpuN/cpufreq, which genfs_contexts labels recursively;
+# file_contexts carries the same paths so the exact-path pattern stays visible:
+#   .../cpufreq/policy{0,4,7}/scaling_{available_frequencies,available_governors,
+#                                            cur_freq,max_freq,governor}
+type ashfall_cpu_sysfs, fs_type, sysfs_type;
+
+# The parent /sys/devices/system/cpu keeps the platform type; traversal needs
+# search on it (the neverallow for coredomains covers sysfs *files*, not dirs).
+allow ashfall_hwd sysfs_devices_system_cpu:dir search;
+allow ashfall_hwd ashfall_cpu_sysfs:dir r_dir_perms;
+allow ashfall_hwd ashfall_cpu_sysfs:lnk_file read;
+allow ashfall_hwd ashfall_cpu_sysfs:file rw_file_perms;
+
+# Battery telemetry (phase 6, #124/#137).  /sys/class/power_supply is already
+# labelled sysfs_batteryinfo by the platform policy (a public type), so the
+# Class dir, its symlinks and the resolved attributes only need a read grant.
+# No ashfall_power_sysfs relabel is necessary; docs/rp5/hw.md §11 carries the
+# enforcing check (a denial naming another label means the vendor policy moved
+# the attributes and exact-path relabels must be added then).
+allow ashfall_hwd sysfs_batteryinfo:dir r_dir_perms;
+allow ashfall_hwd sysfs_batteryinfo:lnk_file read;
+allow ashfall_hwd sysfs_batteryinfo:file r_file_perms;
+
+# zram (phase 6, #141): /dev/block/zram0 and /sys/block/zram0/* (resolved
+# /sys/devices/virtual/block/zram0).  swapon/swapoff open the block device.
+type ashfall_zram_device, dev_type;
+type ashfall_zram_sysfs, fs_type, sysfs_type;
+
+allow ashfall_hwd block_device:dir search;
+allow ashfall_hwd ashfall_zram_device:blk_file rw_file_perms;
+allow ashfall_hwd ashfall_zram_sysfs:dir r_dir_perms;
+allow ashfall_hwd ashfall_zram_sysfs:file rw_file_perms;
+
+# Swap file (phase 6, #141): /data/ashfall/swapfile, created by init at
+# post-fs-data so it gets this label (a runtime-created directory would inherit
+# the /data label).  One type covers the directory and the file: the daemon
+# creates/unlinks the file inside it at runtime and the inherited label is the
+# same type, so no restorecon is needed at enable time.  swapon/swapoff need
+# CAP_SYS_ADMIN; MemTotal/SwapTotal come from /proc/meminfo (proc_meminfo is
+# readable by every domain in the platform policy).
+type ashfall_swap_file, file_type;
+
+allow ashfall_hwd ashfall_swap_file:dir { create rw_dir_perms };
+allow ashfall_hwd ashfall_swap_file:file { create rw_file_perms };
+allow ashfall_hwd self:capability sys_admin;
+
 # persist.ashfall.fan.* / persist.ashfall.led.* come from ashfall_props.te;
 # the screen state for the fan screen-off hold and the LED screen-off policy is
 # the framework's debug.tracing.screen_state, which domain.te already grants to

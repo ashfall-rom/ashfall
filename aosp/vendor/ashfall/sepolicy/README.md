@@ -25,11 +25,11 @@ merged into the contexts the image build and libselinux use.  The old
 
 | file | contents |
 |---|---|
-| `ashfall_hwd.te` | `ashfall_hwd` domain, sysfs types for fan/LED attributes, thermal read + trip write for the performance override, GPU devfreq cap type |
+| `ashfall_hwd.te` | `ashfall_hwd` domain, sysfs types for fan/LED attributes, thermal read + trip write for the performance override, GPU devfreq cap type, CPU cpufreq type, zram/swap, battery read |
 | `ashfall_rp5_input.te` | `ashfall_rp5_input` domain, `/data/misc/ashfall`, control socket |
-| `ashfall_props.te` | `ashfall_prop` (`persist.ashfall.`), `ashfall_status_prop` (`ashfall.status.`), `ashfall_ui_prop` (`ashfall.ui.`) and `ashfall_perf_prop` (`ashfall.perf.`, `persist.ashfall.perf.`) |
-| `file_contexts` | binaries, `/dev/socket/ashfall_input`, `/data/misc/ashfall` |
-| `genfs_contexts` | sysfs types for `gpio5_pwm2`, the `sn3112` LED classes and the three relabelled kgsl devfreq attributes |
+| `ashfall_props.te` | `ashfall_prop` (`persist.ashfall.`), `ashfall_status_prop` (`ashfall.status.`), `ashfall_ui_prop` (`ashfall.ui.`) and `ashfall_perf_prop` (`ashfall.perf.`, `persist.ashfall.perf.`); `system_app` writes the settings and reads them (`persist.ashfall.batt.*`, #137) |
+| `file_contexts` | binaries, `/dev/socket/ashfall_input`, `/data/misc/ashfall`, `/dev/block/zram0`, `/data/ashfall`, the cpufreq attributes |
+| `genfs_contexts` | sysfs types for `gpio5_pwm2`, the `sn3112` LED classes, the three relabelled kgsl devfreq attributes, the cpufreq trees and the zram block device |
 | `property_contexts` | the four property prefixes (the `persist.ashfall.perf.` entry is more specific than `persist.ashfall.`) |
 
 ## Notes
@@ -42,7 +42,9 @@ merged into the contexts the image build and libselinux use.  The old
 * Thermal zones need no new label: the stock vendor policy labels
   `/devices/virtual/thermal` and `/class/thermal` as `sysfs_thermal`.
 * Property writing is restricted to `system_app` (the AshFall Parts app) for
-  `persist.ashfall.*` and to `ashfall_hwd` for `ashfall.status.*`.
+  `persist.ashfall.*` and to `ashfall_hwd` for `ashfall.status.*`.  `system_app`
+  also *reads* `persist.ashfall.*` (`get_prop`), because the PlayTime settings
+  from #137 are read by SystemUI and Settings through a property listener.
 * `genfs_contexts` lists the plausible resolved paths for the fan/LED class
   devices; verify them on the device (`readlink -f /sys/class/...`) after the
   first flash and trim the list (docs/rp5/hw.md §5).
@@ -69,3 +71,27 @@ merged into the contexts the image build and libselinux use.  The old
   Do not merge an enforcing build with this unresolved.  See
   docs/rp5/gpu.md §4.1 for the vendor-safe options (vendor policy allow, or a
   `system_app`/`system_server` bridge to `vendor.qti.hardware.perf@2.3`).
+
+* **Phase 6 wave 2 (#124, #137, #141).**
+  * **CPU cpufreq.**  `/sys/devices/system/cpu` is `sysfs_devices_system_cpu`
+    and a coredomain may not write it.  `ashfall_cpu_sysfs` labels the
+    `/devices/system/cpu/cpufreq` tree and every `cpuN/cpufreq` directory
+    through `genfs_contexts` (the `policyN` dirs are symlinks into
+    `cpuN/cpufreq`).  The `file_contexts` entries for
+    `policy{0,4,7}/scaling_*` document the same paths; there are no dots in
+    these names, so no escaping is needed.  Verify on the device with
+    `ls -Z /sys/devices/system/cpu/cpu7/cpufreq/scaling_max_freq` ->
+    `ashfall_cpu_sysfs` and a clean `dmesg | grep avc` while the daemon writes
+    caps (docs/rp5/hw.md §12).
+  * **Battery telemetry.**  `/sys/class/power_supply` is already
+    `sysfs_batteryinfo` in the platform policy, so the daemon only gets a read
+    grant; **no `ashfall_power_sysfs` relabel is needed** unless an enforcing
+    build denies a differently-labelled vendor node (then add exact-path
+    relabels like the kgsl ones).  docs/rp5/hw.md §11 has the check.
+  * **zram / swap.**  `/dev/block/zram0` -> `ashfall_zram_device`,
+    `/sys/block/zram0/*` (resolved `/sys/devices/virtual/block/zram0`) ->
+    `ashfall_zram_sysfs`, `/data/ashfall(/.*)?` -> `ashfall_swap_file` (created
+    by init at post-fs-data in `ashfall-hwd.rc` so the label is inherited by the
+    runtime-created swapfile), plus `sys_admin` for swapon/swapoff.
+  * `persist.ashfall.mem.*` stays `ashfall_prop`; `persist.ashfall.perf.cpu_*`
+    and `.cpu_gov` are `ashfall_perf_prop` (the more specific prefix).

@@ -35,3 +35,26 @@ genfscon sysfs /devices/soc/3d00000.qcom,kgsl-3d0/devfreq/3d00000.qcom,kgsl-3d0/
 #   readlink -f /sys/class/sn3112l/led -> /sys/devices/virtual/sn3112l/led
 genfscon sysfs /devices/virtual/sn3112l  u:object_r:ashfall_led_sysfs:s0
 genfscon sysfs /devices/virtual/sn3112r  u:object_r:ashfall_led_sysfs:s0
+
+# CPU frequency caps/governor (phase 6, #124).  /sys/devices/system/cpu is
+# labelled sysfs_devices_system_cpu by the platform policy; the deeper prefix
+# here wins for the cpufreq trees.  The policyN directories are symlinks into
+# cpuN/cpufreq, and genfscon applies recursively, so the cpuN entries label the
+# attributes the daemon actually opens:
+#   readlink -f /sys/devices/system/cpu/cpufreq/policy0
+#   -> /sys/devices/system/cpu/cpu0/cpufreq
+genfscon sysfs /devices/system/cpu/cpufreq      u:object_r:ashfall_cpu_sysfs:s0
+genfscon sysfs /devices/system/cpu/cpu0/cpufreq u:object_r:ashfall_cpu_sysfs:s0
+genfscon sysfs /devices/system/cpu/cpu1/cpufreq u:object_r:ashfall_cpu_sysfs:s0
+genfscon sysfs /devices/system/cpu/cpu2/cpufreq u:object_r:ashfall_cpu_sysfs:s0
+genfscon sysfs /devices/system/cpu/cpu3/cpufreq u:object_r:ashfall_cpu_sysfs:s0
+genfscon sysfs /devices/system/cpu/cpu4/cpufreq u:object_r:ashfall_cpu_sysfs:s0
+genfscon sysfs /devices/system/cpu/cpu5/cpufreq u:object_r:ashfall_cpu_sysfs:s0
+genfscon sysfs /devices/system/cpu/cpu6/cpufreq u:object_r:ashfall_cpu_sysfs:s0
+genfscon sysfs /devices/system/cpu/cpu7/cpufreq u:object_r:ashfall_cpu_sysfs:s0
+
+# zram attributes (phase 6, #141).  /sys/block/zram0 is a class symlink to the
+# virtual block device; both prefixes are listed for the same reason as the
+# fan/LED class entries above.
+genfscon sysfs /devices/virtual/block/zram0     u:object_r:ashfall_zram_sysfs:s0
+genfscon sysfs /block/zram0                     u:object_r:ashfall_zram_sysfs:s0

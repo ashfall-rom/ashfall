@@ -7,10 +7,13 @@ cc_binary {
     name: "ashfall-hwd",
     srcs: [
         "ashfall_hwd.c",
+        "cpu.c",
         "fan.c",
         "gpu.c",
         "led.c",
+        "mem.c",
         "plat.c",
+        "power.c",
         "thermal.c",
         "throttle.c",
     ],
