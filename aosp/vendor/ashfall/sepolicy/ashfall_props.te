@@ -32,6 +32,9 @@ set_prop(system_app, ashfall_perf_prop)
 # SystemUI and Settings (both system_app) through a property listener, so the
 # same domain needs get_prop on the settings prefix it already writes.
 get_prop(system_app, ashfall_prop)
+# SystemUI runs in platform_app, not system_app: it reads the PlayTime
+# settings (persist.ashfall.batt.*) directly.  Issue #156/#162.
+get_prop(platform_app, ashfall_prop)
 
 # Both daemons read the settings ...
 get_prop(ashfall_hwd, ashfall_prop)

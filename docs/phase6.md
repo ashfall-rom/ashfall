@@ -338,7 +338,7 @@ daemon workers cannot drift):
 | `persist.ashfall.perf.cpu_gov` | `ashfall_perf_prop` | app -> hwd | one governor for all three policies; default `schedutil` |
 | `persist.ashfall.power.preset` | `ashfall_prop` | app only | active preset id (UI state; the daemon applies the caps) |
 | `persist.ashfall.mem.swap_mb` | `ashfall_prop` | app -> hwd | `0` = off |
-| `persist.ashfall.batt.*` | `ashfall_prop` | Settings -> SystemUI | PlayTime settings (#137), read with `get_prop(system_app, ashfall_prop)` |
+| `persist.ashfall.batt.*` | `ashfall_prop` | Settings -> SystemUI | PlayTime settings (#137), read with `get_prop(system_app, ashfall_prop)` and `get_prop(platform_app, ashfall_prop)` (SystemUI runs as platform_app) |
 | `persist.ashfall.pad.fusion` / `.layouts` / `.remap` | `ashfall_prop` | app -> `ashfall-rp5-input` | fusion (#138) |
 
 ### 9.4 Settings patch boundary
