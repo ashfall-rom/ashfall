@@ -42,9 +42,6 @@
 /sys/devices/system/cpu/cpufreq/policy7/scaling_max_freq u:object_r:ashfall_cpu_sysfs:s0
 /sys/devices/system/cpu/cpufreq/policy7/scaling_governor u:object_r:ashfall_cpu_sysfs:s0
 
-# zram block device (phase 6, #141).  The node is created by ueventd.
-/dev/block/zram0                    u:object_r:ashfall_zram_device:s0
-
 # Swap file (phase 6, #141): /data/ashfall is created by init at post-fs-data
 # (ashfall-hwd.rc) so the directory and the file share the same type; a
 # runtime-created swapfile inherits it from the directory.
@@ -56,19 +53,21 @@
 # dot: libselinux's sort_specs() moves specifications without meta characters
 # ("exact pathnames") behind all regex specifications, so they are matched
 # first no matter which partition the competing regex came from.  Only the
-# four attributes ashfall-hwd uses are relabelled (phase 6 adds the read-only
-# live clock, gpuclk, for ashfall.status.perf.gpu_mhz); gpu_model, gpubusy,
-# max_gpuclk and every other kgsl attribute keep the vendor label.  min_freq and
-# max_freq stay exactly as they are: the #120 vendor-perf-HAL question is not
-# changed here.
+# attributes ashfall-hwd uses are relabelled (the read-only live clock gpuclk
+# and the read-only gpu_busy_percentage, both for the Power page telemetry);
+# gpu_model, gpubusy, max_gpuclk and every other kgsl attribute keep the vendor
+# label.  min_freq and max_freq keep their existing labels: the #120
+# vendor-perf-HAL question is not changed here.
 # Paths verified on the RP5 (build 20261114-led109-bf3c952):
 #   readlink -f /sys/class/kgsl/kgsl-3d0/devfreq/max_freq
 /sys/devices/platform/soc/3d00000\.qcom,kgsl-3d0/kgsl/kgsl-3d0/gpu_available_frequencies u:object_r:ashfall_gpu_sysfs:s0
 /sys/devices/platform/soc/3d00000\.qcom,kgsl-3d0/kgsl/kgsl-3d0/gpuclk u:object_r:ashfall_gpu_sysfs:s0
+/sys/devices/platform/soc/3d00000\.qcom,kgsl-3d0/kgsl/kgsl-3d0/gpu_busy_percentage u:object_r:ashfall_gpu_sysfs:s0
 /sys/devices/platform/soc/3d00000\.qcom,kgsl-3d0/devfreq/3d00000\.qcom,kgsl-3d0/max_freq u:object_r:ashfall_gpu_sysfs:s0
 /sys/devices/platform/soc/3d00000\.qcom,kgsl-3d0/devfreq/3d00000\.qcom,kgsl-3d0/min_freq u:object_r:ashfall_gpu_sysfs:s0
 # Older kona DT layouts expose the same nodes without the /platform level.
 /sys/devices/soc/3d00000\.qcom,kgsl-3d0/kgsl/kgsl-3d0/gpu_available_frequencies u:object_r:ashfall_gpu_sysfs:s0
 /sys/devices/soc/3d00000\.qcom,kgsl-3d0/kgsl/kgsl-3d0/gpuclk u:object_r:ashfall_gpu_sysfs:s0
+/sys/devices/soc/3d00000\.qcom,kgsl-3d0/kgsl/kgsl-3d0/gpu_busy_percentage u:object_r:ashfall_gpu_sysfs:s0
 /sys/devices/soc/3d00000\.qcom,kgsl-3d0/devfreq/3d00000\.qcom,kgsl-3d0/max_freq u:object_r:ashfall_gpu_sysfs:s0
 /sys/devices/soc/3d00000\.qcom,kgsl-3d0/devfreq/3d00000\.qcom,kgsl-3d0/min_freq u:object_r:ashfall_gpu_sysfs:s0

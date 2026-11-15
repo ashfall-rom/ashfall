@@ -11,8 +11,8 @@ LDLIBS += -lm
 
 SRCS = test_hw.c ../cpu.c ../fan.c ../gpu.c ../led.c ../mem.c ../plat.c \
        ../thermal.c ../throttle.c
-HDRS = ../cpu.h ../fan.h ../gpu.h ../led.h ../mem.h ../plat.h ../thermal.h \
-       ../throttle.h
+HDRS = ../cpu.h ../fan.h ../gpu.h ../hwd.h ../led.h ../mem.h ../plat.h \
+       ../thermal.h ../throttle.h
 
 test_hw: $(SRCS) $(HDRS)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ $(SRCS) $(LDLIBS)

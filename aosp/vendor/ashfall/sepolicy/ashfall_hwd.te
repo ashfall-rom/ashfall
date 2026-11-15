@@ -14,14 +14,16 @@ type ashfall_led_sysfs, fs_type, sysfs_type;
 
 # GPU devfreq cap (phase 6, docs/phase6.md section 3).  The stock vendor policy
 # labels /sys/devices/.../kgsl-3d0/** vendor_sysfs_kgsl (a vendor type that the
-# system_ext policy build cannot reference).  Three *resolved* attributes are
-# relabelled with this type via exact-path file_contexts entries - and
+# system_ext policy build cannot reference).  A handful of *resolved* attributes
+# are relabelled with this type via exact-path file_contexts entries - and
 # genfs_contexts as a fallback - so a coredomain may use them without any
 # generic sysfs access (ashfall-hwd must not follow the /sys/class/kgsl
 # symlinks, which stay vendor-labelled; issue #115):
 #   .../kgsl/kgsl-3d0/gpu_available_frequencies   (read: DT step table)
 #   .../devfreq/3d00000.qcom,kgsl-3d0/max_freq    (read/write: the cap)
 #   .../devfreq/3d00000.qcom,kgsl-3d0/min_freq    (write: devfreq floor rescue)
+#   .../kgsl/kgsl-3d0/gpuclk                      (read: live clock, gpu_mhz)
+#   .../kgsl/kgsl-3d0/gpu_busy_percentage         (read: gpu_load_pct, wave 3)
 # Directory traversal is covered by the stock vendor rule
 # `allow { domain - isolated_app_all } vendor_sysfs_kgsl:dir search`.
 type ashfall_gpu_sysfs, fs_type, sysfs_type;
@@ -49,9 +51,10 @@ allow ashfall_hwd ashfall_led_sysfs:dir r_dir_perms;
 allow ashfall_hwd ashfall_led_sysfs:lnk_file read;
 allow ashfall_hwd ashfall_led_sysfs:file rw_file_perms;
 
-# GPU devfreq cap (phase 6): the three kgsl attributes relabelled with
-# ashfall_gpu_sysfs.  max_freq is 0660 root:root, the other two are read-only;
-# the daemon runs as root and is the only writer of the cap.
+# GPU devfreq cap (phase 6): the kgsl attributes relabelled with
+# ashfall_gpu_sysfs.  max_freq is 0660 root:root and is the only writable one
+# (gpuclk/gpu_busy_percentage are read-only, the daemon only reads them); the
+# daemon runs as root and is the only writer of the cap.
 allow ashfall_hwd ashfall_gpu_sysfs:file rw_file_perms;
 allow ashfall_hwd ashfall_gpu_sysfs:lnk_file read;
 
@@ -79,32 +82,32 @@ allow ashfall_hwd ashfall_cpu_sysfs:file rw_file_perms;
 # The sampler therefore lives in SystemUI/Settings/AshFall Parts and uses
 # BatteryManager; this daemon has no battery sysfs access.
 
-# zram (phase 6, #141): /dev/block/zram0 and /sys/block/zram0/* (resolved
-# /sys/devices/virtual/block/zram0).  swapon/swapoff open the block device.
-# The sysfs attributes already carry the platform's public sysfs_zram type, so
-# no new type or genfscon is needed (a second genfscon would be a duplicate).
-type ashfall_zram_device, dev_type;
-
-allow ashfall_hwd block_device:dir search;
-allow ashfall_hwd ashfall_zram_device:blk_file rw_file_perms;
-# /sys/block/zram0 resolves to /sys/devices/virtual/block/zram0, which the
-# platform policy labels with the public sysfs_zram type.  A private genfscon
-# would be a duplicate (checkpolicy), so grant the daemon on the public type.
-allow ashfall_hwd sysfs_zram:dir r_dir_perms;
-allow ashfall_hwd sysfs_zram:file rw_file_perms;
-
+# Memory (phase 6, #141): the swapfile only.  zram was removed in wave 3 (issue
+# #156 item 7): Android init owns /dev/block/zram0 (4 GB swap at boot) and this
+# daemon must not fight it, so there is no zram device type and no sysfs_zram
+# access any more.
+#
 # Swap file (phase 6, #141): /data/ashfall/swapfile, created by init at
 # post-fs-data so it gets this label (a runtime-created directory would inherit
 # the /data label).  One type covers the directory and the file: the daemon
 # creates/unlinks the file inside it at runtime and the inherited label is the
 # same type, so no restorecon is needed at enable time.  swapon/swapoff need
-# CAP_SYS_ADMIN; MemTotal/SwapTotal come from /proc/meminfo (proc_meminfo is
-# readable by every domain in the platform policy).
+# CAP_SYS_ADMIN.
 type ashfall_swap_file, file_type;
 
 allow ashfall_hwd ashfall_swap_file:dir { create rw_dir_perms };
 allow ashfall_hwd ashfall_swap_file:file { create rw_file_perms };
 allow ashfall_hwd self:capability sys_admin;
+
+# ashfall.status.mem.swap_* come from /proc/meminfo (SwapTotal/SwapFree).  The
+# platform policy does not grant proc_meminfo to every domain, which is what the
+# #141 logcat showed on the permissive test build (a denial that only appears
+# once the build is enforcing), so it is granted explicitly.
+allow ashfall_hwd proc_meminfo:file r_file_perms;
+
+# ashfall.status.perf.cpu_load_pct (wave 3, issue #156 item 3) is the /proc/stat
+# delta between two status ticks.  proc_stat is the platform type of /proc/stat.
+allow ashfall_hwd proc_stat:file r_file_perms;
 
 # persist.ashfall.fan.* / persist.ashfall.led.* come from ashfall_props.te;
 # the screen state for the fan screen-off hold and the LED screen-off policy is

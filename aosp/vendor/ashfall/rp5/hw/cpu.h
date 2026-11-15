@@ -11,9 +11,14 @@
  * Only *lowering* is supported: 0 means "stock", i.e. the highest available
  * step, and a request is clamped to the highest available step <= the request.
  * The governor is validated against scaling_available_governors and only
- * schedutil / conservative / powersave are accepted; anything else becomes
- * schedutil.  Both are re-applied at boot and on every property change, because
+ * schedutil / conservative / powersave / performance are accepted; anything
+ * else becomes schedutil.  `performance` (phase 6 wave 3, issue #156 item 6)
+ * still respects scaling_max_freq: it pins the asked clock, it does not raise
+ * the cap.  Both are re-applied at boot and on every property change, because
  * the kernel resets scaling_max_freq/scaling_governor to its defaults on boot.
+ *
+ * The same file owns the CPU *utilisation* sample (ashfall.status.perf.cpu_load_pct)
+ * because both read /proc/stat and cpufreq under the existing status tick.
  *
  * SPDX-License-Identifier: Apache-2.0
  */
@@ -24,6 +29,7 @@
 #include <stdbool.h>
 
 #define CPU_CPUFREQ_BASE "/sys/devices/system/cpu/cpufreq"
+#define CPU_STAT_PATH "/proc/stat"
 #define CPU_CLUSTER_COUNT 3
 #define CPU_MAX_STEPS 32
 #define CPU_MAX_MHZ 4000
@@ -60,6 +66,13 @@ typedef struct {
     char governor[CPU_GOV_LEN]; /* last successfully written governor */
 } cpu_state;
 
+/* Two /proc/stat samples: the load is only known once a delta exists. */
+typedef struct {
+    unsigned long long idle;  /* idle + iowait, in USER_HZ jiffies */
+    unsigned long long total; /* the first eight aggregate fields */
+    bool valid;               /* a sample is stored and usable as a baseline */
+} cpu_load;
+
 /* Reset all state.  Safe before cpufreq exists (early boot). */
 void cpu_state_init(cpu_state *state);
 
@@ -81,6 +94,16 @@ bool cpu_needs_retry(const cpu_state *state);
 
 /* Last successfully written governor; "schedutil" when unknown. */
 const char *cpu_governor_name(const cpu_state *state);
+
+void cpu_load_init(cpu_load *load);
+
+/*
+ * ashfall.status.perf.cpu_load_pct: utilisation since the previous call, from
+ * the aggregate `cpu` line of /proc/stat (idle + iowait over total).  Returns
+ * 0..100, or -1 when /proc/stat is unreadable/truncated or when this is the
+ * first sample (no delta yet) - a gap, never a fabricated 0 or 100.
+ */
+int cpu_load_pct(cpu_load *load);
 
 /* Helpers exported for the host tests. */
 cpu_cluster cpu_cluster_from_cpu(int cpu);

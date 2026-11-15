@@ -1,5 +1,5 @@
 /*
- * AshFall RP5 memory: zram and the swapfile (docs/phase6.md §9.3, #141).
+ * AshFall RP5 memory: the swapfile (docs/phase6.md §9.3, #141).
  *
  * SPDX-License-Identifier: Apache-2.0
  */
@@ -16,7 +16,6 @@
 #include <sys/types.h>
 #include <unistd.h>
 
-#define MB 1024L
 #define SWAP_HEADER_PAGE 4096
 /* linux/swap.h: SWAP_FLAG_PREFER, priority in the low bits. */
 #define SWAP_FLAG_PREFER 0x8000
@@ -40,8 +39,7 @@ static void trace_add(mem_state *state, const char *action)
              used ? "," : "", action);
 }
 
-static int read_meminfo(long *mem_total_kb, long *swap_total_kb,
-                        long *swap_free_kb)
+static int read_meminfo(long *swap_total_kb, long *swap_free_kb)
 {
     char buf[8192];
     char *line;
@@ -53,37 +51,15 @@ static int read_meminfo(long *mem_total_kb, long *swap_total_kb,
 
         while (*line == '\n')
             line++;
-        if (mem_total_kb && sscanf(line, "MemTotal: %ld kB", &value) == 1)
-            *mem_total_kb = value;
-        else if (swap_total_kb &&
-                 sscanf(line, "SwapTotal: %ld kB", &value) == 1)
+        if (swap_total_kb && sscanf(line, "SwapTotal: %ld kB", &value) == 1)
             *swap_total_kb = value;
-        else if (swap_free_kb && sscanf(line, "SwapFree: %ld kB", &value) == 1)
+        else if (swap_free_kb &&
+                 sscanf(line, "SwapFree: %ld kB", &value) == 1)
             *swap_free_kb = value;
         if (!strchr(line, '\n'))
             break;
     }
     return 0;
-}
-
-static int zram_disksize_mb(void)
-{
-    char buf[64];
-    char *end = NULL;
-    long long bytes;
-
-    if (sysfs_read_str(MEM_ZRAM_DISKSIZE, buf, sizeof(buf)) <= 0)
-        return -1;
-    errno = 0;
-    bytes = strtoll(buf, &end, 10);
-    if (errno != 0 || end == buf || bytes <= 0)
-        return 0;
-    return (int)(bytes / (1024 * 1024));
-}
-
-static bool zram_probe(void)
-{
-    return sysfs_present(MEM_ZRAM_DEV) && sysfs_present(MEM_ZRAM_DISKSIZE);
 }
 
 static int swapfile_mb(void)
@@ -116,34 +92,9 @@ void mem_state_init(mem_state *state)
     if (!state)
         return;
     memset(state, 0, sizeof(*state));
-    if (read_meminfo(&state->mem_total_kb, NULL, NULL) == 0 &&
-        state->mem_total_kb > 0)
-        state->mem_total_mb = (int)(state->mem_total_kb / 1024);
     state->scanned = true;
-    state->zram_supported = zram_probe();
-    state->zram_mb = state->zram_supported ? zram_disksize_mb() : -1;
-    if (state->zram_mb < 0)
-        state->zram_mb = state->zram_supported ? 0 : -1;
     state->swap_mb = 0;
-    state->zram_request = 0;
     state->swap_request = 0;
-    if (state->mem_total_mb > 0)
-        ah_logf(AH_LOG_INFO, "mem: MemTotal %d MB, zram %s", state->mem_total_mb,
-                state->zram_supported ? "available" : "unavailable");
-}
-
-int mem_clamp_zram(const mem_state *state, int request_mb)
-{
-    int limit;
-
-    if (request_mb <= 0)
-        return 0;
-    limit = MEM_ZRAM_MAX_MB;
-    if (state->mem_total_mb > 0 && state->mem_total_mb / 2 < limit)
-        limit = state->mem_total_mb / 2;
-    if (request_mb > limit)
-        request_mb = limit;
-    return request_mb;
 }
 
 int mem_clamp_swap(const mem_state *state, int request_mb)
@@ -188,8 +139,8 @@ int mem_clamp_swap(const mem_state *state, int request_mb)
 }
 
 /* Host tests: the swap syscalls would need a real kernel; the action order is
- * recorded in mem_state.trace instead.  zram sysfs and the swapfile itself are
- * real files under $ASHFALL_SYSFS_ROOT, so their writes are exercised. */
+ * recorded in mem_state.trace instead.  The swapfile itself is a real file
+ * under $ASHFALL_SYSFS_ROOT, so its allocation and header are exercised. */
 static int do_swapon(const char *path, int priority)
 {
     char real[PATH_MAX];
@@ -216,170 +167,6 @@ static int do_swapoff(const char *path)
 #else
     return (int)syscall(__NR_swapoff, real);
 #endif
-}
-
-/* A reset zram device has no swap signature (all zeros), so swapon returns
- * EINVAL until the header is written - init normally does this with mkswap. */
-static int zram_format(int mb)
-{
-    char path[PATH_MAX];
-    long long size = (long long)mb * 1024 * 1024;
-    int fd;
-    int rc;
-
-    fd = open(plat_resolve(MEM_ZRAM_DEV, path, sizeof(path)), O_RDWR | O_CLOEXEC);
-    if (fd < 0) {
-        ah_logf(AH_LOG_WARN, "mem: cannot open %s for the swap header: %s",
-                MEM_ZRAM_DEV, strerror(errno));
-        return -1;
-    }
-    rc = mem_write_swap_header(fd, size);
-    close(fd);
-    return rc;
-}
-
-/* lz4 when comp_available lists it, else the first available compressor. */
-static void choose_compressor(char *out, size_t len)
-{
-    char list[128];
-    char *save = NULL;
-    char *token;
-    char *first = NULL;
-
-    out[0] = '\0';
-    if (sysfs_read_str(MEM_ZRAM_COMP_AVAILABLE, list, sizeof(list)) <= 0)
-        return;
-    for (token = strtok_r(list, " \t\n", &save); token;
-         token = strtok_r(NULL, " \t\n", &save)) {
-        if (!first)
-            first = token;
-        if (!strcmp(token, "lz4")) {
-            snprintf(out, len, "%s", token);
-            return;
-        }
-    }
-    if (first)
-        snprintf(out, len, "%s", first);
-}
-
-int mem_apply_zram(mem_state *state, int request_mb)
-{
-    int clamped;
-    long long bytes;
-    char comp[24];
-
-    if (!state)
-        return -1;
-    trace_clear(state);
-    state->zram_supported = zram_probe();
-    state->zram_request = request_mb;
-    if (!state->zram_supported) {
-        state->zram_mb = -1;
-        ah_logf(AH_LOG_WARN,
-                "mem: zram unavailable (%s or %s missing); request %d MB is a "
-                "no-op",
-                MEM_ZRAM_DEV, MEM_ZRAM_DISKSIZE, request_mb);
-        return -1;
-    }
-    clamped = mem_clamp_zram(state, request_mb);
-    if (clamped != request_mb && request_mb > 0)
-        ah_logf(AH_LOG_INFO, "mem: zram request %d MB clamped to %d MB", request_mb,
-                clamped);
-
-    if (clamped == 0) {
-        if (state->zram_mb != 0) {
-            trace_add(state, "swapoff");
-            do_swapoff(MEM_ZRAM_DEV);
-            trace_add(state, "reset");
-            if (sysfs_write_int(MEM_ZRAM_RESET, 1) != 0)
-                ah_logf(AH_LOG_WARN, "mem: cannot reset zram");
-        }
-        state->zram_mb = 0;
-        return 0;
-    }
-
-    /* Same size already set up (boot, or a restart in the same boot): attach
-     * it instead of reallocating the device. */
-    if (state->zram_mb == clamped) {
-        /* Already allocated (boot, or a restart in the same boot): re-attach.
-         * EBUSY means it is still the active swap device; EINVAL means the
-         * device lost its signature (e.g. fresh boot, reset by someone else),
-         * so format once and retry.  Never format an active device. */
-        trace_add(state, "swapon");
-        if (do_swapon(MEM_ZRAM_DEV, MEM_ZRAM_PRIORITY) != 0 && errno != EBUSY) {
-            if (errno != EINVAL) {
-                ah_logf(AH_LOG_WARN, "mem: swapon zram failed: %s",
-                        strerror(errno));
-                state->zram_mb = -1;
-                return -1;
-            }
-            ah_logf(AH_LOG_INFO,
-                    "mem: zram has no swap signature; formatting %d MB", clamped);
-            trace_add(state, "signature");
-            if (zram_format(clamped) != 0 ||
-                do_swapon(MEM_ZRAM_DEV, MEM_ZRAM_PRIORITY) != 0) {
-                ah_logf(AH_LOG_WARN, "mem: swapon zram after formatting failed: %s",
-                        strerror(errno));
-                state->zram_mb = -1;
-                return -1;
-            }
-        }
-        return clamped;
-    }
-
-    if (state->zram_mb > 0) {
-        trace_add(state, "swapoff");
-        do_swapoff(MEM_ZRAM_DEV);
-    }
-    trace_add(state, "reset");
-    if (sysfs_write_int(MEM_ZRAM_RESET, 1) != 0) {
-        ah_logf(AH_LOG_WARN, "mem: cannot reset zram");
-        state->zram_mb = -1;
-        return -1;
-    }
-    choose_compressor(comp, sizeof(comp));
-    if (comp[0]) {
-        static bool logged_comp;
-
-        trace_add(state, "comp");
-        if (sysfs_write_str(MEM_ZRAM_COMP, comp) != 0)
-            ah_logf(AH_LOG_WARN, "mem: cannot set zram compressor %s", comp);
-        else if (!logged_comp) {
-            logged_comp = true;
-            ah_logf(AH_LOG_INFO, "mem: zram compressor %s", comp);
-        }
-    }
-    bytes = (long long)clamped * 1024 * 1024;
-    trace_add(state, "disksize");
-    {
-        char value[32];
-
-        snprintf(value, sizeof(value), "%lld", bytes);
-        if (sysfs_write_str(MEM_ZRAM_DISKSIZE, value) != 0) {
-            ah_logf(AH_LOG_WARN, "mem: cannot set zram disksize to %d MB",
-                    clamped);
-            state->zram_mb = -1;
-            return -1;
-        }
-    }
-    /* A reset zram device is all zeros: write the v1 swap header before
-     * swapon(2), exactly like the swapfile (init's mkswap equivalent). */
-    trace_add(state, "signature");
-    ah_logf(AH_LOG_INFO, "mem: writing the zram swap signature (%d MB)", clamped);
-    if (zram_format(clamped) != 0) {
-        ah_logf(AH_LOG_WARN, "mem: cannot write the zram swap signature");
-        state->zram_mb = -1;
-        return -1;
-    }
-    trace_add(state, "swapon");
-    if (do_swapon(MEM_ZRAM_DEV, MEM_ZRAM_PRIORITY) != 0) {
-        ah_logf(AH_LOG_WARN, "mem: swapon zram failed: %s", strerror(errno));
-        state->zram_mb = -1;
-        return -1;
-    }
-    state->zram_mb = clamped;
-    ah_logf(AH_LOG_INFO, "mem: zram %d MB active", clamped);
-    return clamped;
 }
 
 int mem_write_swap_header(int fd, long long size)
@@ -510,32 +297,6 @@ int mem_apply_swap(mem_state *state, int request_mb)
     return clamped;
 }
 
-int mem_status_zram(const mem_state *state, int *used_kb, int *saved_kb)
-{
-    char buf[160];
-    long long orig = 0;
-    long long compr = 0;
-
-    if (used_kb)
-        *used_kb = -1;
-    if (saved_kb)
-        *saved_kb = -1;
-    if (!state || !state->zram_supported || state->zram_mb <= 0)
-        return -1;
-    if (sysfs_read_str(MEM_ZRAM_MM_STAT, buf, sizeof(buf)) <= 0)
-        return -1;
-    /* orig_data_size compr_data_size mem_used_total ... */
-    if (sscanf(buf, "%lld %lld", &orig, &compr) != 2)
-        return -1;
-    if (orig < 0 || compr < 0)
-        return -1;
-    if (used_kb)
-        *used_kb = (int)(compr / 1024);
-    if (saved_kb)
-        *saved_kb = (int)((orig > compr ? orig - compr : 0) / 1024);
-    return 0;
-}
-
 int mem_status_swap(int *total_kb, int *used_kb)
 {
     long total = -1;
@@ -545,7 +306,7 @@ int mem_status_swap(int *total_kb, int *used_kb)
         *total_kb = -1;
     if (used_kb)
         *used_kb = -1;
-    if (read_meminfo(NULL, &total, &free_kb) != 0 || total < 0 || free_kb < 0)
+    if (read_meminfo(&total, &free_kb) != 0 || total < 0 || free_kb < 0)
         return -1;
     if (total_kb)
         *total_kb = (int)total;

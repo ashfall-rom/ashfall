@@ -288,3 +288,19 @@ int gpu_clock_mhz(void)
         return 0;
     return mhz_from_hz(hz);
 }
+
+int gpu_load_pct(void)
+{
+    const char *path = pick_path(GPU_BUSY, GPU_BUSY_LEGACY);
+    int pct = 0;
+
+    if (!path)
+        return -1;
+    /* gpu_busy_percentage_show() prints "<n> %", which sysfs_read_int()
+     * parses (trailing text is ignored). */
+    if (sysfs_read_int(path, &pct) < 0 || pct < 0)
+        return -1;
+    if (pct > 100)
+        pct = 100;
+    return pct;
+}

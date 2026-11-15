@@ -24,10 +24,12 @@ genfscon sysfs /class/gpio5_pwm2     u:object_r:ashfall_fan_sysfs:s0
 #   /sys/devices/platform/soc/3d00000.qcom,kgsl-3d0/devfreq/3d00000.qcom,kgsl-3d0/max_freq
 genfscon sysfs /devices/platform/soc/3d00000.qcom,kgsl-3d0/kgsl/kgsl-3d0/gpu_available_frequencies u:object_r:ashfall_gpu_sysfs:s0
 genfscon sysfs /devices/platform/soc/3d00000.qcom,kgsl-3d0/kgsl/kgsl-3d0/gpuclk u:object_r:ashfall_gpu_sysfs:s0
+genfscon sysfs /devices/platform/soc/3d00000.qcom,kgsl-3d0/kgsl/kgsl-3d0/gpu_busy_percentage u:object_r:ashfall_gpu_sysfs:s0
 genfscon sysfs /devices/platform/soc/3d00000.qcom,kgsl-3d0/devfreq/3d00000.qcom,kgsl-3d0/max_freq u:object_r:ashfall_gpu_sysfs:s0
 genfscon sysfs /devices/platform/soc/3d00000.qcom,kgsl-3d0/devfreq/3d00000.qcom,kgsl-3d0/min_freq u:object_r:ashfall_gpu_sysfs:s0
 genfscon sysfs /devices/soc/3d00000.qcom,kgsl-3d0/kgsl/kgsl-3d0/gpu_available_frequencies u:object_r:ashfall_gpu_sysfs:s0
 genfscon sysfs /devices/soc/3d00000.qcom,kgsl-3d0/kgsl/kgsl-3d0/gpuclk u:object_r:ashfall_gpu_sysfs:s0
+genfscon sysfs /devices/soc/3d00000.qcom,kgsl-3d0/kgsl/kgsl-3d0/gpu_busy_percentage u:object_r:ashfall_gpu_sysfs:s0
 genfscon sysfs /devices/soc/3d00000.qcom,kgsl-3d0/devfreq/3d00000.qcom,kgsl-3d0/max_freq u:object_r:ashfall_gpu_sysfs:s0
 genfscon sysfs /devices/soc/3d00000.qcom,kgsl-3d0/devfreq/3d00000.qcom,kgsl-3d0/min_freq u:object_r:ashfall_gpu_sysfs:s0
 
@@ -55,7 +57,5 @@ genfscon sysfs /devices/system/cpu/cpu5/cpufreq u:object_r:ashfall_cpu_sysfs:s0
 genfscon sysfs /devices/system/cpu/cpu6/cpufreq u:object_r:ashfall_cpu_sysfs:s0
 genfscon sysfs /devices/system/cpu/cpu7/cpufreq u:object_r:ashfall_cpu_sysfs:s0
 
-# zram attributes (phase 6, #141): /sys/block/zram0 resolves to
-# /sys/devices/virtual/block/zram0, which the platform policy already labels
-# sysfs_zram (public type).  Do not add a genfscon here: checkpolicy rejects a
-# second entry for the same path, and the daemon uses the public type.
+# Memory (phase 6, #141): no entry.  The swapfile lives on /data
+# (file_contexts), and zram was removed in wave 3 (issue #156 item 7).

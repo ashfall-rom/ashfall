@@ -46,6 +46,10 @@
     "/sys/devices/soc/3d00000.qcom,kgsl-3d0/kgsl/kgsl-3d0/gpu_available_frequencies"
 #define GPU_CLOCK_LEGACY \
     "/sys/devices/soc/3d00000.qcom,kgsl-3d0/kgsl/kgsl-3d0/gpuclk"
+#define GPU_BUSY \
+    "/sys/devices/platform/soc/3d00000.qcom,kgsl-3d0/kgsl/kgsl-3d0/gpu_busy_percentage"
+#define GPU_BUSY_LEGACY \
+    "/sys/devices/soc/3d00000.qcom,kgsl-3d0/kgsl/kgsl-3d0/gpu_busy_percentage"
 
 #define GPU_MIN_MHZ 305
 #define GPU_STOCK_MHZ 670
@@ -92,5 +96,13 @@ int gpu_status_oc(const gpu_state *state);
  * unreadable (the app draws a gap), 0 when the clock reads 0 (GPU off).
  */
 int gpu_clock_mhz(void);
+
+/*
+ * ashfall.status.perf.gpu_load_pct: the kgsl GPU busy percentage
+ * (gpu_busy_percentage), read once per status tick like the clock.  Returns
+ * 0..100, or -1 when the node is missing/unreadable - the graph draws a gap
+ * instead of a fabricated 0 %.
+ */
+int gpu_load_pct(void);
 
 #endif /* ASHFALL_GPU_H */

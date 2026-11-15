@@ -21,6 +21,90 @@ static int khz_to_mhz(int khz)
     return (khz + KHZ_PER_MHZ / 2) / KHZ_PER_MHZ;
 }
 
+/* --- CPU utilisation (/proc/stat, issue #156 item 3) --------------------- */
+
+void cpu_load_init(cpu_load *load)
+{
+    if (!load)
+        return;
+    memset(load, 0, sizeof(*load));
+}
+
+/* Aggregate `cpu` line: user nice system idle iowait irq softirq steal
+ * [guest guest_nice].  guest/guest_nice are already part of user, so the first
+ * eight fields are the whole accounting. */
+static bool read_cpu_stat(cpu_load *out)
+{
+    char buf[512];
+    char *cursor;
+    unsigned long long value;
+    unsigned long long total = 0;
+    unsigned long long idle = 0;
+    int field = 0;
+
+    if (sysfs_read_str(CPU_STAT_PATH, buf, sizeof(buf)) <= 0)
+        return false;
+    if (strncmp(buf, "cpu ", 4) != 0)
+        return false;
+    cursor = buf + 4;
+    while (field < 8) {
+        char *end = NULL;
+
+        while (*cursor == ' ' || *cursor == '\t')
+            cursor++;
+        if (!*cursor)
+            break;
+        errno = 0;
+        value = strtoull(cursor, &end, 10);
+        if (errno != 0 || end == cursor)
+            return false;
+        total += value;
+        if (field == 3 || field == 4) /* idle + iowait */
+            idle += value;
+        field++;
+        cursor = end;
+    }
+    if (field < 4)
+        return false;
+    out->idle = idle;
+    out->total = total;
+    out->valid = true;
+    return true;
+}
+
+int cpu_load_pct(cpu_load *load)
+{
+    cpu_load now;
+    unsigned long long total_delta;
+    unsigned long long idle_delta;
+    long pct;
+
+    if (!load)
+        return -1;
+    memset(&now, 0, sizeof(now));
+    if (!read_cpu_stat(&now)) {
+        load->valid = false; /* no baseline from a torn/unreadable read */
+        return -1;
+    }
+    if (!load->valid || now.total <= load->total || now.idle < load->idle) {
+        /* First sample (or the counters went backwards after a hotplug
+         * reset): store it and report unknown for this tick. */
+        *load = now;
+        return -1;
+    }
+    total_delta = now.total - load->total;
+    idle_delta = now.idle - load->idle;
+    *load = now;
+    if (total_delta == 0 || idle_delta > total_delta)
+        return -1;
+    pct = (long)((total_delta - idle_delta) * 100ULL / total_delta);
+    if (pct < 0)
+        return 0;
+    if (pct > 100)
+        return 100;
+    return (int)pct;
+}
+
 cpu_cluster cpu_cluster_from_cpu(int cpu)
 {
     /* kona: silver 0..3, gold 4..6, prime 7. */
@@ -53,8 +137,10 @@ static bool list_contains(const char *list, const char *name)
     return false;
 }
 
+/* Order matters: it is the fallback order when the request is unknown or not
+ * offered by the kernel, so schedutil (the kernel default) stays first. */
 static const char *allowed_governors[] = {"schedutil", "conservative",
-                                          "powersave"};
+                                          "powersave", "performance"};
 
 static const char *canonical_governor(const char *request)
 {
@@ -73,8 +159,9 @@ const char *cpu_validate_governor(const char *request, const char *available)
     const char *want = canonical_governor(request);
     bool have_list = available && available[0];
 
-    /* An unknown name (walt/performance are deliberately unsupported) falls
-     * back to schedutil, the kernel default. */
+    /* An unknown name (e.g. walt) falls back to schedutil, the kernel default;
+     * an accepted name that this kernel does not offer (no `performance` in
+     * scaling_available_governors) falls back the same way. */
     if (want && (!have_list || list_contains(available, want)))
         return want;
     for (size_t i = 0; i < sizeof(allowed_governors) / sizeof(allowed_governors[0]);
