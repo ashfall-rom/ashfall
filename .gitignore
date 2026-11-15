@@ -16,3 +16,6 @@ config/ashfall.local.conf
 *.swp
 .idea/
 .vscode/
+
+# Brand asset build output
+/assets/brand/bootanimation/build/
