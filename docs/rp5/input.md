@@ -223,6 +223,9 @@ speaks the protocol; the missing piece was only the stock userspace bridge.
   classification (which `/dev/input` nodes are pads), the merge/remap rules,
   property parsing and the `FUSION STATUS` text.  Free of evdev/uinput so the
   host tests cover all of it; the daemon owns the fds.
+* `uinput_dev.c` / `uinput_dev.h` - the one uinput device: identity, capability
+  table, `ff_effects_max` and the exact ioctl order, behind a syscall seam so
+  the host tests assert them (#156).
 * `control.c` / `control.h` - the `/dev/socket/ashfall_input` server
   (`GET/SET/RESET CAL`, `RAW ON/OFF`, `GRAB ON/OFF`, `FUSION ...`).
 * `input.c` / `input.h` / `plat.c` / `plat.h` - shared state, logging and
@@ -536,6 +539,36 @@ anything else keeps the right stick on `ABS_Z`/`ABS_RZ`.  This is the fresh
 heuristic the contract asks for (the stock app's resting-`ABS_Z`-as-trigger bug)
 and `FUSION RESCAN` re-runs it.
 
+### Device construction (#156)
+
+The kernel reports almost everything about a uinput device the same way:
+`UI_DEV_CREATE` fails with `EINVAL`, long after the offending bit was set.  The
+capability plan and the ioctl sequence therefore live in `uinput_dev.c`
+(`struct uinput_dev_spec` + `struct uinput_dev_ops`) instead of the hardware
+loop, and the host tests capture the sequence - a wrong bit or order fails
+`make -C aosp/vendor/ashfall/rp5/input/tests check`, not the device.
+
+The rule that cost the phase 6 build (`wave2-integ7`: `UI_DEV_CREATE failed:
+Invalid argument` once per second and no fusion device at all):
+
+```
+drivers/input/misc/uinput.c, uinput_create_device():
+    if (test_bit(EV_FF, dev->evbit) && !udev->ff_effects_max)
+            return -EINVAL;      /* "ff_effects_max should be non-zero" */
+```
+
+`EV_FF` is only ever set together with `uinput_setup.ff_effects_max =
+UINPUT_DEV_FF_EFFECTS` (16).  If a kernel refuses `EV_FF`/`FF_RUMBLE`, the
+device is created again without them and logcat says
+`kernel refused EV_FF/FF_RUMBLE, rumble relay off` - a pad without rumble
+instead of a daemon that retries a device which can never be created.  Fusion
+off is untouched: that identity advertises no force feedback at all.
+
+The order, asserted by the tests: `EV_KEY`/`EV_ABS`/`EV_SYN` event bits, key
+bits, `EV_FF` + `UI_SET_FFBIT(FF_RUMBLE)`, `UI_SET_ABSBIT` +
+`UI_ABS_SETUP` per axis (ranges identical to the merge rescale, from the same
+helper), `UI_DEV_SETUP` (identity + `ff_effects_max`), `UI_DEV_CREATE`.
+
 ### Settings
 
 The **app** is the only writer (`system_app`); the daemon only reads, and
@@ -586,8 +619,11 @@ socket itself is missing, which is not a protocol error.
   fd close release the grab explicitly, so a crash can never leave a pad
   hidden; `PC`/`QL` in `getevent` is the way to check.
 * Hotplug comes from `inotify` on `/dev/input` plus a 2 s fallback scan (and
-  `FUSION RESCAN`).  A pad that is unplugged mid-press releases its buttons on
-  the next flush.
+  `FUSION RESCAN`).  Every `event*` create/delete/move/attrib (and a queue
+  overflow) logs `fusion: hotplug <node>, rescanning` and scans on the spot
+  instead of waiting for the tick; a scan that changes the pad set logs
+  `fusion: scan: N pad(s) merged`.  A pad that is unplugged mid-press releases
+  its buttons on the next flush.
 * Rumble: the fusion device advertises `FF_RUMBLE`; an upload is remembered
   and replayed to every pad that can take it (read-write pads only; `EVIOCSFF`
   and write errors - `ENODEV`, `EINVAL` - are logged and skipped, never fatal).
@@ -651,7 +687,10 @@ The settings properties need no new rule - the app writes them and
 1. `setprop persist.ashfall.pad.fusion 1` (or `FUSION ON` from the app):
    `getevent -pl` shows `AshFall Fusion Controller` with `045e:028e`,
    `KEY_BACK`/`KEY_HOMEPAGE` and `FF`; the physical pads no longer appear as
-   separate devices while they keep working through the fusion pad.
+   separate devices while they keep working through the fusion pad.  `logcat`
+   shows `uinput AshFall Fusion Controller created (045e:028e, rumble)` and
+   **no** `UI_DEV_CREATE failed` line (#156: with `EV_FF` set,
+   `ff_effects_max` must be non-zero).
 2. `FUSION STATUS` lists the internal `2020:3001:mcu` pad plus every connected
    pad with its layout and age; a pad you just pressed has age 0-50 ms.
 3. `FUSION LAYOUT 0b05:1b21:usb NINTENDO` swaps A/B and X/Y live and survives

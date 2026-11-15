@@ -202,6 +202,26 @@ bool fusion_is_motion_only(const uint8_t *keybits, size_t keybits_len,
  * fusion would feed back into itself. */
 bool fusion_is_self(uint16_t vendor, uint16_t product, const char *name);
 
+/* One probed /dev/input/event* node, as the daemon saw it. */
+struct fusion_node {
+    uint16_t vendor;
+    uint16_t product;
+    enum fusion_connection connection;
+    const char *name;
+    bool gamepad;     /* fusion_classify() on the node's capability bits */
+    bool motion_only; /* fusion_is_motion_only(), for the log line */
+};
+
+/* Merge decision for a probed node, plus the stable
+ * "vendor:product:connection" key (#156).  False means "leave the node
+ * alone": our own uinput device, a key-only node, or a motion-only node that
+ * must stay on Android's sensor path. */
+bool fusion_node_mergeable(const struct fusion_node *node, char *key,
+                           size_t key_len);
+
+/* Hotplug: does this /dev/input inotify event require a rescan? */
+bool fusion_hotplug_scan(unsigned int mask, const char *name);
+
 /* Which ABS code feeds each merged axis slot (0 = the pad lacks it).  External
  * pads disagree here: Android/VirtualGamepad pads use ABS_BRAKE/ABS_GAS for
  * the triggers and ABS_Z/ABS_RZ for the right stick, while HID Xbox pads use
