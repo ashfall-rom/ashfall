@@ -55,8 +55,7 @@ genfscon sysfs /devices/system/cpu/cpu5/cpufreq u:object_r:ashfall_cpu_sysfs:s0
 genfscon sysfs /devices/system/cpu/cpu6/cpufreq u:object_r:ashfall_cpu_sysfs:s0
 genfscon sysfs /devices/system/cpu/cpu7/cpufreq u:object_r:ashfall_cpu_sysfs:s0
 
-# zram attributes (phase 6, #141).  /sys/block/zram0 is a class symlink to
-# /sys/devices/virtual/block/zram0, and genfscon resolves the class prefix to
-# the same entry (checkpolicy rejects listing both as a duplicate), so only the
-# resolved device path is listed.
-genfscon sysfs /devices/virtual/block/zram0     u:object_r:ashfall_zram_sysfs:s0
+# zram attributes (phase 6, #141): /sys/block/zram0 resolves to
+# /sys/devices/virtual/block/zram0, which the platform policy already labels
+# sysfs_zram (public type).  Do not add a genfscon here: checkpolicy rejects a
+# second entry for the same path, and the daemon uses the public type.

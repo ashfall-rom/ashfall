@@ -412,7 +412,7 @@ device (build `20261113-213314`):
 | `ashfall_fan_sysfs` | `/class/gpio5_pwm2` | the driver registers class-level attributes, so `state`/`duty`/`speed` live directly in the class directory (it is a real directory, not a device symlink); `avc` confirms `path="/sys/class/gpio5_pwm2/state"` |
 | `ashfall_led_sysfs` | `/devices/virtual/sn3112l`, `/devices/virtual/sn3112r` | `/sys/class/sn3112{l,r}/led` are symlinks into these device dirs; `avc` confirms `path="/sys/devices/virtual/sn3112l/led/brightness"` |
 | `ashfall_cpu_sysfs` | `/devices/system/cpu/cpufreq`, `/devices/system/cpu/cpu{0..7}/cpufreq` | phase 6 (#124): the `policy*` dirs are symlinks into `cpuN/cpufreq`; the platform label `sysfs_devices_system_cpu` is not writable by a coredomain (§12) |
-| `ashfall_zram_sysfs` | `/devices/virtual/block/zram0`, `/block/zram0` | phase 6 (#141): `/sys/block/zram0/*` is a class symlink to the virtual block device (§13) |
+| `sysfs_zram` (platform) | `/devices/virtual/block/zram0` | phase 6 (#141): `/sys/block/zram0/*` resolves to the platform-labelled zram device; the daemon gets a read/write allow on the public type (§13) |
 | `ashfall_swap_file` | `/data/ashfall(/.*)?` | phase 6 (#141): the swapfile directory and file; created by init at `post-fs-data` so the label is inherited (§13) |
 | `ashfall_gpu_sysfs` (+ `gpuclk`) | `.../kgsl/kgsl-3d0/gpuclk` (platform + legacy) | phase 6 (#124): the read-only live GPU clock behind `ashfall.status.perf.gpu_mhz`; only this attribute was added, `min_freq`/`max_freq` are unchanged (#120 stays open) |
 

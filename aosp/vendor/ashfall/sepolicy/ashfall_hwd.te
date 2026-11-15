@@ -85,12 +85,14 @@ allow ashfall_hwd sysfs_batteryinfo:file r_file_perms;
 # zram (phase 6, #141): /dev/block/zram0 and /sys/block/zram0/* (resolved
 # /sys/devices/virtual/block/zram0).  swapon/swapoff open the block device.
 type ashfall_zram_device, dev_type;
-type ashfall_zram_sysfs, fs_type, sysfs_type;
 
 allow ashfall_hwd block_device:dir search;
 allow ashfall_hwd ashfall_zram_device:blk_file rw_file_perms;
-allow ashfall_hwd ashfall_zram_sysfs:dir r_dir_perms;
-allow ashfall_hwd ashfall_zram_sysfs:file rw_file_perms;
+# /sys/block/zram0 resolves to /sys/devices/virtual/block/zram0, which the
+# platform policy labels with the public sysfs_zram type.  A private genfscon
+# would be a duplicate (checkpolicy), so grant the daemon on the public type.
+allow ashfall_hwd sysfs_zram:dir r_dir_perms;
+allow ashfall_hwd sysfs_zram:file rw_file_perms;
 
 # Swap file (phase 6, #141): /data/ashfall/swapfile, created by init at
 # post-fs-data so it gets this label (a runtime-created directory would inherit
