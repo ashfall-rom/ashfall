@@ -274,3 +274,17 @@ int gpu_status_oc(const gpu_state *state)
         return -1;
     return mhz > GPU_STOCK_MHZ ? 1 : 0;
 }
+
+int gpu_clock_mhz(void)
+{
+    const char *path = pick_path(GPU_CLOCK, GPU_CLOCK_LEGACY);
+    int hz = 0;
+
+    if (!path)
+        return -1;
+    if (sysfs_read_int(path, &hz) < 0 || hz < 0)
+        return -1;
+    if (hz == 0)
+        return 0;
+    return mhz_from_hz(hz);
+}

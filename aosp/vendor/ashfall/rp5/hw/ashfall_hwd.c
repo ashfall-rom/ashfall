@@ -68,6 +68,7 @@
 #define STATUS_PERF_THROTTLE "ashfall.status.perf.throttle"
 #define STATUS_GPU_MAX_MHZ "ashfall.status.perf.gpu_max_mhz"
 #define STATUS_GPU_OC "ashfall.status.perf.gpu_oc"
+#define STATUS_PERF_GPU_MHZ "ashfall.status.perf.gpu_mhz"
 
 /* Phase 6 wave 2 telemetry (docs/phase6.md §9.3): one sampler, one owner. */
 #define STATUS_POWER_CURRENT_MA "ashfall.status.power.current_ma"
@@ -482,6 +483,7 @@ int main(void)
     struct status_cache status;
     struct gpu_status_cache gpu_status;
     int power_status_cache[7];
+    int gpu_clock_cache = INT_MIN;
     int cpu_status_cache[CPU_CLUSTER_COUNT];
     int mem_status_cache[6];
     int throttle_status_cache = -2; /* force the first publish */
@@ -774,6 +776,7 @@ int main(void)
             /* One battery read per status tick feeds every consumer (#124 and
              * #137 share this sampler, docs/phase6.md §9.3). */
             publish_power_status(&power, power_status_cache);
+            publish_int(STATUS_PERF_GPU_MHZ, gpu_clock_mhz(), &gpu_clock_cache);
             publish_cpu_status(&cpu, cpu_status_cache);
             publish_mem_status(&mem, mem_status_cache);
         }

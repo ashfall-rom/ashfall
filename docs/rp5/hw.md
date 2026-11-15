@@ -414,6 +414,7 @@ device (build `20261113-213314`):
 | `ashfall_cpu_sysfs` | `/devices/system/cpu/cpufreq`, `/devices/system/cpu/cpu{0..7}/cpufreq` | phase 6 (#124): the `policy*` dirs are symlinks into `cpuN/cpufreq`; the platform label `sysfs_devices_system_cpu` is not writable by a coredomain (§12) |
 | `ashfall_zram_sysfs` | `/devices/virtual/block/zram0`, `/block/zram0` | phase 6 (#141): `/sys/block/zram0/*` is a class symlink to the virtual block device (§13) |
 | `ashfall_swap_file` | `/data/ashfall(/.*)?` | phase 6 (#141): the swapfile directory and file; created by init at `post-fs-data` so the label is inherited (§13) |
+| `ashfall_gpu_sysfs` (+ `gpuclk`) | `.../kgsl/kgsl-3d0/gpuclk` (platform + legacy) | phase 6 (#124): the read-only live GPU clock behind `ashfall.status.perf.gpu_mhz`; only this attribute was added, `min_freq`/`max_freq` are unchanged (#120 stays open) |
 
 On the test build the nodes were still labelled `u:object_r:sysfs:s0` (and the
 `shell` domain that ran the test binary is a permissive domain in userdebug),
@@ -858,10 +859,21 @@ adb shell dmesg | grep avc      # must be clean
 the Power page, and treat a denial in an `ashfall_hwd` line (not a `setprop`
 line) as the policy bug.
 
-`ashfall.status.perf.gpu_mhz` from docs/phase6.md §9.3 is **not** published by
-this change: the effective kgsl clock lives in an attribute next to
-`gpu_available_frequencies`, and the GPU relabel is frozen for #120.  The GPU
-cap keeps its existing `ashfall.status.perf.{gpu_max_mhz,gpu_oc}` properties.
+`ashfall.status.perf.gpu_mhz` is the **live** kgsl clock from `gpuclk` (Hz),
+converted to MHz and read once per existing status tick: `-1` when the node is
+missing or unreadable (the Power page graph draws a gap), `0` when the GPU
+reports 0 (clocked off).  Phase 6 adds only this one read-only attribute to the
+existing `ashfall_gpu_sysfs` relabel, as exact-path `file_contexts` entries plus
+`genfs_contexts` fallbacks for the platform and legacy layouts with every dot
+escaped:
+
+```
+/sys/devices/platform/soc/3d00000\.qcom,kgsl-3d0/kgsl/kgsl-3d0/gpuclk
+/sys/devices/soc/3d00000\.qcom,kgsl-3d0/kgsl/kgsl-3d0/gpuclk
+```
+
+`min_freq`/`max_freq` are untouched and the #120 vendor-perf-HAL question stays
+open; the cap properties (`gpu_max_mhz`, `gpu_oc`) are unchanged.
 
 ## 13. Memory: zram and swapfile (#141)
 
