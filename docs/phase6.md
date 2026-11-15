@@ -324,6 +324,20 @@ graph and the status bar treat `-1` as a gap/`—`. Gamepad fusion state is **no
 a property: it is returned by `FUSION STATUS` on `/dev/socket/ashfall_input`
 because a pad list does not fit the 92-char limit.
 
+Settings properties this wave introduces (names fixed here so the app and the
+daemon workers cannot drift):
+
+| Property | Type | Writer -> reader | Meaning |
+|---|---|---|---|
+| `persist.ashfall.perf.cpu_max_silver` | `ashfall_perf_prop` | app -> hwd | MHz cap, `0` = stock max |
+| `persist.ashfall.perf.cpu_max_gold` | `ashfall_perf_prop` | app -> hwd | MHz cap, `0` = stock max |
+| `persist.ashfall.perf.cpu_max_prime` | `ashfall_perf_prop` | app -> hwd | MHz cap, `0` = stock max |
+| `persist.ashfall.perf.cpu_gov` | `ashfall_perf_prop` | app -> hwd | one governor for all three policies; default `schedutil` |
+| `persist.ashfall.power.preset` | `ashfall_prop` | app only | active preset id (UI state; the daemon applies the caps) |
+| `persist.ashfall.mem.zram_mb` / `swap_mb` | `ashfall_prop` | app -> hwd | `0` = off |
+| `persist.ashfall.batt.*` | `ashfall_prop` | Settings -> SystemUI | PlayTime settings (#137), read with `get_prop(system_app, ashfall_prop)` |
+| `persist.ashfall.pad.fusion` / `.layouts` / `.remap` | `ashfall_prop` | app -> `ashfall-rp5-input` | fusion (#138) |
+
 ### 9.4 Settings patch boundary
 
 `packages/apps/Settings` is a new ownership boundary for this project.
