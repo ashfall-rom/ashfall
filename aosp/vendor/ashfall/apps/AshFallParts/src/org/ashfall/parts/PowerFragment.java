@@ -846,6 +846,7 @@ public class PowerFragment extends PreferenceFragmentCompat {
         private final int mStep;
         private int mMin;
         private int mMax;
+        private OnValueChangedListener mListener;
 
         CapSliderPreference(Context context, int step) {
             super(context);
@@ -857,6 +858,14 @@ public class PowerFragment extends PreferenceFragmentCompat {
             mMin = min;
             mMax = max;
             super.setRange(min, max);
+        }
+
+        @Override
+        public void setValueChangedListener(OnValueChangedListener listener) {
+            // The base class keeps its listener private and only calls it from
+            // the SeekBar, so the D-pad path keeps its own copy.
+            super.setValueChangedListener(listener);
+            mListener = listener;
         }
 
         @Override
@@ -880,6 +889,9 @@ public class PowerFragment extends PreferenceFragmentCompat {
                     return true;
                 }
                 setValue(next);
+                if (mListener != null) {
+                    mListener.onValueChanged(this, next);
+                }
                 return true;
             });
         }

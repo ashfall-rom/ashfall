@@ -209,20 +209,65 @@ active caps).
 
 ## 8. Verification record
 
-Preview build:
+Preview build (`aosp/vendor/ashfall/apps/AshFallParts/preview`):
 
 ```
-cd aosp/vendor/ashfall/apps/AshFallParts/preview && ./prepare.sh \
-  && ANDROID_HOME=/root/android-sdk gradle --offline :app:assembleDebug
+./prepare.sh && ANDROID_HOME=/root/android-sdk gradle --offline :app:assembleDebug
+-> BUILD SUCCESSFUL
 ```
 
-Emulator (Retroid_Pocket_5 AVD, 1920×1080, day/night, mock daemon) - filled in
-by the run recorded with the PR:
+Emulator: `Retroid_Pocket_5` AVD (1920×1080, `wm density 360`), preview APK
+installed, mock daemon (`tools/mock/power-perf.sh on`), 2026-11-15.
 
-* page, preset row, cap sliders, governor, GPU selector, throttle override,
-  Reset to stock reachable with the D-pad;
-* preset apply writes the three caps, the governor, the GPU cap and the id;
-* powersave disables the cap sliders with the inert note;
-* graph: axes, legend, charging gap, unavailable state;
-* tile: label, subtitle, preset dialog, "Edit presets";
-* #132: one sample per tick (no extra sample on page open or preset tap).
+* **Page.** The legend read `6.5 W` / `CPU 92%` / `GPU 57%` with
+  `silver 1553 · gold 2039 · prime 2619 MHz` under it; the three presets showed
+  the #124 table (`Low power 1171 / 1478 / 1632 MHz · conservative · GPU 305 MHz`,
+  `Balanced Stock clocks · schedutil · GPU 670 MHz`,
+  `Performance 1804 / 2419 / 2841 MHz · schedutil · GPU 850 MHz`).
+* **Properties (real, no mock).** With `adb root` + `setenforce 0` and the mock
+  off, tapping Low power wrote
+  `cpu_max_silver=1171`, `cpu_max_gold=1478`, `cpu_max_prime=1632`,
+  `cpu_gov=conservative`, `gpu_max_mhz=305`, `power.preset=builtin.low_power`;
+  Reset to stock wrote `0 / 0 / 0`, `schedutil`, `670`, `builtin.balanced` and
+  released `ashfall.perf.throttle_override` (`0`).
+* **Sliders.** D-pad focus on Silver cores + LEFT wrote 1804 -> 1754 MHz (the
+  row showed `Cap 1754 MHz · now 1598 MHz` and the active preset row became
+  `1754 / 2419 / 2841 MHz`, i.e. the active preset is edited in place); RIGHT
+  returned to `Stock maximum (1804 MHz)`.
+* **powersave.** The three cap rows reported `enabled=false` in the
+  `uiautomator` dump and all three carried the inert note; the governor row
+  repeated it.
+* **GPU.** 940 MHz -> `940 MHz · overclock` plus the manual-only note; with the
+  override on -> `Requested 940 MHz — the throttle override clamps the GPU to
+  stock 670 MHz`.  Switching the override on showed
+  "Software clock throttling is disabled until reboot".
+* **Preset editing.** Duplicate created `Balanced copy`; renaming wrote the new
+  title; Delete removed the row and kept the applied settings; Reset presets
+  restored the Low power row to `conservative` after it had been edited to
+  `powersave`.
+* **Graph.** Row bounds `[36,400][1884,760]` (1848×360 px).  Sampled pixels in
+  the plot area: day `#C2410C` 506 / `#1D4ED8` 517 / `#15803D` 421; night
+  `#FFB74D` 155 / `#64B5F6` 267 / `#81C784` 686 - all three series are drawn
+  with the theme's palette.  In a charging tick the legend read `— W` with the
+  note "charging — power not measured" and the orange line ended at the gap.
+* **D-pad.** 12 `KEYCODE_DPAD_DOWN` presses walked Low power -> Balanced ->
+  Performance -> Edit presets -> Silver -> Gold -> Prime -> CPU governor ->
+  GPU max frequency -> Override throttling -> Reset to stock -> version, one
+  row per press (the graph row is skipped); 16 `UP` presses returned to Low
+  power.
+* **Tile.** `cmd statusbar add-tile` + `click-tile` opened the Power dialog with
+  the live header `5.1 W · CPU 2224 · GPU 603 MHz`, the three presets and
+  "Edit presets".
+* **#132.** `updateStatus()` now has exactly one call site - inside the tick
+  (`FanFragment.java:79`) - and the Power row appends only from its 2 s tick, so
+  a page open or a preset tap can no longer insert a sample.
+* **Pure black.** The LineageOS pure-black RRO only exists on the device image,
+  so the AVD cannot show it; the page inherits every colour from the theme and
+  the graph carries its own day/night palette (checked above), which is what the
+  overlay changes.
+* **Handheld row.** Implemented (`PowerSummary`), but the Handheld page itself
+  crashes on resume in the page shell
+  (`HandheldActivity.refreshSummaries` calls `setSummary` on rows that already
+  have a `SummaryProvider`); that file is not owned by this change and the defect
+  is filed as issue #152.
+

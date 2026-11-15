@@ -330,12 +330,6 @@ public final class Power {
         return Props.getInt(STATUS_POWER_MW, -1);
     }
 
-    /** The same value in watts, or {@code -1}. */
-    public static float powerWatts() {
-        final int mw = powerMw();
-        return mw < 0 ? -1f : mw / 1000f;
-    }
-
     public static int cpuMhzSilver() {
         if (mockEnabled()) {
             return mockSilver();
