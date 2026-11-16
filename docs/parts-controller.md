@@ -304,7 +304,8 @@ writer), and a full-circle calibration with the sticks at rest.
   `ControllerTesterView.BTN_*` must change with it.
 * `GRAB ON`/`GRAB OFF` must be accepted on the same connection that asked for
   `RAW ON`, and `GRAB` must end on disconnect (contract §6.2).  An `ERR` reply
-  is shown to the user as "the input daemon refused GRAB".
+  is shown to the user as "Button capture failed; Home, Back and Select may
+  still reach the system."
 * `ashfall.ui.led_override` is written at <= 29 Hz as `RRGGBB:RRGGBB` and cleared
   with an empty value; the daemon must treat empty as "normal lighting".
 * Triggers are displayed from the raw counts with `(max - raw) / (max - min)`,

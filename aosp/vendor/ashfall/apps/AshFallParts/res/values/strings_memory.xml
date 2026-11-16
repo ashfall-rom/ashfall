@@ -26,7 +26,7 @@
     <string name="mem_off">Off</string>
     <string name="mem_size_mb">%1$d MB</string>
     <string name="mem_size_gb">%1$s GB</string>
-    <string name="mem_applied_mismatch">Requested %1$d MB — ashfall-hwd reports %2$d MB.</string>
+    <string name="mem_applied_mismatch">Requested %1$d MB — %2$d MB in use.</string>
 
     <!-- Live status (ashfall.status.mem.*) -->
     <string name="mem_status_category">Status</string>
@@ -40,17 +40,17 @@
          confirmation before swap is switched on. -->
     <string name="mem_swap_category">Swapfile</string>
     <string name="mem_swap_size_title">Swapfile size</string>
-    <string name="mem_swap_free">%1$s free on /data</string>
-    <string name="mem_swap_warning">A swapfile lives on the UFS flash: writes are orders of magnitude slower than RAM, the device will feel sluggish once it actually swaps, and heavy swapping wears the flash out. Swap is a last-resort overflow for memory pressure. It is much slower than RAM.</string>
-    <string name="mem_swap_too_large">Larger than the free space on /data — ashfall-hwd will refuse it.</string>
+    <string name="mem_swap_free">%1$s free</string>
+    <string name="mem_swap_warning">Swap is far slower than RAM, and heavy use wears the storage out.</string>
+    <string name="mem_swap_too_large">Larger than the free storage — it will be refused.</string>
     <string name="mem_swap_unavailable">The swapfile is not available on this build</string>
     <string name="mem_swap_confirm_title">Create a swapfile?</string>
-    <string name="mem_swap_confirm_body">The swapfile (%1$s) is created on the internal UFS flash and used as overflow memory when RAM is full. It is orders of magnitude slower than RAM, so the device will feel sluggish once it actually swaps, and heavy swapping wears the flash out. Swap is a last-resort overflow for memory pressure. It is much slower than RAM — not a performance option.</string>
+    <string name="mem_swap_confirm_body">The swapfile (%1$s) is created on internal storage. It is far slower than RAM, the device can feel sluggish once it swaps, and heavy use wears the storage out.</string>
     <string name="mem_swap_confirm_enable">Create</string>
 
     <!-- Handheld row summary -->
-    <string name="mem_home_summary">swap %1$s</string>
-    <string name="mem_home_unavailable">Not reporting</string>
+    <string name="mem_home_summary">Swap %1$s</string>
+    <string name="mem_home_unavailable">Unavailable</string>
 
-    <string name="mem_footer">This page only writes the swapfile setting. ashfall-hwd creates, enables and reports the swapfile, and refuses anything it cannot apply. Swap is overflow memory for memory pressure, never a performance option.</string>
+    <string name="mem_footer">Applied immediately.</string>
 </resources>

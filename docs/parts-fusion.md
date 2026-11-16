@@ -33,7 +33,7 @@ were wired by the orchestrator before this work started.
 | Fusion controller | main switch, `persist.ashfall.pad.fusion` (`0` off, off by default) |
 | Connected pads | one row per pad from `FUSION STATUS`: pad name + current layout; tap opens the layout dialog |
 | Rescan / restart | sends `FUSION RESCAN` |
-| State | live line: `2 pads -> Fusion` / `no external pad` / `daemon unavailable` |
+| State | live line: `2 pads · Fusion` / `no external pad` / `Unavailable` |
 
 * The switch writes the property **and** sends `FUSION ON`/`FUSION OFF`, so the
   state changes even before the daemon's next property read.  Off is the default
@@ -41,7 +41,7 @@ were wired by the orchestrator before this work started.
   enumerates exactly as before.
 * The pad list is fetched on a background thread when the page resumes and
   every 3 s while it is visible.  A `FusionClient.Status` that is missing or
-  unparseable shows `daemon unavailable`; there is no error dialog and no
+  unparseable shows `Unavailable`; there is no error dialog and no
   retry loop — the daemon is allowed to be absent.
 * Rows are rebuilt only when the reply actually changed (key, layout or name),
   so a tick never steals D-pad focus.
@@ -140,7 +140,7 @@ Client rules, and why they are lenient:
   600 ms pad timeout expires.
 * A header that is not `OK FUSION <0|1> PADS <n>` — a stale daemon, an
   `ERR`, a truncated reply — degrades to `null` status, which every surface
-  renders as `daemon unavailable`.  A missing pad is not an error either; it is
+  renders as `Unavailable`.  A missing pad is not an error either; it is
   the `no external pad` state.
 * An unknown `<LAYOUT>` is sanitised to `DEFAULT`; a `seen_ms` that does not
   parse is `-1`, and the pad is still listed (the name is what the user reads).
