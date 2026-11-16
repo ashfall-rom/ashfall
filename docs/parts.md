@@ -140,8 +140,8 @@ immediately to the properties from §2 of the contract; there is no Apply button
   published reads `—` (`ashfall.status.fan.rpm = -1` is the tach-unavailable
   case).  A `-1`/missing sample is a **gap** in the line, never a drawn zero,
   and the buffer wraps after 60 s.  While no status value is published the row
-  shows "The fan daemon is not responding." in place of the legend and plot;
-  the last-resort warning line stays below it.  The row is neither focusable
+  shows "Fan status unavailable." in place of the legend and plot;
+  the safety fallback line stays below it.  The row is neither focusable
   nor selectable and blocks focus in its children, so the D-pad skips it in
   both directions.  The plot follows the Settings theme: series colours are
   resources with a day and a night variant (§6.9), axis labels use the theme's
@@ -185,26 +185,27 @@ immediately to the properties from §2 of the contract; there is no Apply button
   **Advanced** category, revealed by pressing the version row seven times
   (remembered in the app's UI prefs), holds the **Keep after reboot** switch
   (`persist.ashfall.perf.throttle_override_permanent`).  Enabling the hidden
-  switch also applies the override immediately; turning the visible switch off
-  releases the runtime override without touching the permanent flag.
+  switch goes through its own danger confirmation, says that the override stays
+  on at every boot, and also applies the override immediately; turning the
+  visible switch off releases the runtime override without touching the
+  permanent flag.
 * **GPU max frequency** (docs/phase6.md §3) sits directly below the throttling
   override.  A single-choice dialog offers the five contract steps — 670 MHz
   (stock, default), 765, 850, 940 and 1000 MHz (experimental) — and a choice
   writes only `persist.ashfall.perf.gpu_max_mhz`; the app never writes the
   status properties.  **1000 MHz** always goes through a confirmation with the
-  thermal/stability warning (marginal on some SD865 units, 940 MHz is the common
-  stable OC); the other steps apply immediately.  Above 670 the row summary adds
-  the warning that sustained clocks depend on the fan and thermal throttling and
-  that the fan is not forced.  The row reads `ashfall.status.perf.gpu_max_mhz`
+  thermal/stability warning (the step is unstable on some units and 940 MHz is
+  the fallback); the other steps apply immediately.  Above 670 the row summary adds
+  the warning that high clocks rely on the fan and that it is not forced.  The row reads `ashfall.status.perf.gpu_max_mhz`
   (actual cap) and `ashfall.status.perf.gpu_oc` (0 stock, 1 OC, -1 unavailable)
   every tick and shows: the applied cap, `Requested N MHz — actual M MHz` when
-  the daemon picked a lower table step, or `Requested N MHz — the throttle
-  override clamps the GPU to stock 670 MHz` when an above-stock request is
+  the daemon picked a lower table step, or `Requested N MHz — using 670 MHz
+  while throttling is overridden` when an above-stock request is
   published as stock while the override is active.  The status row also
   distinguishes a missing OC step (override off) from the override clamp.
 * **Safety threshold**: removed.  The daemon keeps a fixed, undocumented
   last-resort rule (100 % at 90 °C, released at 80 °C) and the graph row still
-  shows its last-resort line when it is active; there is no slider and no
+  shows its safety fallback line when it is active; there is no slider and no
   property.
 
 ### 2.2 Presets and the curve editor
@@ -332,8 +333,8 @@ The UI target selector maps onto the daemon's `led.sync`:
   follow-up (issue #84) it sends `GRAB ON` on the raw-stream socket, so nothing
   is injected into uinput and every button is drawn from the `RAW` mask -
   including Home, Back and Select, which the system would otherwise consume.
-  The live RAW counts, calibration source and GRAB state are shown between the
-  two control clusters.  Leave by holding Start + Select for 2 s or tapping
+  The live input counts, calibration source and capture state are shown
+  between the two control clusters.  Leave by holding Start + Select for 2 s or tapping
   Close; the key-event path remains only as a fallback when the daemon is
   unreachable (B/Back then exits).  Details and the button-layout note:
   [parts-controller.md](parts-controller.md).
@@ -827,8 +828,8 @@ native daemon and DTB are out of scope for this change.
   `persist.ashfall.perf.gpu_max_mhz=940` (mock off, permissive) and the daemon
   status values stayed at the values set for the test (`670`/`0`, i.e. the app
   did not write them).  The row then showed
-  `Requested 940 MHz — the daemon reports 670 MHz; the OC step is not
-  available.` plus the fan/thermal warning because the emulator has no OC table.
+  `Requested 940 MHz — running at 670 MHz; this step is unavailable`
+  plus the fan/thermal warning because the emulator has no OC table.
   With the mock on it showed `940 MHz · overclock` and the same warning.
 * **1000 MHz confirmation.**  Selecting 1000 opened `Run the GPU at 1000 MHz?`
   with the thermal/stability body.  Cancel kept 940; **Use 1000 MHz** wrote
@@ -836,16 +837,16 @@ native daemon and DTB are out of scope for this change.
   untouched.  The dialog is a platform `AlertDialog`, so D-pad/A/B work there
   like every other AshFall dialog.
 * **Clamp summary.**  After enabling **Override throttling** (mock), the row
-  changed to `Requested 1000 MHz — the throttle override clamps the GPU to stock
-  670 MHz.` and dropped the generic warning.  The same text appeared on the real
+  changed to `Requested 1000 MHz — using 670 MHz while throttling is overridden`
+  and dropped the generic warning.  The same text appeared on the real
   property path after setting `ashfall.perf.throttle_override=1` and
   `ashfall.status.perf.gpu_oc=0` while the request was 940/1000.
 * **Status variants.**  With `ashfall.status.perf.gpu_oc=-1` the row reads
-  `Requested 940 MHz — the GPU clock interface is unavailable on this kernel.`
+  `Requested 940 MHz — GPU clock control is not supported here`.
   With `gpu_oc=1` and an actual cap below the request (`850`/`940`) it reads
   `Actual 850 MHz · requested 940 MHz`.  An invalid request
   (`persist…=12345`) reads as the stock 670, per the contract.  Before the first
-  publish the row instead says that `ashfall-hwd` is not reporting.
+  publish the row instead says the requested step is not available.
 * **Gamepad / theme.**  D-pad focus reaches the GPU row and skips the
   non-selectable footer; `DPAD_CENTER` opened the list and selected a step.
   The row and dialog render in day and night mode with the Settings summary
@@ -906,7 +907,7 @@ non-selectable row: the legend (`status_legend_{temp,pct,rpm}` with a tinted
 `drawable/fan_legend_swatch`), the Canvas-drawn `ui/FanGraphView` (160 dp, full
 row width, padding from `listPreferredItemPaddingStart/End`, 1.5 dp strokes,
 12 sp axis labels, 12 % grid, no fill or gradient) and the unchanged
-last-resort line.  `ui/StatusPreference` owns the 120-sample ring buffer: every
+safety fallback line.  `ui/StatusPreference` owns the 120-sample ring buffer: every
 500 ms tick is appended and pushed into the bound view through a
 `WeakReference` + `invalidate()`, so the row is never rebound while it
 updates (no `notifyChanged()` per tick) and a recycled row is skipped.
@@ -940,9 +941,9 @@ and draws the status, only the writes are blocked):
   right edge while temperature and output still reached it: a missing sample
   is a gap, not a zero.
 * **Daemon not responding.** All three status values `-1`: the row showed
-  "The fan daemon is not responding." with no legend and no plot (0 series
-  pixels).  With `ashfall.status.fan.safety=1` the unchanged line "Last-resort
-  protection — fan at 100 %" appeared below the plot.
+  "Fan status unavailable." with no legend and no plot (0 series
+  pixels).  With `ashfall.status.fan.safety=1` the unchanged line "Safety
+  fallback: fan at 100 %" appeared below the plot.
 * **Theme.** The same page was captured in day and night mode.  The emulator's
   night theme paints the page `#000000`, which doubles as the pure-black
   check: all three series stay distinguishable and the axis labels use the
@@ -970,11 +971,10 @@ and draws the status, only the writes are blocked):
   normalising never raises a cap the user set) and one `RIGHT` press on the
   minimum left both at `31`.  The follower is written before the slider that
   moved, so the daemon never reads `min_pct > max_pct` and never falls back to
-  both defaults mid-drag.  The minimum summary switches to "No low cut-off —
-  the fan may run at any speed" at 0, otherwise states the cut-off and appends
+  both defaults mid-drag.  The minimum summary switches to "No minimum speed"
+  at 0, otherwise states the cut-off and appends
   the Quiet note (`Fan.QUIET_PCT` used as a format argument, so the text cannot
-  drift from the constant); the maximum summary says "No upper limit — the fan
-  may run at any speed" at 100.
+  drift from the constant); the maximum summary says "No maximum speed" at 100.
 * **Logs.** `adb logcat -d | grep -iE "FATAL|AndroidRuntime"` was empty after
   opening the page, walking it, switching day/night twice and moving both
   sliders; `logcat -b crash` stayed empty.
@@ -1042,8 +1042,9 @@ trampoline and the two `TileService`s.
    stops/resumes with the panel.
 6. Throttling: **Override throttling** shows the danger confirmation, enabling
    writes `ashfall.perf.throttle_override=1`, and a reboot clears it.  Press the
-   version row seven times, enable **Keep after reboot** and confirm the
-   permanent property; turn the visible switch off afterwards.
+   version row seven times, enable **Keep after reboot**, accept its danger
+   confirmation and check the permanent property; turn the visible switch off
+   afterwards.
 7. GPU max frequency (RP5, after the phase-6 vendor_boot/daemon is flashed):
    the row shows 670 stock; select 765/850/940 and confirm
    `persist.ashfall.perf.gpu_max_mhz` plus `ashfall.status.perf.gpu_max_mhz`
@@ -1134,7 +1135,7 @@ trampoline and the two `TileService`s.
   active.  It never touches the real properties, is off by default, and is
   irrelevant in production: `Perf.mockEnabled()` also requires
   `Build.TYPE` `userdebug`/`eng`, so a user build ignores the flag entirely.
-  The row adds a `Preview mock: …` line while it is active so a screenshot
+  The row adds a `Preview only: simulated value` line while it is active so a screenshot
   cannot be mistaken for a daemon reading.
 * **Theme parity uses SettingsLib's colours explicitly.**  The app does not
   invent a grey and does not rely on `?android:attr/colorBackground` (in this
@@ -1196,6 +1197,6 @@ trampoline and the two `TileService`s.
   so no new property context is needed.  The app writes only that request; the
   status shown in the row arrives from the native worker's `ashfall-hwd`
   (`ashfall.status.perf.gpu_max_mhz` / `gpu_oc`) and its DTB OC table.  Until
-  that lands the row reads "the GPU cap is not available" or the
-  "OC step is not available" summary on a stock device; this app is testable
+  that lands the row reads "not available on this device" or the
+  "this step is unavailable" summary on a stock device; this app is testable
   without it via the preview mock (§6.7).

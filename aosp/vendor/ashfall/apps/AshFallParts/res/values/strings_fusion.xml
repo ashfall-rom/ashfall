@@ -21,10 +21,10 @@
 
     <string name="fusion_category_title">Fusion</string>
     <string name="fusion_switch_title">Fusion controller</string>
-    <string name="fusion_switch_summary">See every pad as one standard controller.  External pads are grabbed while it is on.</string>
+    <string name="fusion_switch_summary">Combine every pad into one standard controller</string>
 
     <string name="fusion_pads_title">Connected pads</string>
-    <string name="fusion_pads_none">No pad reported yet.  Connect a pad and rescan, or check that ashfall-rp5-input is running.</string>
+    <string name="fusion_pads_none">No pad found. Connect a pad and rescan.</string>
     <string name="fusion_pad_summary">Layout: %1$s</string>
 
     <string name="fusion_layout_saved">Layout saved</string>
@@ -36,23 +36,23 @@
     <string name="fusion_layout_custom">Custom</string>
 
     <string name="fusion_remap_title">Custom mapping</string>
-    <string name="fusion_remap_body">Raw button codes from ashfall-rp5-input, as from-&gt;to pairs.  Example: 304-&gt;305,305-&gt;304 swaps A and B.</string>
+    <string name="fusion_remap_body">From-to button codes, separated by commas. Example: 304-&gt;305,305-&gt;304 swaps A and B.</string>
     <string name="fusion_remap_hint">304-&gt;305,305-&gt;304</string>
     <string name="fusion_remap_invalid">That is not a from-&gt;to list of button codes.</string>
     <string name="fusion_remap_saved">Custom mapping saved</string>
-    <string name="fusion_remap_empty">Empty mapping: the pad uses its button layout unchanged.</string>
+    <string name="fusion_remap_empty">Empty mapping: the pad keeps its button layout.</string>
 
     <string name="fusion_rescan_title">Rescan / restart</string>
-    <string name="fusion_rescan_summary">Scan for pads again, pick up a pad that was missed and reclassify axes seen as triggers</string>
+    <string name="fusion_rescan_summary">Scan for pads again</string>
     <string name="fusion_rescan_done">Rescan requested</string>
 
     <string name="fusion_state_title">State</string>
-    <string name="fusion_state_pads">%1$d pads -&gt; Fusion</string>
+    <string name="fusion_state_pads">%1$d pads · Fusion</string>
     <string name="fusion_state_no_pad">no external pad</string>
     <string name="fusion_state_off">Fusion off</string>
-    <string name="fusion_state_unavailable">daemon unavailable</string>
+    <string name="fusion_state_unavailable">Unavailable</string>
 
-    <string name="fusion_footer">While Fusion is on, ashfall-rp5-input grabs the external pads and merges them with the internal pad into one Xbox-layout controller.  Back, Home, Menu and volume keep working, and a motion-only sensor node is never grabbed.</string>
+    <string name="fusion_footer">Pads are merged into one controller.</string>
 
     <!-- Fusion Quick Settings tile and dialog. -->
     <string name="fusion_dialog_title">Fusion</string>

@@ -27,7 +27,7 @@ preset.  There is no Apply button: every control writes its property and
 | CPU load / GPU load | sliders 0..100 % | starts/levels the `hw/Stress` load (#156 §4) |
 | Stress test | status row | countdown; the row stops the load while it runs |
 | Override throttling | switch + danger dialog | `ashfall.perf.throttle_override` (not persistent) |
-| Advanced (hidden) | switch | `persist.ashfall.perf.throttle_override_permanent` |
+| Advanced (hidden) | switch + danger dialog | `persist.ashfall.perf.throttle_override_permanent` |
 | Reset to stock | row | stock caps, `schedutil`, 670 MHz GPU, override off, Balanced |
 | Version | info row | seven taps reveal Advanced (shared UI pref with the Fan page) |
 
@@ -135,8 +135,8 @@ governor change:
 * **GPU 940 and 1000 MHz are ordinary preset values** since #156 §5: the old
   "manual-only" clamp to 850 MHz is gone, so a preset can carry any step from
   305 to 1000 MHz.  1000 MHz still goes through the thermal/stability
-  confirmation, and above stock the row warns that sustained clocks depend on
-  the fan.
+  confirmation, and above stock the row warns that high clocks rely on the
+  fan.
 * The **governor selector offers `schedutil` / `conservative` / `powersave` /
   `performance`** (#156 §6).  `performance` holds every policy at its maximum
   step; a per-cluster cap still applies, because the daemon never raises
@@ -145,7 +145,7 @@ governor change:
   not break the preset model); an unknown governor read back from the property
   shows as `schedutil`, which is the property's default.
 * With the **powersave** governor selected the three cap sliders are disabled
-  and say that they are inert: `powersave` pins every policy to its lowest step
+  and say that they are ignored: `powersave` pins every policy to its lowest step
   (300/710/844 MHz) and ignores `scaling_max_freq`.  The governor row repeats
   the note.
 * The active id lives in `persist.ashfall.power.preset`; the page, the editor,
@@ -254,23 +254,23 @@ second stress implementation.
 * The graph shows the load while it runs: the daemon's real `cpu_load_pct` /
   `gpu_load_pct` rise, and the emulator's in-process mock floors its synthetic
   load at the active stress level so the effect is visible without a device.
-* The GPU slider reports "GPU load is not available on this device" when the
+* The GPU slider reports "GPU load is unavailable" when the
   offscreen GL context cannot be created; the CPU load keeps running.
 
 ## 7. Unavailable states
 
 | Situation | What the page shows |
 |---|---|
-| No `ashfall-hwd` (no perf status at all) | the graph row says the CPU/GPU load and clocks are unavailable; the orange power line still draws from `BatteryManager` |
-| Neither telemetry nor a battery reading | the graph row reads "The power daemon is not responding."; the legend and the plot are hidden |
+| No `ashfall-hwd` (no perf status at all) | the graph row reads "Live power data is unavailable."; the orange power line still draws from `BatteryManager` |
+| Neither telemetry nor a battery reading | the graph row reads "Live power data is unavailable."; the legend and the plot are hidden |
 | Charging | `— W` in the legend, a gap in the orange line, note "charging — power not measured" |
 | Battery current/voltage unreadable | `— W` and a gap, no charging note (an unknown sample, not a measured zero) |
 | Load not published | `CPU —%` / `GPU —%` and a gap in that line |
 | One cluster clock unknown | `—` in the clock legend for that cluster |
 | GPU clock unknown | `—` for the GPU clock legend |
 | GPU cap not published | the editor's GPU row shows the preset value without an "actual" claim |
-| GPU clamped by the override | the editor's GPU row adds `Requested N MHz — the throttle override clamps the GPU to stock 670 MHz.` for the active preset |
-| Throttle state unsupported (`status = -1`) | the switch is off and its summary says the kernel has no override |
+| GPU clamped by the override | the editor's GPU row adds `Requested N MHz — using 670 MHz while throttling is overridden` for the active preset |
+| Throttle state unsupported (`status = -1`) | the switch is off and its summary says it is not supported |
 | Handheld summary, no daemon | `Balanced · live stats unavailable` |
 
 Nothing is faked: a control still writes its property when the daemon is
@@ -328,8 +328,7 @@ installed, mock on (`tools/mock/power-perf.sh on`), 2026-11-15.
   preset listed (`Low power`, `Balanced` marked `Active`, `Performance` showing
   `1804 / 2419 / 2841 MHz · performance · GPU 850 MHz`).  Opening Performance
   showed the three cap sliders, the governor row
-  (`performance - one governor for all three policies` plus "the caps still
-  apply"), and the GPU row.  The governor dialog listed
+  (`performance · all cores` plus "the caps still apply"), and the GPU row.  The governor dialog listed
   `schedutil / conservative / powersave / performance` with `performance`
   checked.  The GPU dialog listed all six steps; selecting 940 MHz persisted it
   in the preset (`"gpu_mhz":940` in `power_presets.xml`) and "Reset to factory

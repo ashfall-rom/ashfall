@@ -32,6 +32,7 @@ import android.view.View;
 
 import androidx.annotation.Nullable;
 
+import org.ashfall.parts.R;
 import org.ashfall.parts.hw.Pad;
 import org.ashfall.parts.hw.PadState;
 import org.ashfall.parts.ipc.CalData;
@@ -390,16 +391,12 @@ public class ControllerTesterView extends View {
         mLabel.setTextSize(18 * mDensity);
 
         mLabel.setColor(mSecondary);
-        canvas.drawText("RAW", x, y, mLabel);
+        canvas.drawText(getContext().getString(R.string.tester_panel_title), x, y, mLabel);
         y += line * 1.35f;
 
         if (!mRawAvailable || mRaw == null) {
             mSmall.setColor(mSecondary);
-            canvas.drawText("Input daemon not reachable", x, y, mSmall);
-            y += line;
-            canvas.drawText("Normal buttons are shown", x, y, mSmall);
-            y += line;
-            canvas.drawText("B or Back leaves", x, y, mSmall);
+            canvas.drawText(getContext().getString(R.string.tester_panel_unavailable), x, y, mSmall);
             mLabel.setTextSize(16 * mDensity);
             return;
         }
@@ -422,10 +419,10 @@ public class ControllerTesterView extends View {
         y += line;
         if (mGrabActive) {
             mSmall.setColor(mAccent);
-            canvas.drawText("GRAB ON", x, y, mSmall);
+            canvas.drawText(getContext().getString(R.string.tester_grab_state), x, y, mSmall);
         } else {
             mSmall.setColor(mSecondary);
-            canvas.drawText("GRAB OFF", x, y, mSmall);
+            canvas.drawText(getContext().getString(R.string.tester_grab_state_off), x, y, mSmall);
         }
         mLabel.setTextSize(16 * mDensity);
         mSmall.setTextSize(14 * mDensity);

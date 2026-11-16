@@ -21,6 +21,7 @@ import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
 import android.os.SystemClock;
+import android.util.Log;
 import android.view.KeyEvent;
 import android.view.View;
 import android.widget.Button;
@@ -47,6 +48,8 @@ import java.util.Locale;
  * activity as a normal key event.
  */
 public class CalibrationActivity extends PartsActivity {
+
+    private static final String TAG = "AshFallCalibration";
 
     private static final int STEP_RELEASE = 0;
     private static final int STEP_ROTATE = 1;
@@ -531,6 +534,9 @@ public class CalibrationActivity extends PartsActivity {
                 client = CalClient.open();
                 client.setCal(data);
             } catch (Exception e) {
+                // The message can carry the socket path and a raw ERR reply;
+                // keep it in the log and show the generic text (issue #176).
+                Log.w(TAG, "calibration save failed", e);
                 error = e.getMessage();
             } finally {
                 CalClient.closeQuietly(client);
@@ -551,7 +557,7 @@ public class CalibrationActivity extends PartsActivity {
                             .show();
                 } else {
                     fail(R.string.cal_error_socket, 0);
-                    Toast.makeText(this, getString(R.string.controller_cal_error, failure),
+                    Toast.makeText(this, R.string.controller_cal_error,
                             Toast.LENGTH_LONG).show();
                 }
             });

@@ -52,7 +52,7 @@
     <string name="add">Add</string>
     <string name="none">None</string>
     <string name="unknown">Unknown</string>
-    <string name="not_connected">Daemon not reachable</string>
+    <string name="not_connected">Could not apply the change</string>
     <string name="percent_value">%1$d%%</string>
     <string name="percent_value_format">%d%%</string>
     <string name="temperature_value_format">%d °C</string>
@@ -65,15 +65,15 @@
     <string name="home_lighting_summary">%1$s · %2$s</string>
     <string name="home_controller_summary">Stick deadzone %1$d%% · %2$d%%</string>
     <string name="home_power_summary_empty">Live power, clocks and presets</string>
-    <string name="home_daemon_note">Fan and lighting are applied by the AshFall daemons.  Presets are stored by this app; the daemons only see the active values.</string>
+    <string name="home_daemon_note">Fan and lighting changes apply immediately.</string>
 
     <!-- Fan -->
     <string name="fan_switch_title">Fan</string>
     <string name="fan_switch_summary_on">On, %1$s</string>
     <string name="fan_switch_summary_off">Off</string>
     <string name="fan_status_title">Status</string>
-    <string name="fan_status_safety">Last-resort protection — fan at 100 %</string>
-    <string name="fan_status_unavailable">The fan daemon is not responding.</string>
+    <string name="fan_status_safety">Safety fallback: fan at 100 %</string>
+    <string name="fan_status_unavailable">Fan status unavailable.</string>
     <!-- Legend of the live graph (docs/phase5.md §7.2).  The numbers are
          formatted with temperature_value / percent_value / rpm_value_grouped;
          this dash stands in for a value the daemon has not published. -->
@@ -102,25 +102,25 @@
          two properties; the daemon clamps the output. -->
     <string name="fan_limits_category">Fan speed limits</string>
     <string name="fan_limit_min_title">Minimum output</string>
-    <string name="fan_limit_min_summary">Below %1$d%% the fan stops completely</string>
-    <string name="fan_limit_min_summary_none">No low cut-off — the fan may run at any speed</string>
-    <string name="fan_limit_min_quiet_note">The built-in Quiet preset runs at %1$d %%, so any minimum above %1$d %% stops that preset completely</string>
+    <string name="fan_limit_min_summary">Fan stops below %1$d%%</string>
+    <string name="fan_limit_min_summary_none">No minimum speed</string>
+    <string name="fan_limit_min_quiet_note">Quiet runs at %1$d %%, so any minimum above %1$d %% stops it</string>
     <string name="fan_limit_max_title">Maximum output</string>
     <string name="fan_limit_max_summary">The fan never runs above %1$d%%</string>
-    <string name="fan_limit_max_summary_none">No upper limit — the fan may run at any speed</string>
+    <string name="fan_limit_max_summary_none">No maximum speed</string>
     <string name="fan_behaviour_category">Behaviour</string>
     <string name="fan_kick_title">Spin-up kick</string>
-    <string name="fan_kick_summary">Give the fan a short burst when it starts, so it spins up reliably</string>
+    <string name="fan_kick_summary">Brief burst when the fan starts so it spins up reliably</string>
     <string name="fan_screen_off_title">Fan off while the screen is off</string>
     <string name="fan_screen_off_summary">Resume with a kick when the screen comes back on</string>
     <string name="fan_performance_category">Performance</string>
     <string name="fan_throttle_title">Override throttling</string>
-    <string name="fan_throttle_summary_on">Software clock throttling is disabled until reboot</string>
-    <string name="fan_throttle_summary_off">Keep the kernel\'s thermal clock limits</string>
+    <string name="fan_throttle_summary_on">Throttling is off until the next reboot</string>
+    <string name="fan_throttle_summary_off">Keep the thermal clock limits</string>
     <string name="fan_throttle_summary_permanent">Applied at every boot</string>
-    <string name="fan_throttle_summary_unsupported">This kernel does not expose a throttling override</string>
+    <string name="fan_throttle_summary_unsupported">Not supported on this device</string>
     <string name="fan_throttle_confirm_title">Override throttling?</string>
-    <string name="fan_throttle_confirm_body">This disables the kernel\'s software clock throttling (thermal cooling devices) so the CPU and GPU stay at full clock while the handheld heats up. Hardware limits stay in place, but sustained heavy use can make the device dangerously hot, drain the battery and shorten its life. The override is forgotten at the next reboot.</string>
+    <string name="fan_throttle_confirm_body">Disables thermal clock throttling. The device can get dangerously hot, drain the battery and wear out faster. Resets at the next reboot.</string>
     <string name="fan_throttle_confirm_enable">Enable</string>
     <!-- GPU max frequency (docs/phase6.md §3) -->
     <string name="fan_gpu_title">GPU max frequency</string>
@@ -133,18 +133,18 @@
     <string name="fan_gpu_summary_overclock">%1$d MHz · overclock</string>
     <string name="fan_gpu_summary_value">%1$d MHz</string>
     <string name="fan_gpu_summary_actual">Actual %1$d MHz · requested %2$d MHz</string>
-    <string name="fan_gpu_summary_clamped">Requested %1$d MHz — the throttle override clamps the GPU to stock %2$d MHz.</string>
-    <string name="fan_gpu_summary_not_applied">Requested %1$d MHz — the daemon reports %2$d MHz; the OC step is not available.</string>
-    <string name="fan_gpu_summary_unavailable">Requested %1$d MHz — the GPU cap is not available (ashfall-hwd is not reporting).</string>
-    <string name="fan_gpu_summary_no_sysfs">Requested %1$d MHz — the GPU clock interface is unavailable on this kernel.</string>
-    <string name="fan_gpu_warning_fan">Sustained clocks depend on the fan and thermal throttling; the fan is not forced.</string>
-    <string name="fan_gpu_mock_note">Preview mock: this value is simulated, no daemon is involved.</string>
+    <string name="fan_gpu_summary_clamped">Requested %1$d MHz — using %2$d MHz while throttling is overridden</string>
+    <string name="fan_gpu_summary_not_applied">Requested %1$d MHz — running at %2$d MHz; this step is unavailable</string>
+    <string name="fan_gpu_summary_unavailable">Requested %1$d MHz — not available on this device</string>
+    <string name="fan_gpu_summary_no_sysfs">Requested %1$d MHz — GPU clock control is not supported here</string>
+    <string name="fan_gpu_warning_fan">High clocks rely on the fan; it is not forced</string>
+    <string name="fan_gpu_mock_note">Preview only: simulated value</string>
     <string name="fan_gpu_confirm_title">Run the GPU at 1000 MHz?</string>
-    <string name="fan_gpu_confirm_body">1000 MHz is outside Qualcomm\'s stock table and marginal on some SD865 units; 940 MHz is the common stable overclock. It raises the GPU voltage and needs the fan. If the device becomes unstable or too hot, select 940 MHz. The cap is applied by ashfall-hwd and survives a reboot.</string>
+    <string name="fan_gpu_confirm_body">1000 MHz is above Qualcomm\'s stock clocks and unstable on some units. It raises the GPU voltage and needs the fan. Choose 940 MHz if the device gets unstable or too hot.</string>
     <string name="fan_gpu_confirm_enable">Use 1000 MHz</string>
     <string name="fan_advanced_category">Advanced</string>
     <string name="fan_advanced_permanent_title">Keep throttling override after reboot</string>
-    <string name="fan_advanced_permanent_summary">Apply the throttling override at every boot. Dangerous if left on.</string>
+    <string name="fan_advanced_permanent_summary">Stays on after every reboot. Dangerous if left on.</string>
     <string name="fan_version_title">AshFall settings version</string>
     <string name="fan_version_summary">%1$s</string>
     <string name="fan_advanced_unlocked">Advanced settings unlocked</string>
@@ -168,7 +168,7 @@
     <string name="preset_change_mode">Change mode</string>
     <string name="fan_preset_none_custom">Custom</string>
     <string name="preset_delete_confirm">Delete “%1$s”?</string>
-    <string name="preset_delete_confirm_body">The preset is removed from this device.  The active fan settings stay as they are.</string>
+    <string name="preset_delete_confirm_body">Removed from this device. The current fan settings stay.</string>
     <string name="preset_rename_title">Preset name</string>
     <string name="preset_new_name">New preset</string>
     <string name="preset_reset_title">Reset presets</string>
@@ -179,7 +179,7 @@
     <string name="preset_limit">At most 32 presets</string>
 
     <!-- Curve editor -->
-    <string name="curve_hint">Drag a point, or focus the graph and use the D-pad.  A adds a point, X deletes the selected point.</string>
+    <string name="curve_hint">Drag a point, or use the D-pad. A adds a point, X deletes it.</string>
     <string name="curve_point_temp">%1$d °C</string>
     <string name="curve_point_pct">%1$d%%</string>
     <string name="curve_selected">Selected %1$d °C → %2$d%%</string>
@@ -191,11 +191,11 @@
     <string name="curve_live_marker">Current temperature %1$d °C → %2$d%%</string>
     <string name="curve_apply">Save curve</string>
     <string name="curve_stress_title">Stress test</string>
-    <string name="curve_stress_hint">Loads the CPU and GPU so the curve can be watched under heat. Stops when you leave this page or after 10 minutes.</string>
+    <string name="curve_stress_hint">Stops when you leave this page or after 10 minutes.</string>
     <string name="curve_stress_cpu">CPU load</string>
     <string name="curve_stress_gpu">GPU load</string>
     <string name="curve_stress_running">Running — stops automatically in %1$s</string>
-    <string name="curve_stress_gpu_unavailable">GPU load is not available on this device; the CPU load is still running.</string>
+    <string name="curve_stress_gpu_unavailable">GPU load is unavailable; the CPU load is still running.</string>
 
     <!-- Lighting -->
     <string name="lighting_switch_title">Lighting</string>
@@ -233,7 +233,7 @@
     <string name="controller_reset_cal_title">Reset to factory calibration</string>
     <string name="controller_reset_cal_summary">Delete the user calibration and use the factory values</string>
     <string name="controller_reset_cal_confirm">Reset the sticks to the factory calibration?</string>
-    <string name="controller_reset_cal_body">The user calibration in /data/misc/ashfall/joys is deleted.  The factory file is never modified.</string>
+    <string name="controller_reset_cal_body">Your calibration is deleted and the factory values are used instead.</string>
     <string name="controller_deadzone_category">Deadzones</string>
     <string name="controller_deadzone_inner">Inner deadzone</string>
     <string name="controller_deadzone_inner_summary">%1$d%% of stick travel is ignored around the centre</string>
@@ -246,41 +246,41 @@
     <string name="controller_cal_source_default">default</string>
     <string name="controller_cal_saved">Calibration saved</string>
     <string name="controller_cal_reset_done">User calibration deleted</string>
-    <string name="controller_cal_error">The input daemon refused the request: %1$s</string>
+    <string name="controller_cal_error">Could not apply the change</string>
 
     <!-- The tester strings (issue #84) live in values/strings_controller.xml. -->
 
     <!-- Calibration wizard -->
     <string name="cal_step_release_title">Let go of the sticks</string>
-    <string name="cal_step_release_body">Put the handheld down and do not touch the sticks or triggers.  The centre position is captured for 2 seconds.</string>
+    <string name="cal_step_release_body">Hold still and do not touch the sticks or triggers.</string>
     <string name="cal_step_rotate_title">Roll both sticks around the edge</string>
-    <string name="cal_step_rotate_body">Move both sticks slowly around their full circle a few times, then let them spring back to the centre.  Capturing for 8 seconds.</string>
+    <string name="cal_step_rotate_body">Roll both sticks slowly around their full circle a few times, then let go.</string>
     <string name="cal_step_trigger_title">Pull both triggers fully</string>
-    <string name="cal_step_trigger_body">Squeeze L2 and R2 all the way in and release them twice.  Capturing for 4 seconds.</string>
+    <string name="cal_step_trigger_body">Squeeze L2 and R2 all the way in and release them twice.</string>
     <string name="cal_step_review_title">Review and save</string>
-    <string name="cal_step_review_body">Check that every range looks sane.  Nothing is written until you press Save.</string>
+    <string name="cal_step_review_body">Check the ranges, then save.</string>
     <string name="cal_step_next">Next</string>
     <string name="cal_step_cancel">Cancel</string>
     <string name="cal_step_retry">Try again</string>
     <string name="cal_step_start">Start</string>
     <string name="cal_step_progress">%1$d s</string>
-    <string name="cal_error_socket">Cannot reach /dev/socket/ashfall_input.  Is ashfall-rp5-input running?</string>
-    <string name="cal_error_range">The sticks did not move far enough.  Roll both sticks around their full circle and try again.</string>
-    <string name="cal_error_trigger">The triggers did not travel far enough.  Pull L2 and R2 fully and try again.</string>
-    <string name="cal_error_no_input">No input samples arrived from ashfall-rp5-input.  Try again.</string>
+    <string name="cal_error_socket">The controller is not reachable. Try again.</string>
+    <string name="cal_error_range">The sticks did not move far enough. Roll both fully and try again.</string>
+    <string name="cal_error_trigger">The triggers did not move far enough. Pull L2 and R2 fully and try again.</string>
+    <string name="cal_error_no_input">No input received. Try again.</string>
     <string name="cal_review_axes">Left stick X</string>
     <string name="cal_review_min">min %1$s</string>
     <string name="cal_review_center">centre %1$s</string>
     <string name="cal_review_max">max %1$s</string>
     <string name="cal_review_not_captured">Not captured</string>
     <string name="cal_saved_title">Calibration saved</string>
-    <string name="cal_saved_body">ashfall-rp5-input is using the new calibration now.</string>
+    <string name="cal_saved_body">The new calibration is in use.</string>
 
     <!-- Power page (#124).  Every string the page, the tile and its dialog
          use carries the power_ prefix; the shared labels (cancel, done,
          duplicate, ...) come from the Common block above. -->
     <string name="power_status_title">Status</string>
-    <string name="power_status_unavailable">The power daemon is not responding.  The CPU/GPU load and clocks are unavailable until ashfall-hwd publishes them.</string>
+    <string name="power_status_unavailable">Live power data is unavailable.</string>
     <string name="power_legend_power">%1$s W</string>
     <string name="power_axis_watts">%1$d W</string>
     <string name="power_legend_cpu">CPU %1$s%%</string>
@@ -300,15 +300,15 @@
     <string name="power_cpu_silver_title">Silver cores</string>
     <string name="power_cpu_gold_title">Gold cores</string>
     <string name="power_cpu_prime_title">Prime core</string>
-    <string name="power_cpu_powersave_note">Inert: the powersave governor pins every policy to its lowest step and ignores these caps.</string>
+    <string name="power_cpu_powersave_note">Ignored while the powersave governor is selected.</string>
     <string name="power_governor_title">CPU governor</string>
-    <string name="power_governor_summary">%1$s · one governor for all three policies</string>
+    <string name="power_governor_summary">%1$s · all cores</string>
     <string name="power_governor_schedutil">schedutil (default)</string>
     <string name="power_governor_conservative">conservative</string>
     <string name="power_governor_powersave">powersave</string>
     <string name="power_governor_performance">performance</string>
-    <string name="power_governor_powersave_note">Pins every policy to its lowest step (300/710/844 MHz).  The cap sliders are inert while it is selected.</string>
-    <string name="power_governor_performance_note">Holds every policy at its maximum step.  The per-cluster caps still apply: the daemon never raises scaling_max_freq above them.</string>
+    <string name="power_governor_powersave_note">Pins all cores to their lowest step. The caps cannot be changed while it is selected.</string>
+    <string name="power_governor_performance_note">Holds all cores at maximum. The caps still apply.</string>
     <string name="power_gpu_title">GPU max frequency</string>
     <string name="power_gpu_value_305">305 MHz (preset minimum)</string>
     <string name="power_gpu_value_670">670 MHz (stock, default)</string>
@@ -316,34 +316,36 @@
     <string name="power_gpu_value_850">850 MHz</string>
     <string name="power_gpu_value_940">940 MHz</string>
     <string name="power_gpu_value_experimental">1000 MHz (experimental)</string>
-    <string name="power_gpu_summary_clamped">Requested %1$d MHz — the throttle override clamps the GPU to stock %2$d MHz.</string>
-    <string name="power_gpu_warning_fan">Sustained clocks depend on the fan and thermal throttling; the fan is not forced.</string>
+    <string name="power_gpu_summary_clamped">Requested %1$d MHz — using %2$d MHz while throttling is overridden</string>
+    <string name="power_gpu_warning_fan">High clocks rely on the fan; it is not forced</string>
     <string name="power_gpu_confirm_title">Run the GPU at 1000 MHz?</string>
-    <string name="power_gpu_confirm_body">1000 MHz is outside Qualcomm\'s stock table and marginal on some SD865 units; 940 MHz is the common stable overclock. It raises the GPU voltage and needs the fan. If the device becomes unstable or too hot, select 940 MHz. The cap is applied by ashfall-hwd and survives a reboot.</string>
+    <string name="power_gpu_confirm_body">1000 MHz is above Qualcomm\'s stock clocks and unstable on some units. It raises the GPU voltage and needs the fan. Choose 940 MHz if the device gets unstable or too hot.</string>
     <string name="power_gpu_confirm_enable">Use 1000 MHz</string>
     <string name="power_throttle_category">Throttling</string>
     <string name="power_throttle_title">Override throttling</string>
-    <string name="power_throttle_summary_on">Software clock throttling is disabled until reboot</string>
-    <string name="power_throttle_summary_off">Keep the kernel\'s thermal clock limits</string>
+    <string name="power_throttle_summary_on">Throttling is off until the next reboot</string>
+    <string name="power_throttle_summary_off">Keep the thermal clock limits</string>
     <string name="power_throttle_summary_permanent">Applied at every boot</string>
-    <string name="power_throttle_summary_unsupported">This kernel does not expose a throttling override</string>
+    <string name="power_throttle_summary_unsupported">Not supported on this device</string>
     <string name="power_throttle_confirm_title">Override throttling?</string>
-    <string name="power_throttle_confirm_body">This disables the kernel\'s software clock throttling (thermal cooling devices) so the CPU and GPU stay at full clock while the handheld heats up. Hardware limits stay in place, but sustained heavy use can make the device dangerously hot, drain the battery and shorten its life. The override is forgotten at the next reboot.</string>
+    <string name="power_throttle_confirm_body">Disables thermal clock throttling. The device can get dangerously hot, drain the battery and wear out faster. Resets at the next reboot.</string>
     <string name="power_throttle_confirm_enable">Enable</string>
     <string name="power_advanced_category">Advanced</string>
     <string name="power_advanced_permanent_title">Keep throttling override after reboot</string>
-    <string name="power_advanced_permanent_summary">Apply the throttling override at every boot. Dangerous if left on.</string>
+    <string name="power_advanced_permanent_summary">Stays on after every reboot. Dangerous if left on.</string>
+    <string name="power_advanced_permanent_confirm_title">Keep the override after reboot?</string>
+    <string name="power_advanced_permanent_confirm_body">The override switches back on at every boot, so the device can get dangerously hot, drain the battery and wear out faster. Turn it off when you no longer need it.</string>
     <string name="power_version_title">AshFall settings version</string>
     <string name="power_version_summary">%1$s</string>
     <string name="power_advanced_unlocked">Advanced settings unlocked</string>
     <string name="power_reset_title">Reset to stock</string>
-    <string name="power_reset_summary">Stock CPU caps, schedutil, the 670 MHz GPU and no throttling override</string>
+    <string name="power_reset_summary">Restore stock clocks and settings</string>
     <string name="power_reset_done">Reset to stock</string>
     <string name="power_rename_title">Preset name</string>
     <string name="power_delete_confirm">Delete “%1$s”?</string>
-    <string name="power_delete_body">The preset is removed from this device.  The active CPU caps, governor and GPU cap stay as they are.</string>
+    <string name="power_delete_body">Removed from this device. The active settings stay.</string>
     <string name="power_reset_presets_confirm">Reset every preset?</string>
-    <string name="power_reset_presets_body">The built-ins return to the Low power / Balanced / Performance table and every user preset is removed.  The active settings stay as they are.</string>
+    <string name="power_reset_presets_body">Built-in presets are restored and user presets removed. The active settings stay.</string>
     <string name="power_preset_limit">At most 32 presets</string>
     <string name="power_name_empty">Enter a name</string>
 
@@ -354,12 +356,12 @@
     <string name="power_editor_active_note">Active</string>
     <string name="power_editor_values_title">Values</string>
     <string name="power_editor_add_title">New preset</string>
-    <string name="power_editor_add_summary">Duplicate the active preset and edit the copy</string>
+    <string name="power_editor_add_summary">Copy the active preset as a starting point</string>
     <string name="power_editor_reset_title">Reset presets</string>
     <string name="power_editor_reset_summary">Restore the built-ins and delete every user preset</string>
     <string name="power_editor_apply_title">Apply this preset</string>
     <string name="power_editor_apply_active">This is the active preset</string>
-    <string name="power_editor_apply_inactive">Writes these values to the CPU caps, the governor and the GPU cap</string>
+    <string name="power_editor_apply_inactive">Apply these values to the device</string>
     <string name="power_editor_applied">Preset applied</string>
     <string name="power_editor_duplicate_summary">Create an editable copy of this preset</string>
     <string name="power_editor_delete_summary">Remove this preset from the list</string>
@@ -373,7 +375,7 @@
     <string name="power_home_watts">%1$s W</string>
     <string name="power_home_mhz">%1$d MHz</string>
     <string name="power_mhz_format">%d MHz</string>
-    <string name="power_footer">ashfall-hwd applies the caps, the governor and the GPU cap, and publishes the live values every 2 seconds (every 0.5 seconds while this page is open).  The graph plots the real CPU and GPU load; power is measured on the battery, so it reads — while charging.</string>
+    <string name="power_footer">Applied immediately.</string>
 
     <!-- Quick Settings -->
     <string name="tile_fan">Fan</string>
@@ -397,7 +399,7 @@
     <string name="tile_off">Off</string>
 
     <!-- Placeholder/footers -->
-    <string name="footer_fan">The daemon samples the hottest CPU/GPU sensor every 2 seconds (every 0.5 seconds while this page is open).  A fixed last-resort rule still runs the fan at 100 % at 90 °C.</string>
-    <string name="footer_controller">Deadzones are applied by ashfall-rp5-input after calibration, so every app and emulator sees them.</string>
-    <string name="footer_lighting">Effect changes are visible immediately.  Brightness 0 turns the rings off without changing the colour.</string>
+    <string name="footer_fan">Applied immediately.</string>
+    <string name="footer_controller">Applies to every app and emulator.</string>
+    <string name="footer_lighting">Changes apply immediately.</string>
 </resources>

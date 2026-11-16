@@ -38,8 +38,8 @@ page**, and nothing in the app or in `ashfall-hwd` reads or writes `zram0`.
 * The slider is `0 .. 16384 MB`, step 256 MB, and deliberately **not derived
   from RAM**: 16 GB is allowed on the 8 GB unit.  Verified on the 3 GB
   emulator, where the slider reaches 16384 MB.
-* The row always shows free space on `/data` (`4.5 GB free on /data`), and adds
-  `Larger than the free space on /data — ashfall-hwd will refuse it.` when the
+* The row always shows free space (`4.5 GB free`), and adds
+  `Leaves too little free storage — it will be refused.` when the
   request plus the daemon's 2 GB reserve does not fit.  The page **warns**, it
   does not clamp the write: the daemon is the single enforcement point
   (issue #141, "free-space guard"), and a clamp in two places is how the two
@@ -50,7 +50,7 @@ page**, and nothing in the app or in `ashfall-hwd` reads or writes `zram0`.
 * The app writes the property and nothing else.  `ashfall-hwd` owns the file,
   the `mkswap`/`swapon`/`swapoff` order and the boot re-apply, and it publishes
   what it actually applied.  A request the daemon has not (yet) applied is shown
-  as `Requested N MB — ashfall-hwd reports M MB` instead of being silently
+  as `Requested N MB — M MB in use` instead of being silently
   corrected in the UI.
 
 ## 3. The warning is part of the feature
@@ -59,10 +59,7 @@ Two permanent places, no way to opt out:
 
 1. **Row summary**, every time the page is open:
 
-   > A swapfile lives on the UFS flash: writes are orders of magnitude slower
-   > than RAM, the device will feel sluggish once it actually swaps, and heavy
-   > swapping wears the flash out. Swap is a last-resort overflow for memory
-   > pressure. It is much slower than RAM.
+   > Swap is far slower than RAM, and heavy use wears the storage out.
 
 2. **Confirmation before the first enable** (`onSwapSize` -> `confirmSwap`):
    `Create a swapfile?` with the same facts in plain words, the size, and
@@ -71,9 +68,8 @@ Two permanent places, no way to opt out:
    "do not show again" - the dialog cannot be dismissed into a state where the
    warning is gone.  Cancelling writes nothing and returns the slider to 0.
 
-Wording never presents swap as a performance option.  It is described as the
-last-resort overflow for memory pressure, and the dialog's last sentence says
-so explicitly ("not a performance option").
+The warning states the cost - slower than RAM, wears the storage out - and
+never presents swap as a performance option.
 
 ## 4. Live status and unavailable states
 
@@ -91,7 +87,7 @@ no sysfs node.
 | State | What the page shows |
 |---|---|
 | `swap_mb = -1` | swap slider disabled, `The swapfile is not available on this build` |
-| no daemon yet | status values `—`, the slider disabled, Handheld row `Not reporting` |
+| no daemon yet | status values `—`, the slider disabled, Handheld row `Unavailable` |
 | a status value is `-1` | that value renders as `—`; never a fabricated `0` |
 | `swap_mb = 0` | Swap status `Off`; `Free storage` still reports |
 
@@ -112,10 +108,10 @@ lease `emulator-memory` via `scripts/device/lock.sh`, daemon status mocked with
 | page rows, fresh install | `Status`: `Swap` `Off`, `Free storage` `4.7 GB free of 5.8 GB`; `Swapfile` -> `Swapfile size` `Off`; no other control on the page |
 | swap off -> on (D-pad to the slider, right) | `Create a swapfile?` with the warning; `persist.ashfall.mem.swap_mb` still empty; `Back`/`CANCEL` leaves it empty and the slider at `Off`; `CREATE` writes `256` |
 | D-pad step | `256 -> 512 MB`, one 256 MB step per right press; at `16128 MB` one more press gives `16384 MB` and further presses stop there |
-| free-space guard | at `16128/16384 MB` the row adds `Larger than the free space on /data — ashfall-hwd will refuse it.` (4.7 GB free) |
+| free-space guard | at `16128/16384 MB` the row adds `Leaves too little free storage — it will be refused.` (4.7 GB free) |
 | live status | `337 MB used of 1.0 GB` (feeder), `4.7 GB free of 5.8 GB` |
 | unavailable (`mem-status.sh start unavailable`) | Swap status `—`; the slider is `enabled=false` with `The swapfile is not available on this build`; D-pad right cannot change it |
-| Handheld row (`MemorySummary`) | `swap 1.0 GB`; `Not reporting` when swap is `-1` |
+| Handheld row (`MemorySummary`) | `Swap 1.0 GB`; `Unavailable` when swap is `-1` |
 | day / night | white page (5.0 % near-black) -> `(0,0,0)` page background, white text, 87.1 % of the screen near-black |
 | D-pad traversal | status rows and the footer are skipped (not selectable); `Swapfile size` is the only focus stop and stays reachable |
 
