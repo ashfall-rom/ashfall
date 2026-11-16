@@ -35,7 +35,6 @@ import android.widget.Toast;
 import androidx.core.content.ContextCompat;
 
 import org.ashfall.parts.hw.Led;
-import org.ashfall.parts.ipc.Props;
 import org.ashfall.parts.ui.ScreenLedSync;
 
 /**
@@ -215,8 +214,9 @@ public class LedSyncService extends Service {
         stopSelf();
     }
 
+    /** True only while the tester's suspend token keeps changing (#193). */
     private boolean suspended() {
-        return "1".equals(Props.get(Led.SUSPEND, "0"));
+        return Led.suspendActive();
     }
 
     private boolean screenOn() {

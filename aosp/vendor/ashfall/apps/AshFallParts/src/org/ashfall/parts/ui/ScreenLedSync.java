@@ -59,8 +59,14 @@ public final class ScreenLedSync {
     private static final int CAPTURE_WIDTH = 64;
     private static final int CAPTURE_HEIGHT = 36;
 
-    /** The daemon applies overrides at up to 29 Hz (docs/phase5.md §6.1). */
-    private static final long MIN_PUBLISH_MS = 34;
+    /**
+     * The daemon applies overrides at up to 29 Hz (docs/phase5.md §6.1).
+     * Publishing is paced with a millisecond budget instead of a fixed gate so
+     * a 30 Hz capture still publishes ~29 times a second instead of every
+     * second frame (issue #194).
+     */
+    private static final double MIN_PUBLISH_MS = 1000.0 / 29.0;
+    private static final double MAX_PUBLISH_BUDGET_MS = 2.0 * MIN_PUBLISH_MS;
     /** Contract (#94): the daemon ignores an override without a fresh heartbeat. */
     private static final long HEARTBEAT_MS = 400;
 
@@ -84,6 +90,8 @@ public final class ScreenLedSync {
     private final Context mContext;
     private final Listener mListener;
     private final Object mLock = new Object();
+    /** Serialises acquireLatestImage() against ImageReader.close() (#198). */
+    private final Object mReaderLock = new Object();
 
     private DisplayManager mDisplayManager;
     private VirtualDisplay mVirtualDisplay;
@@ -93,10 +101,14 @@ public final class ScreenLedSync {
 
     private volatile boolean mRunning;
     private long mLastFrameAt;
-    private long mLastPublishAt;
+    private double mPublishBudgetMs;
 
     private final float[] mLeft = new float[3];
     private final float[] mRight = new float[3];
+    /** Each ring holds its own last colour; one black half never leaks (#196). */
+    private volatile boolean mLeftValid;
+    private volatile boolean mRightValid;
+    private volatile boolean mGotFrame;
     private volatile boolean mHasColour;
     private long mStartedAt;
     private boolean mFailureReported;
@@ -146,7 +158,10 @@ public final class ScreenLedSync {
         }
 
         mLastFrameAt = 0;
-        mLastPublishAt = 0;
+        mPublishBudgetMs = 0;
+        mGotFrame = false;
+        mLeftValid = false;
+        mRightValid = false;
         mHasColour = false;
         mLeft[0] = mLeft[1] = mLeft[2] = 0f;
         mRight[0] = mRight[1] = mRight[2] = 0f;
@@ -170,7 +185,10 @@ public final class ScreenLedSync {
         // Serialised with publish() so a frame that was already in flight can
         // never re-latch the rings after this clear.
         synchronized (mLock) {
-            clearOverrideLocked();
+            clearOwnOverrideLocked();
+            mLeftValid = false;
+            mRightValid = false;
+            mHasColour = false;
         }
         release();
         if (wasRunning) {
@@ -196,18 +214,22 @@ public final class ScreenLedSync {
             }
             mVirtualDisplay = null;
         }
-        if (mReader != null) {
-            try {
-                mReader.setOnImageAvailableListener(null, null);
-            } catch (Throwable ignored) {
-                // Already closed.
-            }
-            try {
-                mReader.close();
-            } catch (Throwable ignored) {
-                // Already closed.
-            }
+        final ImageReader reader;
+        synchronized (mReaderLock) {
+            reader = mReader;
             mReader = null;
+        }
+        if (reader != null) {
+            try {
+                reader.setOnImageAvailableListener(null, null);
+            } catch (Throwable ignored) {
+                // Already closed.
+            }
+            try {
+                reader.close();
+            } catch (Throwable ignored) {
+                // Already closed.
+            }
         }
         if (mThread != null) {
             mThread.quitSafely();
@@ -241,9 +263,9 @@ public final class ScreenLedSync {
         if (handler != null) {
             handler.postDelayed(mHeartbeat, HEARTBEAT_MS);
         }
-        // If the virtual display exists but never delivers a frame, fail safe
-        // instead of staying silently dark.
-        if (!mHasColour && mStartedAt != 0
+        // Only "no frame at all" is a capture failure.  A stream of black
+        // frames is a hold, not an error (#195).
+        if (!mGotFrame && mStartedAt != 0
                 && SystemClock.elapsedRealtime() - mStartedAt > START_TIMEOUT_MS) {
             reportFailure("no frame within " + START_TIMEOUT_MS + " ms");
         }
@@ -269,13 +291,17 @@ public final class ScreenLedSync {
         }
         Image image = null;
         try {
-            image = reader.acquireLatestImage();
+            synchronized (mReaderLock) {
+                if (!mRunning || reader != mReader) {
+                    return;
+                }
+                image = reader.acquireLatestImage();
+            }
             if (image == null) {
                 return;
             }
-            if (!mRunning) {
-                return;
-            }
+            // A delivered frame proves the capture works, whatever it shows.
+            mGotFrame = true;
             final long now = SystemClock.elapsedRealtime();
             final long interval = 1000L / Math.max(1, Led.screenRate());
             if (now - mLastFrameAt < interval) {
@@ -285,6 +311,15 @@ public final class ScreenLedSync {
             }
             final long dt = mLastFrameAt == 0 ? interval : now - mLastFrameAt;
             mLastFrameAt = now;
+            if (Led.suspendActive()) {
+                // The gamepad tester owns the rings.  Stop publishing at once
+                // and clear only our own colour, never a foreign override
+                // (#192); the service also stops the sampler on its next tick.
+                synchronized (mLock) {
+                    clearOwnOverrideLocked();
+                }
+                return;
+            }
             process(image, dt);
         } catch (Throwable t) {
             if (!mRunning || reader != mReader) {
@@ -353,33 +388,41 @@ public final class ScreenLedSync {
         // Target Both = whole-frame dominant colour for both rings; Left/Right
         // keep the split (each ring follows its own half).
         final boolean both = org.ashfall.parts.Prefs.ledTarget(mContext) == Led.TARGET_BOTH;
-        float[] targetLeft = both ? dominant : left;
-        float[] targetRight = both ? dominant : right;
+        final float[] targetLeft = both ? dominant : left;
+        final float[] targetRight = both ? dominant : right;
 
-        // A half-screen black frame (secure surface on one side) holds that
-        // ring; a fully black frame holds both.
+        // A fully black frame (secure surface, DRM, panel off) holds both rings.
         if (targetLeft == null && targetRight == null) {
             return;
         }
-        if (targetLeft == null) {
-            targetLeft = targetRight;
-        } else if (targetRight == null) {
-            targetRight = targetLeft;
+
+        // Each ring is updated only from its own half.  A black half keeps
+        // that ring's last valid colour; it is never filled from the other
+        // half (#196).  Until a half has shown a usable colour at least once,
+        // nothing is published, so the rings keep the configured effect.
+        final float scale = smoothingScale(Led.speed());
+        if (targetLeft != null) {
+            if (!mLeftValid) {
+                copy(targetLeft, mLeft);
+                mLeftValid = true;
+            } else {
+                smooth(targetLeft, mLeft, dtMs, scale);
+            }
+        }
+        if (targetRight != null) {
+            if (!mRightValid) {
+                copy(targetRight, mRight);
+                mRightValid = true;
+            } else {
+                smooth(targetRight, mRight, dtMs, scale);
+            }
         }
 
-        if (!mHasColour) {
-            // First usable frame: start at the target instead of fading up
-            // from black.
-            copy(targetLeft, mLeft);
-            copy(targetRight, mRight);
-            mHasColour = true;
-        } else {
-            final float scale = smoothingScale(Led.speed());
-            smooth(targetLeft, mLeft, dtMs, scale);
-            smooth(targetRight, mRight, dtMs, scale);
+        if (!mLeftValid || !mRightValid) {
+            return;
         }
-
-        publish();
+        mHasColour = true;
+        publish(dtMs);
     }
 
     /** sRGB 0..1 including the ring boost; a black frame never reaches here. */
@@ -427,7 +470,7 @@ public final class ScreenLedSync {
         return Math.max(0.25f, 1f + (5 - speed) * 0.12f);
     }
 
-    private void publish() {
+    private void publish(long dtMs) {
         final int brightness = Led.brightness();
         final int rLeft = scale(mLeft[0], brightness);
         final int gLeft = scale(mLeft[1], brightness);
@@ -438,21 +481,33 @@ public final class ScreenLedSync {
         final String value = String.format(Locale.US, "%02X%02X%02X:%02X%02X%02X",
                 rLeft, gLeft, bLeft, rRight, gRight, bRight);
 
+        // Last check before every write: the tester may have taken the rings
+        // over since the frame was captured (#192).  Read it before taking the
+        // publish lock (Led keeps its own lock) and act on it inside.
+        final boolean suspended = Led.suspendActive();
         synchronized (mLock) {
             if (!mRunning || !mHasColour) {
                 return;
             }
-            final long now = SystemClock.elapsedRealtime();
-            if (now - mLastPublishAt < MIN_PUBLISH_MS) {
+            if (suspended) {
+                clearOwnOverrideLocked();
                 return;
             }
-            mLastPublishAt = now;
+            // Publish pacing: a time budget, not a fixed gate, so the 30 Hz
+            // setting writes ~29 times a second (one skipped frame in ~30)
+            // rather than every second frame (issue #194).
+            mPublishBudgetMs = Math.min(MAX_PUBLISH_BUDGET_MS,
+                    mPublishBudgetMs + Math.max(0, dtMs));
             // Only write when the final colours (brightness included) change;
             // the daemon applies every override to both rings.
             if (value.equals(mLastValue)) {
                 writeHeartbeatLocked();
                 return;
             }
+            if (mPublishBudgetMs < MIN_PUBLISH_MS) {
+                return;
+            }
+            mPublishBudgetMs -= MIN_PUBLISH_MS;
             mLastValue = value;
             Props.set(OVERRIDE, value);
             writeHeartbeatLocked();
@@ -468,22 +523,23 @@ public final class ScreenLedSync {
         Props.set(OVERRIDE_LIVE, Long.toString(SystemClock.elapsedRealtime()));
     }
 
-    private void clearOverrideLocked() {
-        // Only touch the properties while the override is still ours: the
-        // gamepad tester shares ashfall.ui.led_override and may have taken the
-        // rings over already.  Leaving its colour and token alone is what keeps
-        // the tester unharmed when this sampler stops.
+    /**
+     * Clears the override and heartbeat <b>only while they are still ours</b>.
+     * The gamepad tester shares both properties; when it has taken the rings
+     * over, its colour and token are left untouched (#192).
+     */
+    private void clearOwnOverrideLocked() {
+        if (mLastValue.isEmpty()) {
+            // Nothing of ours is published; leave foreign values and the
+            // heartbeat completely alone.
+            return;
+        }
         final String current = Props.get(OVERRIDE, "");
-        final boolean ours = mLastValue.isEmpty() || current.isEmpty()
-                || current.equals(mLastValue);
-        if (ours) {
-            if (!mLastValue.isEmpty()) {
-                Props.set(OVERRIDE, "");
-            }
+        if (current.isEmpty() || current.equals(mLastValue)) {
+            Props.set(OVERRIDE, "");
             Props.set(OVERRIDE_LIVE, "");
         }
         mLastValue = "";
-        mHasColour = false;
     }
 
     private static int scale(float value, int brightness) {

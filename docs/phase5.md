@@ -301,13 +301,18 @@ configured lighting as soon as the override stops.
   colour.
 * **Override contract**: publishes `ashfall.ui.led_override` and refreshes the
   changing `ashfall.ui.led_override_live` token every 400 ms; `ashfall-hwd`
-  ignores the override after 1.5 s without a fresh token (#94/#171).
+  ignores the override after 1.5 s without a fresh token (#94/#171).  Publishing
+  is paced by a time budget so the selected 10/15/30 Hz rate is honoured while
+  never exceeding 29 writes per second.  While the gamepad tester is visible its
+  changing `ashfall.ui.led_suspend` token pauses the sampler (checked before
+  every write, 1.5 s timeout), and the sampler only ever clears its own override
+  value, never a value another publisher wrote (#192/#193).
 * **Lifecycle**: `LedSyncService` (`specialUse` foreground service, "LED screen
   sync" notification with a Stop action) is started only while the effect is
   selected, never at boot; sampling runs only while the panel is on and the
   service stays alive while paused so it resumes on screen-on.  Sampling pauses
   and the override plus heartbeat are cleared on: effect change, lighting off,
-  screen off/doze, the gamepad tester taking over (`ashfall.ui.led_suspend=1`),
+  screen off/doze, the gamepad tester taking over (a fresh `ashfall.ui.led_suspend` token),
   the Stop action, service destruction and a capture failure.  A failure also
   switches the effect off, restores the previous effect and shows a short
   message.

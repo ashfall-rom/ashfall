@@ -16,6 +16,8 @@
 
 package org.ashfall.parts.hw;
 
+import android.os.SystemClock;
+
 import org.ashfall.parts.ipc.Props;
 
 /**
@@ -43,10 +45,13 @@ public final class Led {
     /** Capture rate of the screen sampler, frames per second: 10 (default) / 15 / 30. */
     public static final String SCREEN_RATE = "persist.ashfall.led.screen_rate";
     /**
-     * Non-persistent: {@code 1} while the gamepad tester owns the rings.  Screen
-     * sync pauses sampling and clears its override while it is set (#167).
+     * Non-persistent suspend token of the gamepad tester (#167).  It changes
+     * every 500 ms while the tester is visible, so a killed tester cannot pause
+     * screen sync forever; {@link #suspendActive()} applies the same 1.5 s
+     * window the daemon uses for the override heartbeat (#193).
      */
     public static final String SUSPEND = "ashfall.ui.led_suspend";
+    public static final long SUSPEND_TIMEOUT_MS = 1500;
 
     public static final String MODE_OFF = "off";
     public static final String MODE_STATIC = "static";
@@ -74,6 +79,9 @@ public final class Led {
     public static final String[] MODES = {
             MODE_OFF, MODE_STATIC, MODE_BREATHING, MODE_RAINBOW, MODE_DUO
     };
+
+    private static long sSuspendToken;
+    private static long sSuspendAt;
 
     private Led() {
     }
@@ -116,6 +124,33 @@ public final class Led {
     /** Raw flag; the service uses this so it can clean up after lighting off. */
     public static boolean screenSyncFlag() {
         return Props.getBoolean(SCREEN_SYNC, false);
+    }
+
+    /**
+     * True while the gamepad tester's suspend token keeps changing within
+     * {@link #SUSPEND_TIMEOUT_MS}.  A stale token (tester killed) is inactive,
+     * so Match screen resumes on its own (#193).
+     */
+    public static synchronized boolean suspendActive() {
+        final String value = Props.get(SUSPEND, "");
+        if (value.isEmpty()) {
+            sSuspendToken = 0;
+            sSuspendAt = 0;
+            return false;
+        }
+        long token;
+        try {
+            token = Long.parseLong(value);
+        } catch (NumberFormatException e) {
+            token = value.hashCode();
+        }
+        final long now = SystemClock.elapsedRealtime();
+        if (token != sSuspendToken) {
+            sSuspendToken = token;
+            sSuspendAt = now;
+            return true;
+        }
+        return sSuspendAt != 0 && now - sSuspendAt <= SUSPEND_TIMEOUT_MS;
     }
 
     public static void setScreenSync(boolean on) {

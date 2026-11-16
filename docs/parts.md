@@ -335,7 +335,10 @@ contract does not change — the sampler is one more publisher of
 
 * **Target Both** = whole-frame dominant colour on both rings.  **Left/Right**
   keep the split: the left half drives the left ring, the right half the right
-  ring.  One colour per ring, no per-LED zones.
+  ring, and each ring holds its own last colour when its half goes black — one
+  black half is never filled from the other (#196).  Until a half has shown a
+  colour at least once, nothing is published and the configured effect stays.
+  One colour per ring, no per-LED zones.
 * Capture: `DisplayManager.createVirtualDisplay` with
   `VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR` into an `ImageReader` (RGBA_8888, 64×36),
   `CAPTURE_VIDEO_OUTPUT`.  No MediaProjection, no consent dialog.
@@ -346,13 +349,18 @@ contract does not change — the sampler is one more publisher of
   panel off) holds the last colour.
 * `ashfall.ui.led_override_live` carries a changing token refreshed every
   400 ms while the override is owned, so a dead sampler cannot latch the rings
-  (#94/#171).
+  (#94/#171).  Publishing is paced by a time budget: 10 and 15 Hz write every
+  frame, 30 Hz writes ~29 times a second (≤ 29 Hz, #194).
 * `LedSyncService` is a `specialUse` foreground service with a minimal "LED
   screen sync" notification and a Stop action.  It starts only while Match
-  screen is selected, never at boot, and pauses sampling (clearing the override
-  and heartbeat) while the panel is off, while the gamepad tester is visible
-  (`ashfall.ui.led_suspend=1`), and on the Stop action.  It stays alive while
-  paused so it can resume on screen-on without a new user action.
+  screen is selected, never at boot, and pauses sampling (clearing its own
+  override and heartbeat) while the panel is off and on the Stop action.  The
+  gamepad tester owns the rings while it is visible: it refreshes a changing
+  `ashfall.ui.led_suspend` token every 500 ms, the sampler checks it before
+  every write, clears only its own colour, and treats a token that stops
+  changing (tester killed) as released after 1.5 s (#192/#193).  The service
+  stays alive while paused so it can resume on screen-on without a new user
+  action.
 * If capture cannot start, the effect switches itself off, the previous effect
   returns and a short message says so.  Every exit clears the override and the
   heartbeat.
