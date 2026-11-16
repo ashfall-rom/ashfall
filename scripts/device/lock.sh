@@ -272,6 +272,11 @@ do_run() {
     sleep 2
   done
   printf 'running under lease %s as %s: %s\n' "$NAME" "$owner" "$*" >&2
+  # The guard in lib/device.sh accepts the calls the child makes only when it
+  # can match this name against the lease holder; without the export every
+  # adb/fastboot call inside the command died with "device busy" even though
+  # the lease was ours.
+  export ASH_DEVICE_OWNER=$owner
   trap 'do_release "'"$owner"'" >/dev/null 2>&1 || true' INT TERM
   "$@" || rc=$?
   trap - INT TERM
