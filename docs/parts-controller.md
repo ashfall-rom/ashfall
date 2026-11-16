@@ -66,7 +66,8 @@ and reads the two replies (`OK`, or `ERR <reason>` -> `onGrabFailed`) with an
 grabbed:
 
 * the daemon releases all held inputs and injects nothing into uinput;
-* the tester's only input is the `RAW` frame (`lx ly rx ry l2 r2 buttons_hex`);
+* the tester's only input is the `RAW` frame, drawn as `lx`/`ly`, `rx`/`ry`,
+  `l2`/`r2`, `buttons 0x…` and `cal <source>`;
 * `UI` key events do not arrive at all, which is the point: Home, Back and
   Select can be shown without the system consuming them first.
 
@@ -187,7 +188,9 @@ Schema v1 (all values are floats, sizes relative to the view):
 * Rectangles (`l1`, `r1`, `l2`, `r2`, `back`, `home`, `select`, `start`) use the
   full `w` (fraction of width) and `h` (fraction of height), centred on `x`/`y`.
   L2/R2 are drawn as vertical bars whose fill is the exact analog value.
-* `status` is the origin of the RAW/calibration/GRAB text block.
+* `status` is the origin of the tester's **Input** block: the `lx`/`ly`,
+  `rx`/`ry` and `l2`/`r2` counts, `buttons 0x…`, `cal <source>` and
+  `Captured`/`Released`.
 
 `TesterLayout.load()` reads `R.raw.tester_layout` and validates every field:
 missing, non-numeric or out-of-range values fall back to the built-in defaults

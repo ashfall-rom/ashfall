@@ -25,7 +25,7 @@ import org.ashfall.parts.ipc.FusionClient;
 
 /**
  * Live summary of the Controller row: the deadzones plus the fusion state on
- * one line ("Stick deadzone 5% · 3% · 2 pads -> Fusion").
+ * one line ("Stick deadzone 5% · 3% · 2 pads · Fusion").
  *
  * <p>The fusion state needs a socket round trip, and the homepage summarizes
  * every row from the UI thread on its 3 s tick.  The pad list therefore comes
