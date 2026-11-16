@@ -55,7 +55,9 @@ import java.util.concurrent.atomic.AtomicReference;
  *
  * <p>The stick rings react to the activity of their own half through
  * {@code ashfall.ui.led_override}; normal lighting is restored in
- * {@code onPause}.
+ * {@code onPause}.  {@link LedFeedback#start()} keeps the matching heartbeat
+ * ({@code ashfall.ui.led_override_live}) fresh while the tester is active, so
+ * a force-stop also returns the rings to the configured lighting (#94).
  */
 public class TesterActivity extends PartsActivity {
 
@@ -105,6 +107,11 @@ public class TesterActivity extends PartsActivity {
     @Override
     protected void onResume() {
         super.onResume();
+        if (mLed != null) {
+            // Keeps ashfall.ui.led_override_live fresh while the tester owns
+            // the override, so a force-stop cannot latch the colours (#94).
+            mLed.start();
+        }
         startRaw();
     }
 

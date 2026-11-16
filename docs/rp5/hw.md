@@ -127,8 +127,8 @@ Phase 5 v2 additions (docs/phase5.md §6.1):
 | `persist.ashfall.fan.kick` | `1`/`0` | `1` | spin-up kick after the fan was stopped |
 | `persist.ashfall.fan.kick_pct` | 10..60 | `30` | kick level (never 100 %) |
 | `persist.ashfall.fan.screen_off` | `off`/`run` | `off` | `off` stops the fan while the screen is off; `run` keeps it running |
-| `ashfall.ui.fan_live` | `1` | empty | status every 500 ms instead of 2 s while a fan UI is visible |
-| `ashfall.ui.fan_preview_curve` | curve string | empty | while non-empty and mode=`smart`, used instead of `persist.ashfall.fan.curve` (live editor preview; the app clears it) |
+| `ashfall.ui.fan_live` | `1` | empty | status every 500 ms instead of 2 s while a fan UI is visible; also the heartbeat that keeps the live preview valid (refreshed every 500 ms) |
+| `ashfall.ui.fan_preview_curve` | curve string | empty | while non-empty, mode=`smart` and `ashfall.ui.fan_live` is fresh (<1.5 s), used instead of `persist.ashfall.fan.curve` (live editor preview; the app clears it, and hwd drops it after 1.5 s without a heartbeat) |
 
 Phase 5 v3 additions (docs/phase5.md §7.1, issue #121):
 
@@ -335,6 +335,66 @@ Animation runs at 50 fps in the daemon.  The hardware `breath` attribute is
 **not used**: it is `--w--w---- root root` (root-only, and only a fixed
 breath effect - no `duo`/`rainbow`, no exact period).  Software animation gives
 the documented periods and effects.
+
+### UI override heartbeat (issue #94)
+
+Both UI-owned overrides can outlive their writer: a force-stop, an ANR kill or
+an app crash never runs the `clear()` path that resets the property, and the
+values are deliberately non-persistent, which resets them at reboot but not
+within a boot.  A property that stays non-empty would otherwise latch the
+hardware indefinitely (rings stuck on the tester's last colour, fan stuck on a
+preview curve from a closed editor).
+
+The publishers therefore refresh a companion liveness property while they own
+the value:
+
+| value | heartbeat | publisher cadence |
+|---|---|---|
+| `ashfall.ui.led_override` | `ashfall.ui.led_override_live=1` | `LedFeedback` (gamepad tester) every 500 ms, even while the colour is unchanged; the tick stops on `onPause`/`clear()` and on force-stop |
+| `ashfall.ui.fan_preview_curve` | `ashfall.ui.fan_live=1` | `CurveActivity`/fan UI 500 ms tick, already required for the live status cadence; the preview is cleared on close |
+
+`ashfall-hwd` samples both heartbeats on every loop tick (the loop already
+wakes at least every 500 ms via `IDLE_WAIT_MS`, and `prop_wait_any()` wakes it
+on any property write).  A value is honoured only while its heartbeat is at
+most **1.5 s** old, i.e. after three missed 500 ms beats:
+
+* `ashfall.ui.led_override`: dropped, `force_led` re-applies the configured
+  `persist.ashfall.led.*` mode/colours; one `ui: ashfall.ui.led_override
+  expired ...` warning is logged per transition.
+* `ashfall.ui.fan_preview_curve`: dropped and `persist.ashfall.fan.curve` is
+  used again on the next control tick (`ui: ashfall.ui.fan_preview_curve
+  expired ...`).  A live publisher is unaffected because its own writes make
+  the value fresh again.  The expired preview is not honoured again until the
+  property itself is rewritten, because `ashfall.ui.fan_live` is shared by
+  every fan page: another page's heartbeat must not revive a curve that a
+  force-stopped editor left behind.  The editor rewrites the preview in
+  `publishPreview()` on resume and on every edit, and it already keeps
+  `persist.ashfall.fan.curve` equal to the preview while editing, so dropping
+  a leftover preview never changes the effective curve.
+
+A fresh heartbeat plus a value is honoured again immediately (next loop tick);
+there is no mode change and no reboot requirement.  With the publisher gone
+the daemon's worst-case detection latency is the 1.5 s timeout plus one 500 ms
+loop tick (~2 s).  Timing is measured on the daemon's `CLOCK_MONOTONIC`
+(`ah_now_ms()`); the app's wall clock is never compared, and the heartbeat is
+detected from the property's write serial (`__system_property_serial`), which
+the property service bumps even for an identical value - a constant `1` is
+therefore a valid heartbeat.  Empty values never need a heartbeat.  The
+property type (`ashfall_ui_prop`), labels and `system_app` -> `ashfall_hwd`
+permissions are unchanged.
+
+**Verification (no device needed for the property logic):**
+
+```sh
+# simulate a dead publisher: the override is set but its heartbeat is not
+# refreshed, so the daemon must ignore it after 1.5 s
+adb shell 'setprop ashfall.ui.led_override FF0000:0000FF; \
+           setprop ashfall.ui.led_override_live 1'
+# keep refreshing for <1.5 s, then stop: the daemon must log the expiry once
+adb shell 'for i in 1 2 3; do setprop ashfall.ui.led_override_live 1; sleep 0.5; done'
+adb shell 'logcat -d -s ashfall-hwd | grep expired'
+adb shell getprop ashfall.ui.led_override   # still set; the daemon ignores it
+```
 
 ### Boot ordering and write retries (issue #69)
 

@@ -55,6 +55,10 @@ public class FanDialog extends Dialog {
     private final Runnable mTick = new Runnable() {
         @Override
         public void run() {
+            // Also the heartbeat that keeps a live preview curve valid: the
+            // daemon expires ashfall.ui.fan_preview_curve after 1.5 s without
+            // a fresh ashfall.ui.fan_live write (issue #94).
+            Fan.refreshLive();
             updateSubtitle();
             mHandler.postDelayed(this, 500);
         }
