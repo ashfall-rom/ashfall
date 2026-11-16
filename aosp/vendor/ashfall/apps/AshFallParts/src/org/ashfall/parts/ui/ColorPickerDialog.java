@@ -131,7 +131,7 @@ public class ColorPickerDialog extends Dialog {
             window.addFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND);
             window.clearFlags(WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE);
             Ui.fitDialog(window, findViewById(R.id.picker_root),
-                    findViewById(R.id.picker_scroll), 480, 0f);
+                    findViewById(R.id.picker_scroll), 0f);
         }
         mPicker.requestFocus();
     }

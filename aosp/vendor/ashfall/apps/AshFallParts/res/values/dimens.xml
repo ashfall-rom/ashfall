@@ -24,7 +24,14 @@
     <dimen name="fan_legend_swatch">10dp</dimen>
     <dimen name="swatch_size">40dp</dimen>
     <dimen name="swatch_gap">10dp</dimen>
-    <dimen name="dialog_width">480dp</dimen>
+    <!-- The one width of every floating dialog: the Fan, Lighting, Power and
+         Fusion Quick Settings cards and the colour picker.  The window is sized
+         from this dimen by ui.Ui.fitDialog()/qs.FusionDialog.fitWindow() and the
+         layout roots are match_parent, so the content can never be laid out
+         wider than the card and clipped on the end edge (#166).  440 dp is the
+         width the Quick Settings panel gives the dialog window on the RP5 at
+         360 dpi (990 px), so requesting it does not get clamped. -->
+    <dimen name="dialog_width">440dp</dimen>
     <dimen name="dialog_padding">24dp</dimen>
     <dimen name="dialog_corner">28dp</dimen>
     <dimen name="curve_height">260dp</dimen>

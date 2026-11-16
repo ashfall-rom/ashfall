@@ -61,6 +61,20 @@ public final class Ui {
                 context.getResources().getDisplayMetrics()));
     }
 
+    /**
+     * The one width of the app's floating dialogs, from
+     * {@code R.dimen.dialog_width}.
+     *
+     * <p>Every dialog root is {@code match_parent} and every window is sized
+     * from this dimen, so the card (the window background) and the content it
+     * holds always agree.  Before #166 each window passed a hardcoded 440 dp
+     * while the roots were laid out at 480 dp: 40 dp of content, including the
+     * whole end inset, sat outside the rounded card and was clipped.
+     */
+    public static int dialogWidth(Context context) {
+        return context.getResources().getDimensionPixelSize(R.dimen.dialog_width);
+    }
+
     public static String presetName(Context context, Preset preset) {
         if (preset == null) {
             return context.getString(R.string.fan_preset_none);
@@ -182,20 +196,23 @@ public final class Ui {
      *   <li>before the window is attached, with the display height as the
      *       bound.  This is right for a dialog whose window may be as tall as
      *       the screen (the colour picker, the Fan dialog);</li>
-     *   <li>in a one-shot post-layout pass, with the height the window really
-     *       got.  A Quick Settings tile dialog is hosted inside the QS panel,
-     *       which clamps it to the panel, and the old code kept the content at
-     *       the requested height: the last row and the Done button were laid
-     *       out past the rounded card and clipped (#156 §15; the Fan, Lighting,
-     *       Power and colour-picker dialogs share this helper).  The second pass
-     *       recomputes the real chrome from an unbounded measure and gives the
-     *       list exactly the space that is left.</li>
+     *   <li>in a one-shot post-layout pass, with the height and width the window
+     *       really got.  A Quick Settings tile dialog is hosted inside the QS
+     *       panel, which clamps it, and the old code kept the content at the
+     *       requested size: the last row and the Done button were laid out past
+     *       the rounded card and clipped (#156 §15; the Fan, Lighting, Power and
+     *       colour-picker dialogs share this helper).  The second pass
+     *       recomputes the real chrome from an uncapped measure at the real
+     *       width and gives the list exactly the space that is left.</li>
      * </ol>
+     *
+     * <p>The width is not a parameter: it is {@link #dialogWidth(Context)}, the
+     * same dimen the layout roots are sized from (#166).
      */
     public static void fitDialog(@NonNull Window window, @NonNull View root,
-            @Nullable View scroll, int widthDp, float minFraction) {
+            @Nullable View scroll, float minFraction) {
         final Context context = root.getContext();
-        final int width = dp(context, widthDp);
+        final int width = dialogWidth(context);
         final int screen = usableHeight(root);
         final int minHeight = Math.max(dp(context, 160),
                 Math.round(screen * Math.max(0f, minFraction)));
@@ -253,13 +270,22 @@ public final class Ui {
     }
 
     /**
-     * Fits the dialog to the real window height: the list gets
+     * Fits the dialog to the real window size: the list gets
      * {@code actual - chrome} where the chrome is the header and footer measured
-     * without a cap, so the footer is always inside the card.
+     * without a cap, so the footer is always inside the card.  A window the
+     * window manager clamped narrower than {@code width} (a Quick Settings
+     * dialog is hosted inside the panel) is measured at the width it really
+     * got, because the root is {@code match_parent} and its text has re-wrapped
+     * at that width (#166).
      */
     private static void applyRealHeight(Window window, View root, View scroll, int width,
             int minHeight, int actual) {
         final Context context = root.getContext();
+        final View decor = window.getDecorView();
+        final int decorWidth = decor.getWidth();
+        if (decorWidth > 0) {
+            width = decorWidth;
+        }
         final int floor = dp(context, 96);
         final int tolerance = dp(context, 2);
         final int bound = root.getResources().getDisplayMetrics().heightPixels * 4;

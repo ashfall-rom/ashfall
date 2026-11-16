@@ -231,10 +231,13 @@ taller than the cap, the measured "natural" height equalled the cap, so the old
 `target != natural` test skipped the list sizing entirely.
 
 Evidence (1080p, 360 dpi): the window frame is `[465,150][1455,930]` and the
-Power dialog's Done button lands at `[519,795][1455,903]` - fully inside the
+Power dialog's Done button lands at `[519,795][1401,903]` - fully inside the
 card with the 12 dp bottom padding - for the day and night themes.  The last
 footer row ("Edit presets") is at `678..786`, and only the preset list itself
-scrolls when there are more presets than fit.
+scrolls when there are more presets than fit.  (The `x2` of Done and of every
+end-aligned widget is `1401` rather than the card's `1455` since #166: the card
+and its content now share one width, `@dimen/dialog_width`, so the 24 dp end
+inset is inside the card instead of being clipped by it.)
 
 ## 6. Stress test (#156 §4)
 
@@ -336,11 +339,12 @@ installed, mock on (`tools/mock/power-perf.sh on`), 2026-11-15.
   `Quietishi`, Delete removed it from the store and popped back to the list.
 * **QS dialog.**  `cmd statusbar expand-settings` + `click-tile` opened the
   dialog with the live header `5.1 W · CPU 2224 · GPU 603 MHz`, the four
-  presets, `Edit presets` and `DONE`; `DONE` is `[519,795][1455,903]` inside the
-  `[465,150][1455,930]` window, in both themes.  The D-pad walked Low power →
+  presets, `Edit presets` and `DONE`; `DONE` is `[519,795][1401,903]` inside the
+  `[465,150][1455,930]` window (the `1401` is the #166 fix: the content is
+  inset 24 dp from the card edge), in both themes.  The D-pad walked Low power →
   Balanced → Performance → the user preset → Edit presets → DONE.  The Fan
   dialog, which shares `Ui.fitDialog`, still fits (`DONE` at
-  `[519,795][1455,903]` in the same `990x780` window).
+  `[519,795][1401,903]` in the same `990x780` window).
 * **Pure black.**  The LineageOS pure-black RRO only exists on the device image,
   but this AVD's night theme is already `#000000`; the page and the editor were
   captured on it and every colour comes from the theme or the graph's own

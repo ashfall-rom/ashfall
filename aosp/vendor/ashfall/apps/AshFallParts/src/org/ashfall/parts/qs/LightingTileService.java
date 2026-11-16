@@ -30,6 +30,9 @@ import org.ashfall.parts.ui.Ui;
  */
 public class LightingTileService extends TileService {
 
+    /** One dialog at a time: a burst of taps must not stack dialogs (#166). */
+    private final DialogGate mGate = new DialogGate("Lighting");
+
     @Override
     public void onStartListening() {
         super.onStartListening();
@@ -44,6 +47,11 @@ public class LightingTileService extends TileService {
 
     @Override
     public void onClick() {
+        // A second tap while the first dialog is still being attached is a
+        // no-op instead of a second stacked dialog (#166).
+        if (!mGate.begin()) {
+            return;
+        }
         if (isLocked()) {
             unlockAndRun(this::showLightingDialog);
         } else {
@@ -53,10 +61,13 @@ public class LightingTileService extends TileService {
 
     public void showLightingDialog() {
         if (isLocked()) {
+            // The unlockAndRun started by the tap never ran, so nothing will
+            // reopen the gate: release it here or the tile stays dead.
+            mGate.release();
             return;
         }
         final LightingDialog dialog = new LightingDialog(this, this::updateTile);
-        showDialog(dialog);
+        showDialog(mGate.track(dialog));
     }
 
 

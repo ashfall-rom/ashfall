@@ -113,6 +113,11 @@ One tile, following the Fan/Lighting pattern:
   ready for that shared helper — the local copy in `FusionDialog.fitWindow`
   measures the uncapped height first and uses the window metrics, both of which
   the helper needs before this dialog can switch to it.
+* The width is not a local number: `fitWindow()` sizes the window from
+  `@dimen/dialog_width` through `Ui.dialogWidth()`, like `Ui.fitDialog()`, and
+  the root is `match_parent` (#166).  Taps are serialised by the shared
+  `qs/DialogGate` (docs/parts.md §3), so a burst of taps after a boot opens one
+  dialog instead of a stack.
 
 ## 4. Socket protocol
 
@@ -215,6 +220,38 @@ and the card, and the pad list must be the only scrolling view.  Values are
 * Daemon unavailable (mock killed with the dialog open): same geometry, the
   state line reads `daemon unavailable` and the pad list is replaced by the
   note, with Done still inside the card.
+
+**#166 (dialog width and tap gate).**  The window is now sized from
+`@dimen/dialog_width` (440 dp) and the root is `match_parent`, so every
+end-aligned widget stops at the card's 24 dp inset instead of at the card edge:
+subtract 54 px (24 dp at 360 dpi) from the `x2` of the switch, **More settings**
+and **Done** in the table above (`1455 → 1401`).  The card is unchanged at
+990 px; content keeps its 54 px inset on both sides (`519 … 1401`).  Re-measured
+on the same AVD (preview build, `cmd statusbar add-tile` + `click-tile`), in the
+daemon-unavailable state so the collapsed card is shorter than the 2-pad run
+above:
+
+| Element | After #166 |
+|---|---|
+| card (window) | `[465,225][1455,855]` |
+| `fusion_qs_root` | `[465,225][1455,752]` |
+| switch | `[1295,271][1401,379]` |
+| `fusion_qs_scroll` | `[519,398][1401,480]` |
+| `fusion_qs_rescan` | `[519,500][805,608]` |
+| `fusion_qs_more` | `[1154,500][1401,608]` |
+| Done | `[519,617][1401,725]` |
+
+The card is 630 px here because Fusion keeps a 280 dp minimum height, not
+because of the fit helper; with two pads the natural height wins as recorded
+above.
+The gate is proven on the same AVD: six `click-tile` calls in 1 s on a
+force-stopped app printed five `Fusion: tap ignored, the dialog is still
+opening` lines and one `Fusion: dialog shown 1052 ms after the tap`, and
+`dumpsys window` showed exactly one `ty=QS_DIALOG` window (`990x630`) and one
+`fusion_qs_root`.  A warm second tap logged `dialog shown 200 ms after the tap`,
+so the gate reopens on show.  The Fan and Power dialogs were re-measured the
+same way: Done ends at `1401`, `Edit presets` at `[519,678][1401,786]` inside
+the `[465,150][1455,930]` card, day and night.
 
 Screenshots (`final-day.png`, `final-day-expanded.png`, `final-night.png`,
 `final-night-expanded.png`, `final-unavailable.png`) and the `uiautomator` XML
