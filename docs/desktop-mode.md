@@ -14,7 +14,7 @@ scope (decisions in #131, 2026-11-16).
 | Workstream | Contents | State |
 |---|---|---|
 | **F1** platform (this page) | `frameworks/base` resource overlay, freeform feature, Launcher3 taskbar patch, this doc | this PR |
-| **F2** UX | `Handheld > Display` row in AshFall Parts, QS tile, density apply/restore, `persist.ashfall.pad.mode`, chord doc link | after the Lighting work |
+| **F2** UX | `Handheld > Display` row in AshFall Parts, QS tile, density apply/restore, `persist.ashfall.pad.mode`, chord doc link | implemented (#199, follow-ups #225) |
 | **B** daemon | second uinput pointer device in `ashfall-rp5-input`, mode property, chord fallback | `docs/rp5/input.md` |
 
 ## 1. Why this is configuration, not hardware
@@ -556,11 +556,12 @@ workstream-B follow-up.
 
 A boot guard, `DesktopBootReceiver`, runs on `LOCKED_BOOT_COMPLETED` and
 `BOOT_COMPLETED` and is deliberately *not* an entry point: it always forces
-display 0 fullscreen, restores the saved density and writes
-`persist.ashfall.pad.mode=game`.  A boot is therefore always fullscreen, even
-after a crash between enter and exit; it never enters desktop mode by itself.
-The page and tile poll the display mode every 1.5 s / 2 s while visible so a
-change made elsewhere shows up.
+display 0 fullscreen, restores the saved density only when the panel is still
+at 320 (a key on any other density is dropped; §9.5 has the full rule) and
+writes `persist.ashfall.pad.mode=game`.  A boot is therefore always fullscreen,
+even after a crash between enter and exit; it never enters desktop mode by
+itself.  The page and tile poll the display mode every 1.5 s / 2 s while
+visible so a change made elsewhere shows up.
 
 ### 9.2 State: WindowManager, not the property
 
@@ -635,9 +636,11 @@ settings." rather than claiming nothing changed.  A failed restore keeps the
 key so the next tap or the boot guard retries; a successful restore clears it,
 so the key cannot outlive the transition (#216).
 
-A second "off" tap while already fullscreen writes `game` and leaves the
-density alone. Entering while already in desktop windowing only writes
-`desktop` and does not touch a density the user already had.
+A second "off" tap while already fullscreen writes `game` and leaves a density
+that is not 320 alone; a panel that is still at 320 is treated as ours and goes
+through step 2 (the key is restored and cleared, or a forced 320 with no key is
+reset to the panel default). Entering while already in desktop windowing only
+writes `desktop` and does not touch a density the user already had.
 
 ### 9.5 Boot guard (#207)
 
@@ -674,7 +677,7 @@ later Display-size choice is not reverted (#216).
 | exit cannot set/read back fullscreen | property stays `desktop` (the display is still a desk), the page/tile show the real state and the short error message |
 | exit cannot write `game` | the display is already fullscreen; the page/tile report `PARTIAL`; the next tap retries the property write |
 | exit: density restore/clear fails or the read-back is still 320 | the display is fullscreen and `game` is written; the page/tile report `PARTIAL` ("Couldn't finish..."); the key is kept only when the restore failed, so the next tap or the boot guard retries |
-| enter: density rollback fails after a display failure | the display is fullscreen and `game` is written; the page/tile report `PARTIAL`; the boot guard retries the density; a successful rollback clears the key |
+| enter: density rollback fails after a display failure | the display is fullscreen and `game` is written; the page/tile report `PARTIAL`; the boot guard retries the density; a rollback that restored the pre-entry density clears the key, one that never wrote a density keeps it (#226) |
 | process killed between enter and exit | the next boot's `DesktopBootReceiver` forces fullscreen, restores a key only when the panel is still 320 and then clears it (or clears the forced density when 320 has no key), and writes `game` |
 
 A complete rollback (`FAILED`) shows "Couldn't switch the display mode. Nothing

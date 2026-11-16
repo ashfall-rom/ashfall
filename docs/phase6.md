@@ -362,10 +362,12 @@ daemon workers cannot drift):
 
 Handheld page order: Fan, Lighting, Display, Controller, **Power**, **Memory**.
 One page per feature, no tabs. QS tiles: Fan, Lighting, Power (#124), Fusion
-(#138) and Desktop (#131); Memory, PlayTime and charging get none. A tile's tap opens its settings
-dialog and long-press opens its page, as the Fan/Lighting tiles do. The
-structural shell (rows, manifest, tile routing, summary stubs) is on `main`
-before any worker starts, so no two workers edit the same page shell.
+(#138) and Desktop (#131); Memory, PlayTime and charging get none. Tiles other
+than Desktop open their settings dialog on tap and their page on long-press, as
+the Fan/Lighting tiles do; the Desktop tile is a plain toggle, and long-press
+opens the Display page. The structural shell (rows, manifest, tile routing,
+summary stubs) is on `main` before any worker starts, so no two workers edit the
+same page shell.
 
 ### 9.6 Verification
 

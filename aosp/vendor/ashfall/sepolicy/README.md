@@ -29,7 +29,7 @@ merged into the contexts the image build and libselinux use.  The old
 | `ashfall_rp5_input.te` | `ashfall_rp5_input` domain, `/data/misc/ashfall`, control socket |
 | `ashfall_props.te` | `ashfall_prop` (`persist.ashfall.`), `ashfall_status_prop` (`ashfall.status.`), `ashfall_ui_prop` (`ashfall.ui.`) and `ashfall_perf_prop` (`ashfall.perf.`, `persist.ashfall.perf.`); `system_app` writes the settings and reads them (`persist.ashfall.batt.*`, #137) |
 | `file_contexts` | binaries, `/dev/socket/ashfall_input`, `/data/misc/ashfall`, `/dev/block/zram0`, `/data/ashfall`, the cpufreq attributes |
-| `genfs_contexts` | sysfs types for `gpio5_pwm2`, the `sn3112` LED classes, the relabelled kgsl attributes (devfreq cap + live `gpuclk`), the cpufreq trees and the zram block device |
+| `genfs_contexts` | sysfs types for `gpio5_pwm2`, the `sn3112` LED classes, the relabelled kgsl attributes (devfreq cap + live `gpuclk`/`gpu_busy_percentage`), the cpufreq trees and the zram block device |
 | `property_contexts` | the four property prefixes (the `persist.ashfall.perf.` entry is more specific than `persist.ashfall.`) |
 
 ## Notes
@@ -85,11 +85,13 @@ merged into the contexts the image build and libselinux use.  The old
     `ls -Z /sys/devices/system/cpu/cpu7/cpufreq/scaling_max_freq` ->
     `ashfall_cpu_sysfs` and a clean `dmesg | grep avc` while the daemon writes
     caps (docs/rp5/hw.md §12).
-  * **Live GPU clock.**  `gpuclk` is now read-only relabelled `ashfall_gpu_sysfs`
-    next to `gpu_available_frequencies` (exact-path `file_contexts` +
-    `genfs_contexts`, escaped dots) for `ashfall.status.perf.gpu_mhz`.  Only this
-    attribute was added; `min_freq`/`max_freq` and the #120 vendor-perf-HAL
-    question are unchanged.
+  * **Live GPU clock and load.**  `gpuclk` (#124) and `gpu_busy_percentage`
+    (#156) are the read-only additions to `ashfall_gpu_sysfs`, next to
+    `gpu_available_frequencies` and the devfreq cap (exact-path
+    `file_contexts` + `genfs_contexts`, escaped dots); `gpuclk` feeds
+    `ashfall.status.perf.gpu_mhz` and the busy percentage is the live GPU load
+    on the Parts page.  `min_freq`/`max_freq` keep their use and the #120
+    vendor-perf-HAL question is unchanged.
   * **Battery telemetry.**  Not in this policy: `domain.te` neverallows
     coredomain access to `sysfs_batteryinfo` and the RP5 nodes are vendor
     (`vendor_sysfs_battery_supply`), so battery data is read through

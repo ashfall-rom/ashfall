@@ -513,7 +513,7 @@ entered).  The bootloader still has the other slot's stock vendor_boot and
 | 1000 MHz request, cap stays 670 | expected on the stock DTB; check `ashfall.status.perf.gpu_oc` (0 = no OC step) and the DT table |
 | `avc: denied ... ashfall_hwd ... ashfall_gpu_sysfs` | policy build did not pick up the files; rebuild system.img (orchestrator) and check the merged `system_ext_file_contexts`/`system_ext_sepolicy.cil` |
 | `avc: denied ... vendor_sysfs_kgsl ... lnk_file` for `ashfall-hwd` | the daemon is following a class symlink (stale binary?); it must open the resolved paths (§4.2) |
-| `avc: denied ... ashfall_gpu_sysfs` (file) | the exact-path file_contexts entry lost; `ls -Z` the three resolved nodes, rebuild system.img |
+| `avc: denied ... ashfall_gpu_sysfs` (file) | the exact-path file_contexts entry lost; `ls -Z` the five relabelled kgsl attributes (both DT prefixes), rebuild system.img |
 | `fastboot: error: Failed to write` / `unknown partition` | bootloader mode required (not fastbootd); re-run `ensure_bootloader` by starting from Android |
 | `Sending 'vendor_boot'` hangs / ABL wedged | the 96 MiB zero-padded image was used; flash the content-only `vendor_boot.img` (12,931,072 B), one detached fastboot batch (issue #54) |
 | `kgsl-3d ... failed to update frequency from PM QoS (-71)` | dmesg-only on the OC boot; scaling and the cap still work (10-min 1 GHz stress passed). Tracked in #116 |
