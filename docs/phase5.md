@@ -204,8 +204,11 @@ Supersedes the matching parts of §2/§3. Issue numbers in the per-area issues.
 | `ashfall.ui.fan_live` | new `ashfall_ui_prop` (non-persist) | app -> hwd | `0`/empty = no fan UI; otherwise an opaque token that changes on every refresh (at least every 500 ms) while a fan UI (page/editor/QS dialog) is visible. Any non-zero value selects the 500 ms status cadence (else 2 s); value changes are the heartbeat that keeps the live preview valid |
 | `ashfall.ui.fan_preview_curve` | `ashfall_ui_prop` | app -> hwd | curve string; while non-empty and the active mode is `smart`, hwd uses it instead of `persist.ashfall.fan.curve` (live curve editing). Honoured only while `ashfall.ui.fan_live` has changed within the last **1.5 s**; the app clears it when the editor closes, and hwd drops it on its own after 1.5 s without a heartbeat (force-stop/crash) |
 | `persist.ashfall.led.screen_off` | - | - | **removed**; LEDs are always off while the screen is off and are re-applied on screen-on |
-| `ashfall.ui.led_override` | `ashfall_ui_prop` | app -> hwd | `` (empty = normal) or `RRGGBB:RRGGBB` (left:right, final colours incl. intensity); used by the gamepad tester (<= 30 Hz). Honoured only while `ashfall.ui.led_override_live` is fresh; a non-empty value is dropped after 1.5 s without a heartbeat |
-| `ashfall.ui.led_override_live` | new `ashfall_ui_prop` (non-persist) | app -> hwd | opaque token that changes on every refresh (at least every 500 ms) while the gamepad tester owns `ashfall.ui.led_override`; the value has no meaning beyond "different from the previous one". hwd treats the override as expired after **1.5 s** without a change, so a force-stopped app cannot latch the rings. Cleared (with the override) when the tester leaves |
+| `ashfall.ui.led_override` | `ashfall_ui_prop` | app -> hwd | `` (empty = normal) or `RRGGBB:RRGGBB` (left:right, final colours incl. intensity); used by the gamepad tester (<= 30 Hz). Honoured only while `ashfall.ui.led_override_live` is fresh; a non-empty value is dropped after 1.5 s without a heartbeat. Screen sync (#167) publishes on the same contract with the same >= 500 ms token, and only ever clears its own value |
+| `ashfall.ui.led_override_live` | new `ashfall_ui_prop` (non-persist) | app -> hwd | opaque token that changes on every refresh (at least every 500 ms) while a publisher owns `ashfall.ui.led_override`; the value has no meaning beyond "different from the previous one". hwd treats the override as expired after **1.5 s** without a change, so a force-stopped app cannot latch the rings. Cleared (with the override) when the publisher leaves |
+| `ashfall.ui.led_suspend` | new `ashfall_ui_prop` (non-persist) | app -> app | changing token (`elapsedRealtime()` ms) while the gamepad tester is visible, refreshed every 500 ms; screen sync pauses and clears its own override. The service treats suspend as active only while the token changes within **1.5 s** (#193) and the tester clears the property on normal exit |
+| `persist.ashfall.led.screen_sync` | UI-only flag, not read by hwd | app -> app | `0` (default) / `1`: the "Match screen" effect is selected; `led.mode` keeps the last real effect |
+| `persist.ashfall.led.screen_rate` | UI-only value, not read by hwd | app -> app | `10` (default) / `15` / `30`: screen capture rate in frames per second |
 | `ashfall.perf.throttle_override` | new `ashfall_perf_prop` (non-persist => resets on reboot) | app -> hwd | `1` = disable software clock throttling (kernel thermal mitigation / cooling devices; hardware limits stay) |
 | `persist.ashfall.perf.throttle_override_permanent` | `ashfall_perf_prop` | app -> hwd | `1` = apply the override at every boot (hidden "developer" switch, see §6.4) |
 
@@ -273,6 +276,40 @@ Home, Back, D-pad) with a documented bit layout (docs/rp5/input.md).
   or an on-screen close button, LED reaction via `ashfall.ui.led_override`, no Select setting;
   calibration pauses after each step until Start is pressed.
 - QS dialogs: no stray shadows, Done button not clipped.
+
+### 6.4 Screen colour sync ("Match screen", #167)
+
+Additive to §6.1; the daemon contract is unchanged.  The effect is UI-only:
+`persist.ashfall.led.screen_sync=1` with `persist.ashfall.led.mode` still holding
+the last real effect, so `ashfall-hwd` needs no new mode and restores the
+configured lighting as soon as the override stops.
+
+* **Capture**: `DisplayManager.createVirtualDisplay(...)` with
+  `VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR` into an `ImageReader` (RGBA_8888, 64×36),
+  guarded by `CAPTURE_VIDEO_OUTPUT` (platform-signed `system_app`, so no
+  MediaProjection consent dialog).  No hidden APIs: the preview Gradle build
+  compiles against the public SDK.
+* **Rate**: `persist.ashfall.led.screen_rate` = 10 (default) / 15 / 30 Hz.  The
+  mirror runs at panel rate, frames are dropped to the configured rate, and only
+  changed colours are published (≤ 29 Hz, `docs/rp5/hw.md` §4).
+* **Mapping**: left half → left ring, right half → right ring; with target Both
+  the whole-frame dominant colour drives both rings.  sRGB decode, per-half
+  average in linear light, chroma boost, sRGB encode, asymmetric smoothing
+  (~120 ms attack / ~350 ms release, scaled by `led.speed`), then
+  `led.brightness`.  HDR/wide-gamut content is clamped to SDR by the RGBA_8888
+  readback.  Near-black frames (secure/DRM surfaces, panel off) hold the last
+  colour.
+* **Override contract**: publishes `ashfall.ui.led_override` and refreshes the
+  changing `ashfall.ui.led_override_live` token every 400 ms; `ashfall-hwd`
+  ignores the override after 1.5 s without a fresh token (#94/#171).
+* **Lifecycle**: `LedSyncService` (`specialUse` foreground service, "LED screen
+  sync" notification with a Stop action) is started only while the effect is
+  selected and the panel is on, never at boot.  Sampling pauses and the
+  override plus heartbeat are cleared on: effect change, lighting off, screen
+  off/doze, the gamepad tester taking over (`ashfall.ui.led_suspend=1`), the
+  Stop action, service destruction and a capture failure.  A failure also
+  switches the effect off, restores the previous effect and shows a short
+  message.
 
 ## 7. Follow-ups v3 (user request 2026-11-15) - fan graph and output limits
 

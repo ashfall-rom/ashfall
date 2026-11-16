@@ -34,11 +34,34 @@ public final class Led {
     public static final String BRIGHTNESS = "persist.ashfall.led.brightness";
     public static final String SPEED = "persist.ashfall.led.speed";
 
+    /**
+     * UI-only flag for "Match screen" (#167).  The daemon never reads it: the
+     * sampler publishes {@code ashfall.ui.led_override} instead, and
+     * {@link #MODE} keeps the last real effect.
+     */
+    public static final String SCREEN_SYNC = "persist.ashfall.led.screen_sync";
+    /** Capture rate of the screen sampler, frames per second: 10 (default) / 15 / 30. */
+    public static final String SCREEN_RATE = "persist.ashfall.led.screen_rate";
+    /**
+     * Non-persistent: {@code 1} while the gamepad tester owns the rings.  Screen
+     * sync pauses sampling and clears its override while it is set (#167).
+     */
+    public static final String SUSPEND = "ashfall.ui.led_suspend";
+
     public static final String MODE_OFF = "off";
     public static final String MODE_STATIC = "static";
     public static final String MODE_BREATHING = "breathing";
     public static final String MODE_RAINBOW = "rainbow";
     public static final String MODE_DUO = "duo";
+    /**
+     * Sixth effect entry, "Match screen".  Never stored in {@link #MODE}: it is
+     * a UI value that turns {@link #SCREEN_SYNC} on and leaves the last real
+     * effect in place, so switching it off restores that effect.
+     */
+    public static final String MODE_SCREEN = "screen";
+
+    public static final int DEFAULT_SCREEN_RATE = 10;
+    public static final int[] SCREEN_RATES = {10, 15, 30};
 
     public static final String DEFAULT_COLOR = "FF2020";
     public static final int DEFAULT_BRIGHTNESS = 60;
@@ -65,8 +88,65 @@ public final class Led {
         return MODE_STATIC;
     }
 
+    /**
+     * Writes the real effect.  {@link #MODE_SCREEN} is the virtual sixth entry:
+     * it turns screen sync on and does not touch {@link #MODE}, so the effect
+     * that was active before comes back when screen sync is switched off.
+     * Turning lighting off always clears screen sync.
+     */
     public static void setMode(String mode) {
+        if (MODE_SCREEN.equals(mode)) {
+            if (MODE_OFF.equals(mode())) {
+                // Screen sync needs a real effect behind it for the daemon's
+                // fallback when the sampler stops.
+                Props.set(MODE, MODE_STATIC);
+            }
+            setScreenSync(true);
+            return;
+        }
+        setScreenSync(false);
         Props.set(MODE, mode);
+    }
+
+    /** Screen sync as seen by the UI; off whenever lighting is off. */
+    public static boolean screenSync() {
+        return Props.getBoolean(SCREEN_SYNC, false) && isOn();
+    }
+
+    /** Raw flag; the service uses this so it can clean up after lighting off. */
+    public static boolean screenSyncFlag() {
+        return Props.getBoolean(SCREEN_SYNC, false);
+    }
+
+    public static void setScreenSync(boolean on) {
+        Props.set(SCREEN_SYNC, on ? "1" : "0");
+    }
+
+    /**
+     * The effect the UI shows: "Match screen" while screen sync is on, the
+     * stored real effect otherwise.
+     */
+    public static String effect() {
+        return screenSync() ? MODE_SCREEN : mode();
+    }
+
+    public static int screenRate() {
+        final int value = Props.getInt(SCREEN_RATE, DEFAULT_SCREEN_RATE);
+        for (int candidate : SCREEN_RATES) {
+            if (candidate == value) {
+                return candidate;
+            }
+        }
+        return DEFAULT_SCREEN_RATE;
+    }
+
+    public static void setScreenRate(int hz) {
+        for (int candidate : SCREEN_RATES) {
+            if (candidate == hz) {
+                Props.setInt(SCREEN_RATE, hz);
+                return;
+            }
+        }
     }
 
     public static boolean isOn() {

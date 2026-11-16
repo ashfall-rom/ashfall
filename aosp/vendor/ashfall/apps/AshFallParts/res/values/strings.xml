@@ -216,6 +216,15 @@
     <string name="lighting_effect_breathing">Breathing</string>
     <string name="lighting_effect_rainbow">Rainbow</string>
     <string name="lighting_effect_duo">Duo</string>
+    <string name="lighting_effect_screen">Match screen</string>
+    <string name="lighting_screen_rate_title">Screen rate</string>
+    <string name="lighting_screen_rate_value">%1$d a second</string>
+    <string name="lighting_screen_note">Left ring follows the left half, right ring the right half. With Both, both rings use the main colour.\nBlack or protected video keeps the last colour. Uses extra battery while on.</string>
+    <string name="lighting_smoothing_title">Smoothing</string>
+    <string name="lighting_screen_failed">Screen capture didn\'t start. Lighting kept its last effect.</string>
+    <string name="led_sync_title">LED screen sync</string>
+    <string name="led_sync_text">Rings follow the screen</string>
+    <string name="led_sync_stop">Stop</string>
     <string name="lighting_speed_title">Effect speed</string>
     <string name="lighting_speed_summary">%1$d of 10</string>
     <string name="lighting_speed_summary_format">%d / 10</string>
