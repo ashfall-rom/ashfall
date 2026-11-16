@@ -83,6 +83,7 @@ public final class Desktop {
     /** WindowManager's desktop/freeform display windowing mode. */
     public static final int WINDOWING_MODE_FREEFORM = 5;
     private static final int WINDOWING_MODE_FULLSCREEN = 1;
+    private static final int WINDOWING_MODE_UNDEFINED = 0;
     private static final int UNKNOWN = -1;
 
     private static volatile boolean sInitialised;
@@ -208,8 +209,14 @@ public final class Desktop {
         final boolean wasDesktop = mode == WINDOWING_MODE_FREEFORM;
 
         if (mode != WINDOWING_MODE_FULLSCREEN) {
-            if (!setWindowingMode(WINDOWING_MODE_FULLSCREEN)
-                    || windowingMode() != WINDOWING_MODE_FULLSCREEN) {
+            if (!setWindowingMode(WINDOWING_MODE_FULLSCREEN)) {
+                Log.w(TAG, "desktop: display 0 did not return to fullscreen");
+                return false;
+            }
+            final int after = windowingMode();
+            // 0 ("undefined") also means the desk is gone; only a read-back
+            // of freeform or an unreadable mode means the desk is still there.
+            if (after != WINDOWING_MODE_FULLSCREEN && after != WINDOWING_MODE_UNDEFINED) {
                 Log.w(TAG, "desktop: display 0 did not return to fullscreen");
                 return false;
             }
