@@ -106,7 +106,7 @@ immediately to the properties from §2 of the contract; there is no Apply button
 | Fan | `FanActivity` | main switch, live graph, presets, curve, manual %, fan speed limits, kick, screen-off, throttling override, GPU max frequency |
 | Fan presets | `PresetActivity` | create / rename / duplicate / delete / change mode |
 | Curve | `CurveActivity` | drag-and-D-pad curve editor, live marker, live preview, stress test |
-| Lighting | `LightingActivity` | switch, target, live colour picker, brightness, effect, speed |
+| Lighting | `LightingActivity` | switch, target, live colour picker, brightness, effect (incl. Match screen), screen rate, speed |
 | Controller | `ControllerActivity` | tester, calibration wizard, factory reset, deadzones, fusion |
 | Power | `PowerActivity` | presets, CPU caps, governor, GPU cap, throttle override, live graph ([parts-power.md](parts-power.md)) |
 | Memory | `MemoryActivity` | swapfile ([parts-memory.md](parts-memory.md)) |
@@ -310,12 +310,53 @@ The UI target selector maps onto the daemon's `led.sync`:
   slider.  The picker is **live**: every swatch/hue/square change writes
   `led.color_*` immediately, there is no Set step, only Done.  The row shows the
   left/right colours.
-* Brightness 0–100, effects static/breathing/rainbow/duo, speed 1–10 (enabled
-  for breathing, rainbow **and duo** — the daemon animates duo with
-  `led.speed` too).  The screen-off option is **removed** (LEDs are always off
-  while the panel is off, re-applied on screen-on by the daemon); there is no
-  `led.screen_off` property any more.
+* Brightness 0–100, effects static/breathing/rainbow/duo plus **Match screen**
+  (see below), speed 1–10 (enabled for breathing, rainbow **and duo** — the daemon
+  animates duo with `led.speed` too).  The screen-off option is **removed** (LEDs
+  are always off while the panel is off, re-applied on screen-on by the daemon);
+  there is no `led.screen_off` property any more.
 * Everything applies live.
+
+#### Match screen (#167)
+
+Sixth entry in the effect list, in the page **and** in the QS dialog (one list,
+no second switch).  It is a UI-only effect: `persist.ashfall.led.screen_sync=1`
+while `persist.ashfall.led.mode` keeps the last real effect, which is restored
+when Match screen is switched off or the main switch is turned off.  The daemon
+contract does not change — the sampler is one more publisher of
+`ashfall.ui.led_override` (`docs/phase5.md` §6.1/§6.4).
+
+| Option | Property | Values |
+|---|---|---|
+| Screen rate | `persist.ashfall.led.screen_rate` | `10` (default) / `15` / `30` frames per second |
+| Smoothing | `persist.ashfall.led.speed` | 1–10; 5 keeps 120 ms attack / 350 ms release, lower is slower |
+| Brightness | `persist.ashfall.led.brightness` | still scales the published colour |
+
+* **Target Both** = whole-frame dominant colour on both rings.  **Left/Right**
+  keep the split: the left half drives the left ring, the right half the right
+  ring.  One colour per ring, no per-LED zones.
+* Capture: `DisplayManager.createVirtualDisplay` with
+  `VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR` into an `ImageReader` (RGBA_8888, 64×36),
+  `CAPTURE_VIDEO_OUTPUT`.  No MediaProjection, no consent dialog.
+* Processing: sRGB decode → per-half average in linear light (Both: luminance-
+  weighted whole-frame average) → chroma boost → sRGB encode → asymmetric
+  smoothing → brightness.  Published output is limited to ≤ 29 Hz and written
+  only when the final colours change.  A near-black frame (secure surface, DRM,
+  panel off) holds the last colour.
+* `ashfall.ui.led_override_live` carries a changing token refreshed every
+  400 ms while the override is owned, so a dead sampler cannot latch the rings
+  (#94/#171).
+* `LedSyncService` is a `specialUse` foreground service with a minimal "LED
+  screen sync" notification and a Stop action.  It starts only while Match
+  screen is selected, never at boot, and pauses sampling (clearing the override
+  and heartbeat) while the panel is off, while the gamepad tester is visible
+  (`ashfall.ui.led_suspend=1`), and on the Stop action.
+* If capture cannot start, the effect switches itself off, the previous effect
+  returns and a short message says so.  Every exit clears the override and the
+  heartbeat.
+* Copy in the UI states the limits: black/protected video holds the last
+  colour, two zones (left/right) rather than per-LED, and screen capture costs
+  battery.
 
 ### 2.4 Controller
 
@@ -537,6 +578,9 @@ Read/written exactly as specified in `docs/phase5.md`:
 * `ashfall.ui.{fan_live,fan_preview_curve}`
 * `ashfall.status.fan.{temp,pct,rpm,safety}`
 * `persist.ashfall.led.{mode,color_left,color_right,sync,brightness,speed}`
+* `persist.ashfall.led.{screen_sync,screen_rate}` (UI-only; Match screen, #167)
+* `ashfall.ui.{led_override,led_override_live,led_suspend}` (live colour, its
+  heartbeat, and the gamepad tester's suspend flag)
 * `ashfall.perf.throttle_override`, `persist.ashfall.perf.throttle_override_permanent`
 * `persist.ashfall.perf.gpu_max_mhz` (written by this app only)
 * `ashfall.status.perf.{gpu_max_mhz,gpu_oc}` (read only; `ashfall-hwd` is the

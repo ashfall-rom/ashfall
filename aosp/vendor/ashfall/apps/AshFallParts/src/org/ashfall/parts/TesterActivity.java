@@ -27,9 +27,11 @@ import android.view.WindowManager;
 import android.widget.Button;
 import android.widget.TextView;
 
+import org.ashfall.parts.hw.Led;
 import org.ashfall.parts.hw.PadState;
 import org.ashfall.parts.ipc.CalClient;
 import org.ashfall.parts.ipc.CalData;
+import org.ashfall.parts.ipc.Props;
 import org.ashfall.parts.ipc.RawSample;
 import org.ashfall.parts.ipc.RawStream;
 import org.ashfall.parts.ui.ControllerTesterView;
@@ -105,11 +107,15 @@ public class TesterActivity extends PartsActivity {
     @Override
     protected void onResume() {
         super.onResume();
+        // While the tester is visible it owns the rings: screen sync (#167)
+        // pauses sampling and clears its override until this is cleared.
+        Props.set(Led.SUSPEND, "1");
         startRaw();
     }
 
     @Override
     protected void onPause() {
+        Props.set(Led.SUSPEND, "0");
         stopRaw();
         if (mLed != null) {
             mLed.clear();
@@ -119,6 +125,7 @@ public class TesterActivity extends PartsActivity {
 
     @Override
     protected void onDestroy() {
+        Props.set(Led.SUSPEND, "0");
         stopRaw();
         if (mLed != null) {
             mLed.clear();

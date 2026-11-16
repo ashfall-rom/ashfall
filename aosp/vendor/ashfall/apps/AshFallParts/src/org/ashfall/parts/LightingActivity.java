@@ -49,6 +49,7 @@ public class LightingActivity extends PartsActivity {
 
         private static final String[] EFFECT_VALUES = {
                 Led.MODE_STATIC, Led.MODE_BREATHING, Led.MODE_RAINBOW, Led.MODE_DUO,
+                Led.MODE_SCREEN,
         };
 
         private MainSwitchPreference mSwitch;
@@ -57,6 +58,8 @@ public class LightingActivity extends PartsActivity {
         private SliderPreference mBrightness;
         private Preference mEffect;
         private SliderPreference mSpeed;
+        private Preference mScreenRate;
+        private Preference mScreenNote;
 
         @Override
         public void onCreatePreferences(Bundle savedInstanceState, String rootKey) {
@@ -136,6 +139,22 @@ public class LightingActivity extends PartsActivity {
             });
             effectCategory.addPreference(mSpeed);
 
+            // Match screen (#167): capture rate plus the short limits note.
+            mScreenRate = new Preference(requireContext());
+            mScreenRate.setKey("lighting_screen_rate");
+            mScreenRate.setTitle(R.string.lighting_screen_rate_title);
+            mScreenRate.setOnPreferenceClickListener(preference -> {
+                showRateDialog();
+                return true;
+            });
+            effectCategory.addPreference(mScreenRate);
+
+            mScreenNote = new Preference(requireContext());
+            mScreenNote.setKey("lighting_screen_note");
+            mScreenNote.setSelectable(false);
+            mScreenNote.setSummary(R.string.lighting_screen_note);
+            effectCategory.addPreference(mScreenNote);
+
             final Preference footer = new Preference(requireContext());
             footer.setKey("lighting_footer");
             footer.setSelectable(false);
@@ -149,6 +168,9 @@ public class LightingActivity extends PartsActivity {
         @Override
         public void onResume() {
             super.onResume();
+            // Match screen keeps its effect across reboots; the service is only
+            // ever started from here (a user-visible page), never at boot.
+            LedSyncService.sync(requireContext());
             refresh();
         }
 
@@ -160,6 +182,7 @@ public class LightingActivity extends PartsActivity {
                 Prefs.setLastLedMode(requireContext(), Led.mode());
                 Led.setMode(Led.MODE_OFF);
             }
+            LedSyncService.sync(requireContext());
             refresh();
         }
 
@@ -189,8 +212,9 @@ public class LightingActivity extends PartsActivity {
                     getString(R.string.lighting_effect_breathing),
                     getString(R.string.lighting_effect_rainbow),
                     getString(R.string.lighting_effect_duo),
+                    getString(R.string.lighting_effect_screen),
             };
-            final String current = Led.isOn() ? Led.mode()
+            final String current = Led.isOn() ? Led.effect()
                     : Prefs.lastLedMode(requireContext());
             int checked = 0;
             for (int i = 0; i < EFFECT_VALUES.length; i++) {
@@ -202,8 +226,18 @@ public class LightingActivity extends PartsActivity {
                     .setTitle(R.string.lighting_effect_title)
                     .setSingleChoiceItems(labels, checked, (dialog, which) -> {
                         final String mode = EFFECT_VALUES[which];
-                        Prefs.setLastLedMode(requireContext(), mode);
+                        // "Match screen" is a UI value: it leaves the last real
+                        // effect in led.mode, so clearing it restores that.
+                        if (!Led.MODE_SCREEN.equals(mode)) {
+                            Prefs.setLastLedMode(requireContext(), mode);
+                        } else if (!Led.isOn()) {
+                            // Selecting an effect while off turns lighting on;
+                            // keep the last real effect behind Match screen.
+                            final String last = Prefs.lastLedMode(requireContext());
+                            Led.setMode(Led.MODE_OFF.equals(last) ? Led.MODE_STATIC : last);
+                        }
                         Led.setMode(mode);
+                        LedSyncService.sync(requireContext());
                         dialog.dismiss();
                         refresh();
                     })
@@ -211,15 +245,43 @@ public class LightingActivity extends PartsActivity {
                     .show();
         }
 
+        private void showRateDialog() {
+            final int[] rates = Led.SCREEN_RATES;
+            final CharSequence[] labels = new CharSequence[rates.length];
+            int checked = 0;
+            for (int i = 0; i < rates.length; i++) {
+                labels[i] = getString(R.string.lighting_screen_rate_value, rates[i]);
+                if (rates[i] == Led.screenRate()) {
+                    checked = i;
+                }
+            }
+            new AlertDialog.Builder(requireContext())
+                    .setTitle(R.string.lighting_screen_rate_title)
+                    .setSingleChoiceItems(labels, checked, (dialog, which) -> {
+                        Led.setScreenRate(rates[which]);
+                        dialog.dismiss();
+                        refresh();
+                    })
+                    .setNegativeButton(R.string.cancel, null)
+                    .show();
+        }
+
+        private String effectName(String effect) {
+            return Led.MODE_SCREEN.equals(effect)
+                    ? getString(R.string.lighting_effect_screen)
+                    : Ui.ledModeName(requireContext(), effect);
+        }
+
         private void refresh() {
             if (mSwitch == null) {
                 return;
             }
             final boolean on = Led.isOn();
+            final boolean screen = Led.screenSync();
             mSwitch.setChecked(on);
             mSwitch.setSummaryText(on
                     ? getString(R.string.lighting_switch_summary_on,
-                            Ui.ledModeName(requireContext(), Led.mode()), Led.brightness())
+                            effectName(Led.effect()), Led.brightness())
                     : getString(R.string.lighting_switch_summary_off));
 
             final int target = Prefs.ledTarget(requireContext());
@@ -237,16 +299,25 @@ public class LightingActivity extends PartsActivity {
 
             mBrightness.setValue(Led.brightness());
 
-            final String effect = on ? Led.mode() : Prefs.lastLedMode(requireContext());
-            mEffect.setSummary(Ui.ledModeName(requireContext(), effect));
+            final String effect = on ? Led.effect() : Prefs.lastLedMode(requireContext());
+            mEffect.setSummary(effectName(effect));
 
+            mSpeed.setTitle(screen ? R.string.lighting_smoothing_title
+                    : R.string.lighting_speed_title);
             mSpeed.setValue(Led.speed());
             // The daemon animates duo with led.speed too (5000/speed), so it
             // gets the speed slider just like breathing and rainbow (#100).
-            final boolean animated = Led.MODE_BREATHING.equals(effect)
+            // Match screen reuses it for the smoothing strength (#167).
+            final boolean animated = screen
+                    || Led.MODE_BREATHING.equals(effect)
                     || Led.MODE_RAINBOW.equals(effect)
                     || Led.MODE_DUO.equals(effect);
             mSpeed.setEnabled(animated);
+
+            mScreenRate.setVisible(screen);
+            mScreenRate.setSummary(getString(R.string.lighting_screen_rate_value,
+                    Led.screenRate()));
+            mScreenNote.setVisible(screen);
         }
     }
 }

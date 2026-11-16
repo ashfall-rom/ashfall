@@ -205,6 +205,10 @@ Supersedes the matching parts of §2/§3. Issue numbers in the per-area issues.
 | `ashfall.ui.fan_preview_curve` | `ashfall_ui_prop` | app -> hwd | curve string; while non-empty and the active mode is `smart`, hwd uses it instead of `persist.ashfall.fan.curve` (live curve editing); the app clears it when the editor closes |
 | `persist.ashfall.led.screen_off` | - | - | **removed**; LEDs are always off while the screen is off and are re-applied on screen-on |
 | `ashfall.ui.led_override` | `ashfall_ui_prop` | app -> hwd | `` (empty = normal) or `RRGGBB:RRGGBB` (left:right, final colours incl. intensity); used by the gamepad tester (<= 30 Hz) |
+| `ashfall.ui.led_override_live` | `ashfall_ui_prop` (non-persist) | app -> hwd | changing opaque token (`elapsedRealtime()` ms), refreshed at least every 500 ms by whoever owns `led_override`; hwd counts a beat only when it changes and ignores a stale override after 1.5 s (#94/#171) |
+| `ashfall.ui.led_suspend` | `ashfall_ui_prop` (non-persist) | app -> app | `1` while the gamepad tester is visible; screen sync pauses and clears its override |
+| `persist.ashfall.led.screen_sync` | UI-only flag, not read by hwd | app -> app | `0` (default) / `1`: the "Match screen" effect is selected; `led.mode` keeps the last real effect |
+| `persist.ashfall.led.screen_rate` | UI-only value, not read by hwd | app -> app | `10` (default) / `15` / `30`: screen capture rate in frames per second |
 | `ashfall.perf.throttle_override` | new `ashfall_perf_prop` (non-persist => resets on reboot) | app -> hwd | `1` = disable software clock throttling (kernel thermal mitigation / cooling devices; hardware limits stay) |
 | `persist.ashfall.perf.throttle_override_permanent` | `ashfall_perf_prop` | app -> hwd | `1` = apply the override at every boot (hidden "developer" switch, see §6.4) |
 
@@ -237,6 +241,40 @@ Home, Back, D-pad) with a documented bit layout (docs/rp5/input.md).
   or an on-screen close button, LED reaction via `ashfall.ui.led_override`, no Select setting;
   calibration pauses after each step until Start is pressed.
 - QS dialogs: no stray shadows, Done button not clipped.
+
+### 6.4 Screen colour sync ("Match screen", #167)
+
+Additive to §6.1; the daemon contract is unchanged.  The effect is UI-only:
+`persist.ashfall.led.screen_sync=1` with `persist.ashfall.led.mode` still holding
+the last real effect, so `ashfall-hwd` needs no new mode and restores the
+configured lighting as soon as the override stops.
+
+* **Capture**: `DisplayManager.createVirtualDisplay(...)` with
+  `VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR` into an `ImageReader` (RGBA_8888, 64×36),
+  guarded by `CAPTURE_VIDEO_OUTPUT` (platform-signed `system_app`, so no
+  MediaProjection consent dialog).  No hidden APIs: the preview Gradle build
+  compiles against the public SDK.
+* **Rate**: `persist.ashfall.led.screen_rate` = 10 (default) / 15 / 30 Hz.  The
+  mirror runs at panel rate, frames are dropped to the configured rate, and only
+  changed colours are published (≤ 29 Hz, `docs/rp5/hw.md` §4).
+* **Mapping**: left half → left ring, right half → right ring; with target Both
+  the whole-frame dominant colour drives both rings.  sRGB decode, per-half
+  average in linear light, chroma boost, sRGB encode, asymmetric smoothing
+  (~120 ms attack / ~350 ms release, scaled by `led.speed`), then
+  `led.brightness`.  HDR/wide-gamut content is clamped to SDR by the RGBA_8888
+  readback.  Near-black frames (secure/DRM surfaces, panel off) hold the last
+  colour.
+* **Override contract**: publishes `ashfall.ui.led_override` and refreshes the
+  changing `ashfall.ui.led_override_live` token every 400 ms; `ashfall-hwd`
+  ignores the override after 1.5 s without a fresh token (#94/#171).
+* **Lifecycle**: `LedSyncService` (`specialUse` foreground service, "LED screen
+  sync" notification with a Stop action) is started only while the effect is
+  selected and the panel is on, never at boot.  Sampling pauses and the
+  override plus heartbeat are cleared on: effect change, lighting off, screen
+  off/doze, the gamepad tester taking over (`ashfall.ui.led_suspend=1`), the
+  Stop action, service destruction and a capture failure.  A failure also
+  switches the effect off, restores the previous effect and shows a short
+  message.
 
 ## 7. Follow-ups v3 (user request 2026-11-15) - fan graph and output limits
 
