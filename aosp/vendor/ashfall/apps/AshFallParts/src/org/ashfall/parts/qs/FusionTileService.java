@@ -38,6 +38,9 @@ import org.ashfall.parts.ipc.FusionClient;
  */
 public class FusionTileService extends TileService {
 
+    /** One dialog at a time: a burst of taps must not stack dialogs (#166). */
+    private final DialogGate mGate = new DialogGate("Fusion");
+
     /** The daemon reports hotplug; the tile only has to catch up. */
     private static final long TICK_MS = 2000;
 
@@ -71,6 +74,11 @@ public class FusionTileService extends TileService {
 
     @Override
     public void onClick() {
+        // A second tap while the first dialog is still being attached is a
+        // no-op instead of a second stacked dialog (#166).
+        if (!mGate.begin()) {
+            return;
+        }
         if (isLocked()) {
             unlockAndRun(this::showFusionDialog);
         } else {
@@ -80,6 +88,9 @@ public class FusionTileService extends TileService {
 
     public void showFusionDialog() {
         if (isLocked()) {
+            // The unlockAndRun started by the tap never ran, so nothing will
+            // reopen the gate: release it here or the tile stays dead.
+            mGate.release();
             return;
         }
         final FusionDialog dialog = new FusionDialog(this, new FusionDialog.Listener() {
@@ -94,7 +105,7 @@ public class FusionTileService extends TileService {
                         .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
             }
         });
-        showDialog(dialog);
+        showDialog(mGate.track(dialog));
     }
 
     private void updateTile() {

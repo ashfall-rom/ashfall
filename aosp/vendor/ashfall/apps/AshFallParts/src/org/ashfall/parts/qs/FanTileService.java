@@ -39,6 +39,9 @@ import org.ashfall.parts.ui.Ui;
  */
 public class FanTileService extends TileService {
 
+    /** One dialog at a time: a burst of taps must not stack dialogs (#166). */
+    private final DialogGate mGate = new DialogGate("Fan");
+
     private final Handler mHandler = new Handler(Looper.getMainLooper());
     private final Runnable mTick = new Runnable() {
         @Override
@@ -69,6 +72,11 @@ public class FanTileService extends TileService {
 
     @Override
     public void onClick() {
+        // A second tap while the first dialog is still being attached is a
+        // no-op instead of a second stacked dialog (#166).
+        if (!mGate.begin()) {
+            return;
+        }
         if (isLocked()) {
             unlockAndRun(this::showPresetDialog);
         } else {
@@ -78,6 +86,9 @@ public class FanTileService extends TileService {
 
     public void showPresetDialog() {
         if (isLocked()) {
+            // The unlockAndRun started by the tap never ran, so nothing will
+            // reopen the gate: release it here or the tile stays dead.
+            mGate.release();
             return;
         }
         final FanDialog dialog = new FanDialog(this, new FanDialog.Listener() {
@@ -92,7 +103,7 @@ public class FanTileService extends TileService {
                         .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
             }
         });
-        showDialog(dialog);
+        showDialog(mGate.track(dialog));
     }
 
 

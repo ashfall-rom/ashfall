@@ -416,6 +416,34 @@ fixes that for the whole app:
   `ScrollView` ignores `android:maxHeight`, which used to let the Lighting
   content push the Done button out of the window.  The colour picker dialog
   uses the same helper and a 160 dp saturation/value square.
+* **One width, from one place (#166).**  Every dialog window is sized from
+  `@dimen/dialog_width` (440 dp): `Ui.fitDialog()` and
+  `qs.FusionDialog.fitWindow()` read it through `Ui.dialogWidth()`, and the
+  layout roots are `match_parent`, so the card (the window background) and the
+  content it holds can never disagree.  This used to drift — the roots were
+  laid out at 480 dp while the windows were set to 440 dp - and 40 dp of
+  content, the whole 24 dp end inset included, sat outside the rounded card:
+  the Fusion switch, More settings and all four Done buttons were cut by the
+  card edge (#166).  The post-attach pass also re-measures at the width the
+  window **really** got, because the QS panel may clamp it.  To change a dialog
+  width, change the dimen — never pass a dp number to a dialog.
+* **One dialog per tap (#166).**  `TileService.showDialog()` is asynchronous,
+  and right after a boot the first bind is slow (cold process, class load,
+  dialog theme).  Every tap in that window used to build and queue another
+  dialog, and they all appeared at once, stacked.  Each tile service now holds
+  a `qs/DialogGate`: `onClick()` claims it before `showDialog()` /
+  `unlockAndRun()`, taps while it is closed are dropped (not turned into
+  dismissals, which would fight the panel), the gate reopens as soon as the
+  dialog reports itself shown and again on dismiss, and an 8 s backstop reopens
+  it so a `showDialog()` that SystemUI drops cannot wedge the tile.  The gate
+  is per service, so tapping Fusion while Power is still opening still works.
+  The cold-open delay itself is SystemUI's first bind — the dialog's state is
+  already in memory because each tile's own `updateTile()` tick reads the same
+  preset store, LED and Fusion state before the tap.
+  `adb logcat -s AshFallParts` logs `Fusion: dialog shown 1052 ms after the
+  tap` on a cold first open, `200 ms` once the process is warm, and
+  `tap ignored, the dialog is still opening` for every swallowed tap, which is
+  how the latency and the gate are measured.
 * **Fan dialog**: header with the active preset and temperature, a
   single-choice preset list (applies immediately), “Edit presets” (opens the
   preset editor) and Done.  The header temperature refreshes every 500 ms and

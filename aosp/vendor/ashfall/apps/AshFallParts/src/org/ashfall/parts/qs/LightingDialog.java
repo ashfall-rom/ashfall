@@ -113,7 +113,7 @@ public class LightingDialog extends Dialog {
             window.addFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND);
             window.clearFlags(WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE);
             Ui.fitDialog(window, findViewById(R.id.qs_lighting_root),
-                    findViewById(R.id.qs_lighting_scroll), 480, 0f);
+                    findViewById(R.id.qs_lighting_scroll), 0f);
         }
         mSwitch.requestFocus();
     }

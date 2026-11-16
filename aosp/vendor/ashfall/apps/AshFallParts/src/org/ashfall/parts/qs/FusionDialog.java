@@ -134,6 +134,9 @@ public class FusionDialog extends Dialog {
      * and the {@code ScrollView} keeps {@code wrap_content}, which pushes the
      * footer out of the window (#156 §16).
      *
+     * <p>The width comes from {@code R.dimen.dialog_width}, the same dimen the
+     * layout root is sized from, so the card and its content agree (#166).
+     *
      * <p>The display height comes from the window manager's maximum window
      * metrics, not from the dialog context's {@code DisplayMetrics}.  A
      * {@code TileService} context can keep the orientation it was created in;
@@ -152,7 +155,7 @@ public class FusionDialog extends Dialog {
             return;
         }
         final Context context = getContext();
-        final int width = Ui.dp(context, 440);
+        final int width = Ui.dialogWidth(context);
         final int screen = displayHeightPx();
         final int minHeight = Ui.dp(context, 280);
         final int maxHeight = Math.max(minHeight, Math.round(screen * 0.85f));

@@ -101,7 +101,7 @@ public class PowerDialog extends Dialog {
             window.addFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND);
             window.clearFlags(WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE);
             Ui.fitDialog(window, findViewById(R.id.power_dialog_root),
-                    findViewById(R.id.power_dialog_scroll), 440, 0.60f);
+                    findViewById(R.id.power_dialog_scroll), 0.60f);
         }
     }
 
