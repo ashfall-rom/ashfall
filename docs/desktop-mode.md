@@ -656,11 +656,12 @@ calls `Desktop.resetForBoot()`:
 
 Both broadcasts run the same idempotent path, so a WindowManager that was not
 ready for the first call gets a second attempt, and a clean device simply
-re-applies the same values.  The receiver sends no broadcast and starts no
-worker, so it cannot loop.  A density or property failure is logged by
-`Desktop` and keeps the key for the next boot.  A key is never applied to a
-panel that is not at 320, so a later Display-size choice is not reverted
-(#216).
+re-applies the same values.  A failed hidden-API lookup is not latched: it
+waits 2 s and retries, so the second broadcast or a later page/tile tick can
+recover.  The receiver sends no broadcast and starts no worker, so it cannot
+loop.  A density or property failure is logged by `Desktop` and keeps the key
+for the next boot.  A key is never applied to a panel that is not at 320, so a
+later Display-size choice is not reverted (#216).
 
 ### 9.6 Failure path
 

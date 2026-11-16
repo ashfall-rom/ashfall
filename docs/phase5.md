@@ -136,7 +136,7 @@ calibration.
   (collapsing toolbar, main switch, slider/selector widgets) + androidx.preference.
 - Root entry injected into the Settings homepage via an activity with
   `com.android.settings.category = com.android.settings.category.ia.homepage`
-  meta-data (title "Handheld", summary "Fan, lighting, controller", icon in the Settings
+  meta-data (title "Handheld", summary "Fan, lighting, display, controller, power, memory", icon in the Settings
   icon style). No launcher icon.
 - **Fan page:** live temperature / output / RPM / safety state; **preset list**: built-in
   presets (Off, Quiet, Balanced, Max, Smart-default; not deletable) plus user presets

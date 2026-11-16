@@ -684,7 +684,7 @@ Screenshots (all 1920×1080; light and dark):
 
 ### 6.3 Checks performed
 
-* Settings homepage shows **Handheld — Fan, lighting, controller** and opens
+* Settings homepage shows **Handheld — Fan, lighting, display, controller, power, memory** and opens
   the page from the Settings task (`topResumedActivity` = `HandheldActivity`,
   Back returns to Settings).
 * Handheld page summaries update from the properties
@@ -774,7 +774,7 @@ except where noted.
 
 | Area | Result |
 |---|---|
-| Settings homepage | **Handheld — Fan, lighting, controller** row appears at the bottom of the homepage (after Accessibility) with the tinted icon; tapping opens `HandheldActivity` in the Settings task. |
+| Settings homepage | **Handheld — Fan, lighting, display, controller, power, memory** row appears at the bottom of the homepage (after Accessibility) with the tinted icon; tapping opens `HandheldActivity` in the Settings task. |
 | All pages | Handheld, Fan, Lighting and Controller open on A17 without `InflateException` (the `SwitchCompat` crash is gone; the framework `Switch` renders). |
 | Fan live status | Temperature/output/RPM/safety update every 2 s (`43 °C`, `0 %`, `0 rpm` in Off). |
 | Fan presets | Built-ins render Off/Quiet/Balanced/Performance/Smart. Activating Quiet wrote `mode=quiet, preset=builtin.quiet` and the daemon wrote `state=1, duty=4920` (spin-up kick). User preset `user.33d52efd` was created, renamed, duplicated, activated, and deleted; deleting the active preset remapped `persist.ashfall.fan.preset` to `builtin.smart`. |

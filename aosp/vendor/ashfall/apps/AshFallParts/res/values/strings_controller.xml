@@ -35,7 +35,7 @@
     <string name="cal_step_rotate_body_v2">Roll both sticks around their full circle, then press Start.</string>
     <string name="cal_step_trigger_body_v2">Squeeze L2 and R2 fully twice, then press Start.</string>
     <string name="cal_step_review_body_v2">Check the values, then press Save.</string>
-    <string name="cal_live_release">Samples: %1$d — hold still, then press Start</string>
+    <string name="cal_live_release">Hold still — %1$d readings, then press Start</string>
     <string name="cal_live_rotate">Left %1$d · right %2$d — press Start when both are rolled</string>
     <string name="cal_live_trigger">L2 %1$d · R2 %2$d — press Start when both are fully pulled</string>
     <string name="cal_wait_samples">Waiting for input…</string>

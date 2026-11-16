@@ -19,7 +19,7 @@
 
     <!-- Settings homepage entry -->
     <string name="handheld_title">AshFall settings</string>
-    <string name="handheld_summary">Fan, lighting, controller, power, memory</string>
+    <string name="handheld_summary">Fan, lighting, display, controller, power, memory</string>
 
     <!-- Pages -->
     <string name="fan_title">Fan</string>

@@ -16,6 +16,7 @@
 
 package org.ashfall.parts.hw;
 
+import android.os.SystemClock;
 import android.util.Log;
 
 import org.ashfall.parts.ipc.Props;
@@ -88,7 +89,19 @@ public final class Desktop {
     private static final int WINDOWING_MODE_UNDEFINED = 0;
     private static final int UNKNOWN = -1;
 
-    private static volatile boolean sInitialised;
+    /** How long a failed WindowManager lookup waits before retrying (#222). */
+    private static final long INIT_RETRY_MS = 2000;
+
+    /**
+     * WindowManager lookup state: {@code NEW} -> {@code READY} on success, or
+     * {@code RETRY_WAIT} after a failure until {@link #sInitRetryAtMs}.  A
+     * failed lookup is never permanent, so a later page/tile tick or the
+     * second boot broadcast can recover (#222).
+     */
+    private enum InitState { NEW, READY, RETRY_WAIT }
+
+    private static volatile InitState sInitState = InitState.NEW;
+    private static volatile long sInitRetryAtMs;
     private static volatile boolean sQueryFailed;
     private static Object sService;
     private static Method sGetWindowingMode;
@@ -463,16 +476,33 @@ public final class Desktop {
         return mode.equals(Props.get(PROP_PAD_MODE, ""));
     }
 
+    /**
+     * Lazily resolves the hidden WindowManager handle.
+     *
+     * <p>States: {@code NEW} attempts immediately; a failure moves to {@code
+     * RETRY_WAIT} for {@link #INIT_RETRY_MS}; an expired retry attempts again
+     * and either becomes {@code READY} or re-arms the wait.  A failed lookup
+     * is therefore never latched, which is what lets the second boot broadcast
+     * and the page/tile ticks recover (#222).
+     */
     private static synchronized boolean init() {
-        if (sInitialised) {
+        final long now = SystemClock.elapsedRealtime();
+        if (sInitState == InitState.READY) {
             return sService != null;
         }
-        sInitialised = true;
+        if (sInitState == InitState.RETRY_WAIT && now < sInitRetryAtMs) {
+            return false;
+        }
+        final boolean logFailure = sInitState != InitState.RETRY_WAIT;
         try {
             final Class<?> global = Class.forName("android.view.WindowManagerGlobal");
             final Object service = global.getMethod("getWindowManagerService").invoke(null);
             if (service == null) {
-                Log.w(TAG, "WindowManager is not running, desktop mode is unavailable");
+                if (logFailure) {
+                    Log.w(TAG, "WindowManager is not running, desktop mode is unavailable");
+                }
+                sInitState = InitState.RETRY_WAIT;
+                sInitRetryAtMs = now + INIT_RETRY_MS;
                 return false;
             }
             final Class<?> iface = Class.forName("android.view.IWindowManager");
@@ -486,9 +516,16 @@ public final class Desktop {
             sClearForcedDisplayDensityForUser = iface.getMethod(
                     "clearForcedDisplayDensityForUser", int.class, int.class);
             sService = service;
+            sQueryFailed = false;
+            sInitState = InitState.READY;
+            sInitRetryAtMs = 0;
             return true;
         } catch (Throwable t) {
-            Log.w(TAG, "WindowManager hidden API is unavailable, desktop mode is off", t);
+            if (logFailure) {
+                Log.w(TAG, "WindowManager hidden API is unavailable, desktop mode is off", t);
+            }
+            sInitState = InitState.RETRY_WAIT;
+            sInitRetryAtMs = now + INIT_RETRY_MS;
             return false;
         }
     }
