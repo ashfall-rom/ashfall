@@ -185,15 +185,17 @@ immediately to the properties from §2 of the contract; there is no Apply button
   **Advanced** category, revealed by pressing the version row seven times
   (remembered in the app's UI prefs), holds the **Keep after reboot** switch
   (`persist.ashfall.perf.throttle_override_permanent`).  Enabling the hidden
-  switch also applies the override immediately; turning the visible switch off
-  releases the runtime override without touching the permanent flag.
+  switch goes through its own danger confirmation, says that the override stays
+  on at every boot, and also applies the override immediately; turning the
+  visible switch off releases the runtime override without touching the
+  permanent flag.
 * **GPU max frequency** (docs/phase6.md §3) sits directly below the throttling
   override.  A single-choice dialog offers the five contract steps — 670 MHz
   (stock, default), 765, 850, 940 and 1000 MHz (experimental) — and a choice
   writes only `persist.ashfall.perf.gpu_max_mhz`; the app never writes the
   status properties.  **1000 MHz** always goes through a confirmation with the
-  thermal/stability warning (marginal on some SD865 units, 940 MHz is the common
-  stable OC); the other steps apply immediately.  Above 670 the row summary adds
+  thermal/stability warning (the step is unstable on some units and 940 MHz is
+  the fallback); the other steps apply immediately.  Above 670 the row summary adds
   the warning that high clocks rely on the fan and that it is not forced.  The row reads `ashfall.status.perf.gpu_max_mhz`
   (actual cap) and `ashfall.status.perf.gpu_oc` (0 stock, 1 OC, -1 unavailable)
   every tick and shows: the applied cap, `Requested N MHz — actual M MHz` when
@@ -331,8 +333,8 @@ The UI target selector maps onto the daemon's `led.sync`:
   follow-up (issue #84) it sends `GRAB ON` on the raw-stream socket, so nothing
   is injected into uinput and every button is drawn from the `RAW` mask -
   including Home, Back and Select, which the system would otherwise consume.
-  The live RAW counts, calibration source and GRAB state are shown between the
-  two control clusters.  Leave by holding Start + Select for 2 s or tapping
+  The live input counts, calibration source and capture state are shown
+  between the two control clusters.  Leave by holding Start + Select for 2 s or tapping
   Close; the key-event path remains only as a fallback when the daemon is
   unreachable (B/Back then exits).  Details and the button-layout note:
   [parts-controller.md](parts-controller.md).
@@ -1040,8 +1042,9 @@ trampoline and the two `TileService`s.
    stops/resumes with the panel.
 6. Throttling: **Override throttling** shows the danger confirmation, enabling
    writes `ashfall.perf.throttle_override=1`, and a reboot clears it.  Press the
-   version row seven times, enable **Keep after reboot** and confirm the
-   permanent property; turn the visible switch off afterwards.
+   version row seven times, enable **Keep after reboot**, accept its danger
+   confirmation and check the permanent property; turn the visible switch off
+   afterwards.
 7. GPU max frequency (RP5, after the phase-6 vendor_boot/daemon is flashed):
    the row shows 670 stock; select 765/850/940 and confirm
    `persist.ashfall.perf.gpu_max_mhz` plus `ashfall.status.perf.gpu_max_mhz`
@@ -1132,7 +1135,7 @@ trampoline and the two `TileService`s.
   active.  It never touches the real properties, is off by default, and is
   irrelevant in production: `Perf.mockEnabled()` also requires
   `Build.TYPE` `userdebug`/`eng`, so a user build ignores the flag entirely.
-  The row adds a `Preview mock: …` line while it is active so a screenshot
+  The row adds a `Preview only: simulated value` line while it is active so a screenshot
   cannot be mistaken for a daemon reading.
 * **Theme parity uses SettingsLib's colours explicitly.**  The app does not
   invent a grey and does not rely on `?android:attr/colorBackground` (in this

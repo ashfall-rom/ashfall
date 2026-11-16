@@ -75,7 +75,7 @@ unknown keys are ignored by both sides (the app sanitises to `DEFAULT`).
 ## 2. Homepage summary
 
 `ControllerSummary` keeps the deadzone text and appends the fusion state on the
-same line: `Stick deadzone 5% · 3% · 2 pads -> Fusion`.  The homepage summarizes
+same line: `Stick deadzone 5% · 3% · 2 pads · Fusion`.  The homepage summarizes
 every row from the UI thread, so the pad list comes from a cache
 (`FusionClient.cache()`) refreshed in the background at most every 5 s and only
 while fusion is on; the UI thread never blocks on the socket.
@@ -165,9 +165,10 @@ the tile subtitle and the D-pad focus — screenshots were captured as well
 but a theme *look* review (pure black) is an orchestrator/hardware item.
 
 1. **Daemon unavailable (no feeder).**  The Controller page shows the Fusion
-   category above the tester rows, the switch off, `daemon unavailable` in both
-   the pad list and the state line.  With fusion switched on and the feeder
-   stopped, the page and the dialog still say `daemon unavailable` and the tile
+   category above the tester rows, the switch off, `No pad found. Connect a pad
+   and rescan.` in the pad list and `Unavailable` in the state line.  With fusion
+   switched on and the feeder stopped, the page and the dialog still say
+   `Unavailable` and the tile
    subtitle is `unavailable` — the tile stays tappable on purpose, so the switch
    can still be turned off.  Nothing crashes, nothing retries in a loop.
 2. **Fake daemon (`tools/mock/AshfallMockDaemon.c`).**  The existing test-only
@@ -186,7 +187,7 @@ but a theme *look* review (pure black) is an orchestrator/hardware item.
 | Layout dialog: six entries, the daemon-reported entry checked; choosing Nintendo wrote `2f24:0001:mcu=NINTENDO` and the mock logged `FUSION LAYOUT 2f24:0001:mcu NINTENDO`; the row then read `Layout: Nintendo` | pass |
 | Custom editor: `abc` refused with the dialog kept open and no property write; an empty list cleared the entry and set `CUSTOM`; `304->305,305->304` stored `2dc8:3106:bt=304->305,305->304` and logged `FUSION REMAP 2dc8:3106:bt 304->305,305->304` | pass |
 | Rescan row and the dialog's button both logged `FUSION RESCAN` | pass |
-| State line `2 pads -> Fusion`; with fusion on and no daemon `daemon unavailable` | pass |
+| State line `2 pads · Fusion`; with fusion on and no daemon `Unavailable` | pass |
 | QS tile: `Fusion` + `2 pads`, `Fusion` + `Off` when off, `Fusion` + `unavailable` when on without a daemon; active state follows the switch | pass |
 | QS dialog: switch, state line, both pads with layouts, inline layout options (Nintendo checked, choosing Xbox wrote the property and `FUSION LAYOUT`), Rescan, More settings, Done — header and footer fixed, see the geometry below | pass |
 | More settings opens `ControllerActivity`; long-press on the tile from the launcher opens `ControllerActivity` | pass |
@@ -218,7 +219,7 @@ and the card, and the pad list must be the only scrolling view.  Values are
   `TileService` context only picks up the ui mode when it is (re)created, so the
   night check force-stops the app after the mode change.
 * Daemon unavailable (mock killed with the dialog open): same geometry, the
-  state line reads `daemon unavailable` and the pad list is replaced by the
+  state line reads `Unavailable` and the pad list is replaced by the
   note, with Done still inside the card.
 
 **#166 (dialog width and tap gate).**  The window is now sized from

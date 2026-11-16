@@ -144,7 +144,7 @@
     <string name="fan_gpu_confirm_enable">Use 1000 MHz</string>
     <string name="fan_advanced_category">Advanced</string>
     <string name="fan_advanced_permanent_title">Keep throttling override after reboot</string>
-    <string name="fan_advanced_permanent_summary">Keep the override on after a reboot</string>
+    <string name="fan_advanced_permanent_summary">Stays on after every reboot. Dangerous if left on.</string>
     <string name="fan_version_title">AshFall settings version</string>
     <string name="fan_version_summary">%1$s</string>
     <string name="fan_advanced_unlocked">Advanced settings unlocked</string>
@@ -246,7 +246,7 @@
     <string name="controller_cal_source_default">default</string>
     <string name="controller_cal_saved">Calibration saved</string>
     <string name="controller_cal_reset_done">User calibration deleted</string>
-    <string name="controller_cal_error">Could not apply the change: %1$s</string>
+    <string name="controller_cal_error">Could not apply the change</string>
 
     <!-- The tester strings (issue #84) live in values/strings_controller.xml. -->
 
@@ -332,7 +332,9 @@
     <string name="power_throttle_confirm_enable">Enable</string>
     <string name="power_advanced_category">Advanced</string>
     <string name="power_advanced_permanent_title">Keep throttling override after reboot</string>
-    <string name="power_advanced_permanent_summary">Keep the override on after a reboot</string>
+    <string name="power_advanced_permanent_summary">Stays on after every reboot. Dangerous if left on.</string>
+    <string name="power_advanced_permanent_confirm_title">Keep the override after reboot?</string>
+    <string name="power_advanced_permanent_confirm_body">The override switches back on at every boot, so the device can get dangerously hot, drain the battery and wear out faster. Turn it off when you no longer need it.</string>
     <string name="power_version_title">AshFall settings version</string>
     <string name="power_version_summary">%1$s</string>
     <string name="power_advanced_unlocked">Advanced settings unlocked</string>

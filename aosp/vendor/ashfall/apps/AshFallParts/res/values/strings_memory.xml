@@ -42,7 +42,7 @@
     <string name="mem_swap_size_title">Swapfile size</string>
     <string name="mem_swap_free">%1$s free</string>
     <string name="mem_swap_warning">Swap is far slower than RAM, and heavy use wears the storage out.</string>
-    <string name="mem_swap_too_large">Larger than the free storage — it will be refused.</string>
+    <string name="mem_swap_too_large">Leaves too little free storage — it will be refused.</string>
     <string name="mem_swap_unavailable">The swapfile is not available on this build</string>
     <string name="mem_swap_confirm_title">Create a swapfile?</string>
     <string name="mem_swap_confirm_body">The swapfile (%1$s) is created on internal storage. It is far slower than RAM, the device can feel sluggish once it swaps, and heavy use wears the storage out.</string>

@@ -23,8 +23,12 @@
     <string name="tester_no_raw_v2">Raw input unavailable; normal buttons are shown. B or Back leaves.</string>
     <string name="tester_grab_failed">Button capture failed; Home, Back and Select may still reach the system.</string>
     <string name="tester_close">Close</string>
-    <string name="tester_grab_state">GRAB ON</string>
-    <string name="tester_grab_state_off">GRAB OFF</string>
+    <string name="tester_grab_state">Captured</string>
+    <string name="tester_grab_state_off">Released</string>
+
+    <!-- Tester read-out panel (drawn by ui/ControllerTesterView). -->
+    <string name="tester_panel_title">Input</string>
+    <string name="tester_panel_unavailable">No live values</string>
 
     <!-- Calibration wizard (issue #84, item 6): each step waits for Start. -->
     <string name="cal_step_release_body_v2">Let go of the sticks and triggers, then press Start.</string>

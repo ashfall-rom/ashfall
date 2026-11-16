@@ -27,7 +27,7 @@ preset.  There is no Apply button: every control writes its property and
 | CPU load / GPU load | sliders 0..100 % | starts/levels the `hw/Stress` load (#156 §4) |
 | Stress test | status row | countdown; the row stops the load while it runs |
 | Override throttling | switch + danger dialog | `ashfall.perf.throttle_override` (not persistent) |
-| Advanced (hidden) | switch | `persist.ashfall.perf.throttle_override_permanent` |
+| Advanced (hidden) | switch + danger dialog | `persist.ashfall.perf.throttle_override_permanent` |
 | Reset to stock | row | stock caps, `schedutil`, 670 MHz GPU, override off, Balanced |
 | Version | info row | seven taps reveal Advanced (shared UI pref with the Fan page) |
 
@@ -328,8 +328,7 @@ installed, mock on (`tools/mock/power-perf.sh on`), 2026-11-15.
   preset listed (`Low power`, `Balanced` marked `Active`, `Performance` showing
   `1804 / 2419 / 2841 MHz · performance · GPU 850 MHz`).  Opening Performance
   showed the three cap sliders, the governor row
-  (`performance - one governor for all three policies` plus "the caps still
-  apply"), and the GPU row.  The governor dialog listed
+  (`performance · all cores` plus "the caps still apply"), and the GPU row.  The governor dialog listed
   `schedutil / conservative / powersave / performance` with `performance`
   checked.  The GPU dialog listed all six steps; selecting 940 MHz persisted it
   in the preset (`"gpu_mhz":940` in `power_presets.xml`) and "Reset to factory

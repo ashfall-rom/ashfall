@@ -445,16 +445,40 @@ public class PowerFragment extends PreferenceFragmentCompat {
         mPermanent.setTitle(R.string.power_advanced_permanent_title);
         mPermanent.setSummary(R.string.power_advanced_permanent_summary);
         mPermanent.setOnToggleRequestedListener((preference, desired) -> {
-            Power.setThrottlePermanent(desired);
-            if (desired) {
-                // Also apply it now, otherwise "at every boot" would do nothing
-                // until the next boot.
-                Power.setThrottleOverride(true);
+            if (!desired) {
+                Power.setThrottlePermanent(false);
+                refreshToggles();
+                return;
             }
-            refreshToggles();
+            confirmPermanentOverride();
         });
         mAdvancedCategory.addPreference(mPermanent);
         refreshToggles();
+    }
+
+    /**
+     * Arming the permanent override also arms the override itself and survives
+     * a reboot, so it goes through the same risk text as the override switch
+     * instead of being one silent D-pad press (issue #177).
+     */
+    private void confirmPermanentOverride() {
+        if (!isAdded()) {
+            return;
+        }
+        new android.app.AlertDialog.Builder(requireContext())
+                .setTitle(R.string.power_advanced_permanent_confirm_title)
+                .setMessage(R.string.power_advanced_permanent_confirm_body)
+                .setNegativeButton(R.string.cancel, null)
+                .setPositiveButton(R.string.power_throttle_confirm_enable, (dialog, which) -> {
+                    Power.setThrottlePermanent(true);
+                    // Also apply it now, otherwise "at every boot" would do
+                    // nothing until the next boot.
+                    Power.setThrottleOverride(true);
+                    if (isAdded()) {
+                        refreshToggles();
+                    }
+                })
+                .show();
     }
 
     private void onVersionTapped() {

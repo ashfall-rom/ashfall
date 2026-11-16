@@ -39,7 +39,7 @@ page**, and nothing in the app or in `ashfall-hwd` reads or writes `zram0`.
   from RAM**: 16 GB is allowed on the 8 GB unit.  Verified on the 3 GB
   emulator, where the slider reaches 16384 MB.
 * The row always shows free space (`4.5 GB free`), and adds
-  `Larger than the free storage — it will be refused.` when the
+  `Leaves too little free storage — it will be refused.` when the
   request plus the daemon's 2 GB reserve does not fit.  The page **warns**, it
   does not clamp the write: the daemon is the single enforcement point
   (issue #141, "free-space guard"), and a clamp in two places is how the two
@@ -108,7 +108,7 @@ lease `emulator-memory` via `scripts/device/lock.sh`, daemon status mocked with
 | page rows, fresh install | `Status`: `Swap` `Off`, `Free storage` `4.7 GB free of 5.8 GB`; `Swapfile` -> `Swapfile size` `Off`; no other control on the page |
 | swap off -> on (D-pad to the slider, right) | `Create a swapfile?` with the warning; `persist.ashfall.mem.swap_mb` still empty; `Back`/`CANCEL` leaves it empty and the slider at `Off`; `CREATE` writes `256` |
 | D-pad step | `256 -> 512 MB`, one 256 MB step per right press; at `16128 MB` one more press gives `16384 MB` and further presses stop there |
-| free-space guard | at `16128/16384 MB` the row adds `Larger than the free storage — it will be refused.` (4.7 GB free) |
+| free-space guard | at `16128/16384 MB` the row adds `Leaves too little free storage — it will be refused.` (4.7 GB free) |
 | live status | `337 MB used of 1.0 GB` (feeder), `4.7 GB free of 5.8 GB` |
 | unavailable (`mem-status.sh start unavailable`) | Swap status `—`; the slider is `enabled=false` with `The swapfile is not available on this build`; D-pad right cannot change it |
 | Handheld row (`MemorySummary`) | `Swap 1.0 GB`; `Unavailable` when swap is `-1` |
