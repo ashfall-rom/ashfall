@@ -1700,6 +1700,49 @@ static void test_status_interval(void)
     CHECK(STATUS_LIVE_MS <= STATUS_INTERVAL_MS);
 }
 
+/* --- #94/#180: ashfall.ui.* publisher heartbeat tokens ------------------- */
+
+static void test_ui_heartbeat(void)
+{
+    struct hwd_ui_heartbeat beat;
+
+    memset(&beat, 0, sizeof(beat));
+    /* No token change observed yet: nothing is fresh. */
+    CHECK(!hwd_ui_heartbeat_fresh(&beat, 0));
+
+    /* A changed, non-empty token is a beat. */
+    CHECK(hwd_ui_heartbeat_update(&beat, "1000", 1000));
+    CHECK(hwd_ui_heartbeat_fresh(&beat, 1000));
+    CHECK(hwd_ui_heartbeat_fresh(&beat, 2500)); /* exactly 1.5 s */
+    CHECK(!hwd_ui_heartbeat_fresh(&beat, 2501));
+
+    /* The same token again is not a new beat (no serial/side channel). */
+    CHECK(!hwd_ui_heartbeat_update(&beat, "1000", 2000));
+    CHECK(!hwd_ui_heartbeat_fresh(&beat, 2501));
+
+    /* The next changed token refreshes it again. */
+    CHECK(hwd_ui_heartbeat_update(&beat, "1500", 2600));
+    CHECK(hwd_ui_heartbeat_fresh(&beat, 2600));
+    CHECK(!hwd_ui_heartbeat_fresh(&beat, 4101));
+
+    /* Empty values never count as a heartbeat. */
+    CHECK(!hwd_ui_heartbeat_update(&beat, "", 3000));
+    CHECK(!hwd_ui_heartbeat_update(&beat, NULL, 3000));
+
+    /* A token already present at startup is seeded, not treated as a beat;
+     * the first genuine change after it is. */
+    hwd_ui_heartbeat_seed(&beat, "4000");
+    CHECK(!hwd_ui_heartbeat_fresh(&beat, 0));
+    CHECK(!hwd_ui_heartbeat_update(&beat, "4000", 5000));
+    CHECK(!hwd_ui_heartbeat_fresh(&beat, 5000));
+    CHECK(hwd_ui_heartbeat_update(&beat, "4500", 5100));
+    CHECK(hwd_ui_heartbeat_fresh(&beat, 5100));
+
+    CHECK_EQ(HWD_UI_HEARTBEAT_MS, 500);
+    CHECK_EQ(HWD_UI_HEARTBEAT_TIMEOUT_MS, 1500);
+    CHECK(HWD_UI_HEARTBEAT_MS * 3 == HWD_UI_HEARTBEAT_TIMEOUT_MS);
+}
+
 /* --- #129: max_pct lowered while the spin-up kick is open ---------------- */
 
 static void test_kick_max_lowered(void)
@@ -1776,6 +1819,7 @@ int main(void)
     test_gpu_clock();
     test_gpu_load();
     test_status_interval();
+    test_ui_heartbeat();
     test_swap_header();
     test_cpu();
     test_cpu_load();

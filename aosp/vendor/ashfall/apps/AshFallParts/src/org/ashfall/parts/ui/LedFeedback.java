@@ -18,6 +18,7 @@ package org.ashfall.parts.ui;
 
 import android.os.Handler;
 import android.os.Looper;
+import android.os.SystemClock;
 
 import org.ashfall.parts.hw.Led;
 import org.ashfall.parts.ipc.Props;
@@ -35,11 +36,14 @@ import java.util.Locale;
  * <p>A property alone cannot be crash-safe: a force-stop never runs
  * {@link #clear()}, so the daemon would keep applying the last colour forever.
  * While the tester is active this class therefore also refreshes
- * {@code ashfall.ui.led_override_live=1} every 500 ms, and the daemon drops the
- * override once that heartbeat is 1.5 s old (issue #94).  The heartbeat stops
- * when the publisher stops: {@link #clear()} stops it and clears both
- * properties, and a killed process stops writing it, so the rings return to
- * the configured lighting on their own.
+ * {@code ashfall.ui.led_override_live} every 500 ms with a token that changes
+ * on every write ({@link SystemClock#elapsedRealtime()}), and the daemon drops
+ * the override once the last change is 1.5 s old (issue #94).  The value is
+ * opaque: only "different from the previous value" matters, so liveness does
+ * not depend on undocumented property-service behaviour (issue #180).  The
+ * heartbeat stops when the publisher stops: {@link #clear()} stops it and
+ * clears both properties, and a killed process stops writing it, so the rings
+ * return to the configured lighting on their own.
  */
 public final class LedFeedback {
 
@@ -63,9 +67,11 @@ public final class LedFeedback {
             if (!mHeartbeat) {
                 return;
             }
-            // Always write, even when the value is unchanged: the daemon
-            // watches the property's write serial, not its value.
-            Props.set(OVERRIDE_LIVE, "1");
+            // A changing token, not a constant: the daemon treats a value
+            // change as the heartbeat, so this does not rely on the property
+            // service bumping a serial for an identical write (#180).
+            Props.set(OVERRIDE_LIVE,
+                    Long.toString(SystemClock.elapsedRealtime()));
             mHandler.postDelayed(this, HEARTBEAT_MS);
         }
     };
