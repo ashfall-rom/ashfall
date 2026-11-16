@@ -24,12 +24,13 @@ import android.os.Bundle;
 import androidx.annotation.Nullable;
 
 import org.ashfall.parts.ControllerActivity;
+import org.ashfall.parts.DisplayActivity;
 import org.ashfall.parts.FanActivity;
 import org.ashfall.parts.LightingActivity;
 import org.ashfall.parts.PowerActivity;
 
 /**
- * Long-press target of both tiles.
+ * Long-press target of the tiles.
  *
  * <p>{@code TileService} has no {@code onLongClick()} callback: SystemUI
  * resolves {@code android.service.quicksettings.action.QS_TILE_PREFERENCES}
@@ -53,6 +54,9 @@ public class TilePreferencesActivity extends Activity {
         } else if (tile != null && tile.getClassName() != null
                 && tile.getClassName().contains("Power")) {
             target = PowerActivity.class;
+        } else if (tile != null && tile.getClassName() != null
+                && tile.getClassName().contains("Desktop")) {
+            target = DisplayActivity.class;
         } else {
             target = FanActivity.class;
         }

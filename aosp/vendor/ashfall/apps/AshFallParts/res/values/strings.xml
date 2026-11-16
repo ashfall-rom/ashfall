@@ -24,6 +24,7 @@
     <!-- Pages -->
     <string name="fan_title">Fan</string>
     <string name="lighting_title">Lighting</string>
+    <string name="display_title">Display</string>
     <string name="controller_title">Controller</string>
     <string name="power_title">Power</string>
     <string name="memory_title">Memory</string>
@@ -63,6 +64,9 @@
     <!-- Handheld page -->
     <string name="home_fan_summary">%1$s · %2$s</string>
     <string name="home_lighting_summary">%1$s · %2$s</string>
+    <string name="home_display_on">Desktop mode</string>
+    <string name="home_display_off">Fullscreen</string>
+    <string name="home_display_unknown">Display mode unavailable</string>
     <string name="home_controller_summary">Stick deadzone %1$d%% · %2$d%%</string>
     <string name="home_power_summary_empty">Live power, clocks and presets</string>
     <string name="home_daemon_note">Fan and lighting changes apply immediately.</string>
@@ -234,6 +238,17 @@
     <string name="lighting_value">Brightness</string>
     <string name="lighting_presets_colour">Preset colours</string>
 
+    <!-- Display / desktop mode (#131 F2).  Short and user-facing: no property
+         names, no window-manager or density internals. -->
+    <string name="display_about_title">Desktop mode</string>
+    <string name="display_desktop_title">Desktop mode</string>
+    <string name="display_desktop_summary_on">Apps in windows, with a taskbar and mouse pointer</string>
+    <string name="display_desktop_summary_off">Fullscreen, one app at a time</string>
+    <string name="display_desktop_summary_unknown">This build cannot report the display mode</string>
+    <string name="display_limits_note">Internal screen only. Desktop mode adds a taskbar and a mouse pointer. Apps restart while the screen switches.</string>
+    <string name="display_chord_note">Hold L1 + R1 + Start to switch from a game.</string>
+    <string name="display_desktop_failed">Couldn\'t switch the display mode. Nothing changed.</string>
+
     <!-- Controller -->
     <string name="controller_tester_title">Controller tester</string>
     <string name="controller_calibration_title">Calibration</string>
@@ -391,6 +406,7 @@
     <string name="tile_lighting">Lighting</string>
     <string name="tile_power">Power</string>
     <string name="tile_fusion">Fusion</string>
+    <string name="tile_desktop">Desktop mode</string>
     <string name="tile_fan_dialog_title">Fan</string>
     <string name="tile_fan_dialog_subtitle">%1$s · %2$d °C</string>
     <string name="tile_lighting_dialog_title">Lighting</string>
