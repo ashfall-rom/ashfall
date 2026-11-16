@@ -266,10 +266,13 @@ The node's label is applied by userspace `restorecon` from `file_contexts`
 (verified: `getfattr -n security.selinux` shows a stored xattr on `gpuclk`, and
 those specific labels only exist in `vendor_file_contexts`).  `vendor_file_contexts`
 loads *after* `system_ext_file_contexts`, so the system_ext policy uses
-**exact pathname** specs (every `.` escaped) for exactly three attributes:
+**exact pathname** specs (every `.` escaped) for exactly five attributes,
+under both the `/platform` and the legacy `/devices/soc` prefixes:
 
 ```
 /sys/devices/platform/soc/3d00000\.qcom,kgsl-3d0/kgsl/kgsl-3d0/gpu_available_frequencies
+/sys/devices/platform/soc/3d00000\.qcom,kgsl-3d0/kgsl/kgsl-3d0/gpuclk
+/sys/devices/platform/soc/3d00000\.qcom,kgsl-3d0/kgsl/kgsl-3d0/gpu_busy_percentage
 /sys/devices/platform/soc/3d00000\.qcom,kgsl-3d0/devfreq/3d00000\.qcom,kgsl-3d0/max_freq
 /sys/devices/platform/soc/3d00000\.qcom,kgsl-3d0/devfreq/3d00000\.qcom,kgsl-3d0/min_freq
 ```
@@ -278,12 +281,14 @@ loads *after* `system_ext_file_contexts`, so the system_ext policy uses
 behind all regex specifications, so these exact entries are matched first no
 matter which partition the competing regex came from.  They are labelled
 `ashfall_gpu_sysfs` (`fs_type, sysfs_type`) and `ashfall_hwd` gets
-`rw_file_perms` on that type.  The same three paths are repeated in
-`genfs_contexts` as a fallback (longer than the vendor `/class/kgsl` prefix).
+`rw_file_perms` on that type.  The same five paths (both prefixes) are repeated
+in `genfs_contexts` as a fallback (longer than the vendor `/class/kgsl` prefix).
 
-Only these three attributes change label; `gpuclk`, `gpu_model`, `gpubusy`,
-`max_gpuclk` and the rest keep `vendor_sysfs_kgsl`, so most stock vendor domains
-keep their access.  Directory traversal needs no new rule: the stock vendor
+Only these five attributes change label; `gpu_model`, `max_gpuclk`, `gpubusy`
+and the rest keep `vendor_sysfs_kgsl`, so most stock vendor domains keep their
+access.  `gpuclk` (live clock, #124) and `gpu_busy_percentage` (live load, #156)
+are read-only telemetry for the Parts app, added after the cap.  Directory
+traversal needs no new rule: the stock vendor
 policy grants `search` on `vendor_sysfs_kgsl:dir` to every domain except
 `isolated_app`.
 
@@ -323,6 +328,8 @@ therefore opens the resolved device paths directly (the same paths that
 
 ```
 /sys/devices/platform/soc/3d00000.qcom,kgsl-3d0/kgsl/kgsl-3d0/gpu_available_frequencies
+/sys/devices/platform/soc/3d00000.qcom,kgsl-3d0/kgsl/kgsl-3d0/gpuclk
+/sys/devices/platform/soc/3d00000.qcom,kgsl-3d0/kgsl/kgsl-3d0/gpu_busy_percentage
 /sys/devices/platform/soc/3d00000.qcom,kgsl-3d0/devfreq/3d00000.qcom,kgsl-3d0/max_freq
 /sys/devices/platform/soc/3d00000.qcom,kgsl-3d0/devfreq/3d00000.qcom,kgsl-3d0/min_freq
 ```

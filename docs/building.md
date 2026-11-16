@@ -254,6 +254,12 @@ patches/system/core/0002-....patch       ->  <tree>/system/core
 
 Rules:
 
+- **Path prefixes**: every diff path must be relative to the project root, e.g.
+  `a/packages/SystemUI/...` inside `patches/frameworks/base/`. A patch copied
+  from a whole-tree `git format-patch` keeps the `a/frameworks/base/` prefix,
+  which plain `git am` rejects (and `--3way` only survives when the index blobs
+  exist upstream); `scripts/patches-lint.sh` reports those without needing a
+  tree (issue #221).
 - **Baseline**: `repo manifest` for the project (the manifest's revision, not
   the current HEAD) in a repo-synced tree; for plain git checkouts (tests) the
   recorded `<project>/.git/ashfall-patches-base`, else `HEAD`. `--rev` pins it
