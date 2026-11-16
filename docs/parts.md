@@ -1,15 +1,20 @@
 # AshFall Parts (`org.ashfall.parts`)
 
 The AshFall hardware tools as a built-in Settings module: one root entry
-**AshFall settings → Fan / Lighting / Controller**, plus the **Fan** and
-**Lighting** Quick Settings tiles.  No launcher entry, no separate-looking
-control app.
+**AshFall settings → Fan / Lighting / Display / Controller / Power / Memory**,
+plus the **Fan**, **Lighting**, **Power**, **Fusion** and **Desktop** Quick
+Settings tiles.  No launcher entry, no separate-looking control app.
 
 - Source: `aosp/vendor/ashfall/apps/AshFallParts/`
 - Module: `AshFallParts` (`android_app`), added to `PRODUCT_PACKAGES` in
   `vendor/ashfall/apps.mk`
 - Package: `org.ashfall.parts`, platform-signed, privileged, `system_app`
 - Install path: `/system_ext/priv-app/AshFallParts`
+- Boot guard: `DesktopBootReceiver` is the app's only receiver.  It is
+  direct-boot aware, handles `LOCKED_BOOT_COMPLETED` and `BOOT_COMPLETED`,
+  idempotently resets display 0 and `persist.ashfall.pad.mode`, and
+  applies or clears the saved density, then sends no broadcast
+  (`docs/desktop-mode.md` §9.5).
 - Contract: `docs/phase5.md` §2 (properties, socket) and §3 (this app)
 - Clean-room: all code, drawables and strings in this directory were written
   for AshFall.  No Retroid code, assets or strings are used.
@@ -64,7 +69,7 @@ Details that matter:
   expressive homepage (Android 16+) wraps it in the same layer container it
   uses for its own entries.
 
-`HandheldActivity` and the three page activities extend
+`HandheldActivity` and the page activities extend
 `com.android.settingslib.collapsingtoolbar.CollapsingToolbarBaseActivity`, the
 same base class as a Settings sub-page.  The visible root entry is **AshFall
 settings** (`handheld_title`); the class name is only an implementation detail.

@@ -395,7 +395,8 @@ before any worker starts, so no two workers edit the same page shell.
   `max_pct` kick window) are fixed in the hwd worker; #132 (fan graph duplicate
   sample) in the Power app worker.
 - Desktop mode: conditional Launcher3 taskbar, 320 dpi, entry via QS tile +
-  Parts row + `L1+R1+Start`, internal display only in v1.
+  Parts row; `L1+R1+Start` switches the pointer mode only. Internal display
+  only in v1.
 - Performance tuning: Eden, Winlator and one native game; p95 frame time and
   1% low decide; MGLRU/PELT stay hidden/root-only in v1.
 
