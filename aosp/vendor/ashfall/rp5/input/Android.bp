@@ -14,6 +14,7 @@ cc_binary {
         "input.c",
         "mapping.c",
         "plat.c",
+        "pointer.c",
         "session.c",
         "uinput_dev.c",
     ],

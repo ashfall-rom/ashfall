@@ -24,6 +24,11 @@
  * sensor path is untouched.  With fusion off the device is exactly what it
  * has always been ("AshFall RP5 Gamepad", 2020:3001).
  *
+ * Desktop mode (#131) is additive: persist.ashfall.pad.mode=desktop creates a
+ * second uinput device, "AshFall RP5 Pointer" (EV_REL + BTN_LEFT/RIGHT/MIDDLE
+ * + INPUT_PROP_POINTER), and drives it from the right stick at a fixed 125 Hz.
+ * The gamepad device, its capabilities and the RAW bit layout never change.
+ *
  * The MCU protocol (0xA5 0xD3 0x5A 0x3D framing) was recovered from the stock
  * librsinput.so; see docs/rp5/input.md for the evidence.
  *
@@ -36,6 +41,7 @@
 #include "input.h"
 #include "mapping.h"
 #include "plat.h"
+#include "pointer.h"
 #include "session.h"
 #include "uinput_dev.h"
 
@@ -184,12 +190,17 @@ struct daemon {
 
     int mcu_fd;
     int uinput_fd;
+    int pointer_fd; /* desktop-mode pointer device, -1 in game mode (#131) */
     int own_fd;    /* our own event node, for EV_FF play events */
     int notify_fd; /* inotify watch on /dev/input */
 
     bool fusion_device; /* the uinput device currently is the fusion pad */
     bool grabbed;       /* a tester owns GRAB ON */
     bool rumble;        /* the uinput device really advertises EV_FF */
+
+    /* Desktop-mode gamepad pointer (#131): mapping logic plus the mode latch
+     * it shares with persist.ashfall.pad.mode. */
+    struct pointer_state pointer;
 
     uint8_t rx[4096];
     size_t rx_len;
@@ -202,6 +213,7 @@ struct daemon {
     int64_t last_props_ms;
     int64_t last_mcu_ms;
     int64_t last_uinput_ms;
+    int64_t last_pointer_ms;
     int64_t last_init_ms;
     int64_t last_status_ms;
     int64_t last_scan_ms;
@@ -341,6 +353,79 @@ static int create_uinput(struct daemon *d, bool fusion_on)
     ah_logf(AH_LOG_INFO, "uinput %s created (%04x:%04x%s)", spec.name,
             spec.vendor, spec.product, rumble ? ", rumble" : "");
     return fd;
+}
+
+/* --- desktop pointer device (#131) ---------------------------------------- */
+
+/*
+ * A second device, created only while persist.ashfall.pad.mode=desktop and
+ * destroyed on the way back to game mode.  It is separate on purpose: the
+ * gamepad capability set must never grow relative axes or mouse buttons, and
+ * with no device present in game mode no app can see a mouse at all.
+ */
+static int create_pointer_uinput(struct daemon *d)
+{
+    struct uinput_dev_spec spec;
+    bool rumble = false;
+    int fd;
+
+    memset(&spec, 0, sizeof(spec));
+    spec.name = POINTER_NAME;
+    spec.bustype = BUS_USB;
+    spec.vendor = POINTER_VID;
+    spec.product = POINTER_PID;
+    spec.version = 1;
+    spec.keys = pointer_keys;
+    spec.key_count = pointer_key_count;
+    spec.rels = pointer_rels;
+    spec.rel_count = pointer_rel_count;
+    spec.props = pointer_props;
+    spec.prop_count = pointer_prop_count;
+
+    fd = uinput_dev_create(&uinput_ops, &spec, &rumble);
+    if (fd < 0) {
+        ah_logf(AH_LOG_ERROR, "uinput %s: %s", spec.name, strerror(errno));
+        return -1;
+    }
+    ah_logf(AH_LOG_INFO, "uinput %s created (%04x:%04x, desktop mode)",
+            spec.name, spec.vendor, spec.product);
+    /* The kernel device starts with no state: clear ours so the next tick
+     * re-reports whatever is physically held instead of assuming the button
+     * that was pressed while the device was missing is already down. */
+    pointer_release(&d->pointer, NULL, NULL);
+    return fd;
+}
+
+static void pointer_destroy(struct daemon *d)
+{
+    if (!d || d->pointer_fd < 0)
+        return;
+    ioctl(d->pointer_fd, UI_DEV_DESTROY);
+    close(d->pointer_fd);
+    d->pointer_fd = -1;
+}
+
+/* Emit into the pointer device only.  GRAB ON suppresses this exactly like the
+ * gamepad sink, so a grabbed tester never moves the system cursor.  A write
+ * error (the kernel dropped the device) tears it down; daemon_tick recreates it
+ * on the next retry while desktop mode is still active. */
+static void pointer_emit(void *ctx, uint16_t type, uint16_t code, int32_t value)
+{
+    struct daemon *d = ctx;
+    struct input_event ev;
+
+    if (!d || d->pointer_fd < 0 || d->grabbed)
+        return;
+    memset(&ev, 0, sizeof(ev));
+    ev.type = type;
+    ev.code = code;
+    ev.value = value;
+    if (write_all(d->pointer_fd, &ev, sizeof(ev)) < 0) {
+        ah_logf(AH_LOG_ERROR, "pointer uinput write failed: %s; recreating",
+                strerror(errno));
+        pointer_destroy(d);
+        d->last_pointer_ms = ah_now_ms();
+    }
 }
 
 /* "/dev/input" + "/" + a (short) event name; never truncates silently, never
@@ -861,7 +946,7 @@ static void on_calibration_changed(struct input_ctx *ctx)
 static void decode_status(const uint8_t *data, size_t len,
                           const struct input_ctx *ctx,
                           struct raw_sample *raw, int axes[AXIS_COUNT],
-                          uint16_t *keys_out)
+                          uint16_t *keys_out, int sticks[4])
 {
     uint16_t keys;
     int lx, ly, rx, ry;
@@ -887,6 +972,16 @@ static void decode_status(const uint8_t *data, size_t len,
                    ctx->cal.rx.max);
     ry = stick_map(raw->ry, ctx->cal.ry.center, ctx->cal.ry.min,
                    ctx->cal.ry.max);
+
+    /* The pointer applies its own fixed 5 % deadzone, so it gets the
+     * calibrated values before the user deadzone is folded in. */
+    if (sticks) {
+        sticks[0] = lx;
+        sticks[1] = ly;
+        sticks[2] = rx;
+        sticks[3] = ry;
+    }
+
     stick_apply_deadzone(&lx, &ly, ctx->dz.inner_pct, ctx->dz.outer_pct);
     stick_apply_deadzone(&rx, &ry, ctx->dz.inner_pct, ctx->dz.outer_pct);
 
@@ -948,6 +1043,8 @@ static void mcu_release_state(struct daemon *d)
     } else {
         mcu_release(d);
     }
+    if (!d->grabbed)
+        pointer_release(&d->pointer, pointer_emit, d);
     d->good_frames = 0;
 }
 
@@ -972,6 +1069,7 @@ static void handle_status(struct daemon *d, const uint8_t *data, size_t len)
 {
     struct raw_sample raw;
     int axes[AXIS_COUNT] = {0};
+    int sticks[4] = {0};
     uint16_t keys = 0;
     int64_t now_ms;
     int changed = 0;
@@ -980,8 +1078,14 @@ static void handle_status(struct daemon *d, const uint8_t *data, size_t len)
         return;
 
     now_ms = ah_now_ms();
-    decode_status(data, len, &d->ctx, &raw, axes, &keys);
+    decode_status(data, len, &d->ctx, &raw, axes, &keys, sticks);
     control_stream_raw(d->control, now_ms, &raw);
+
+    /* Track every frame, grabbed or not: a mode switch or GRAB OFF must resume
+     * from the current physical state, never a stale one.  pointer_tick() only
+     * emits in desktop mode and outside GRAB. */
+    pointer_frame(&d->pointer, keys, sticks[2], sticks[3], axes[AXIS_L2],
+                  axes[AXIS_R2], now_ms);
 
     if (d->grabbed) {
         /*
@@ -1224,15 +1328,67 @@ static void sync_grab(struct daemon *d)
             fusion_release(&d->fusion, sink_emit, d);
         else
             mcu_release(d);
+        /* Still allowed to emit: d->grabbed flips after this.  GRAB ON must not
+         * leave a mouse button held on the pointer device either. */
+        pointer_release(&d->pointer, pointer_emit, d);
         ah_logf(AH_LOG_INFO, "GRAB ON: uinput output suppressed");
     } else {
         d->prev_keys = 0;
         for (int i = 0; i < AXIS_COUNT; i++)
             d->prev_axes[i] = INT_MIN;
         fusion_reset_reported(&d->fusion);
+        pointer_release(&d->pointer, NULL, NULL);
         ah_logf(AH_LOG_INFO, "GRAB OFF: uinput output resumed");
     }
     d->grabbed = now;
+}
+
+/*
+ * Apply a live mode change (#131).  A switch is a hard reset for input: every
+ * button held on the gamepad and on the pointer is released (the next MCU frame
+ * re-reports the physical state), the pointer's velocity/fraction/repeat/drag
+ * state is dropped, and the pointer uinput device is created or destroyed - so
+ * game mode has no mouse device at all.
+ */
+static void apply_pad_mode(struct daemon *d)
+{
+    bool desktop = d->pointer.mode == POINTER_MODE_DESKTOP;
+
+    if (!d->grabbed) {
+        if (d->fusion_device)
+            fusion_release(&d->fusion, sink_emit, d);
+        else
+            mcu_release(d);
+        pointer_release(&d->pointer, pointer_emit, d);
+    } else {
+        /* A tester owns the input: nothing may be injected, but the state must
+         * still be clean for GRAB OFF. */
+        pointer_release(&d->pointer, NULL, NULL);
+    }
+
+    if (desktop) {
+        if (d->pointer_fd < 0) {
+            d->pointer_fd = create_pointer_uinput(d);
+            d->last_pointer_ms = ah_now_ms();
+        }
+    } else {
+        pointer_destroy(d);
+    }
+    prop_set_str(ASHFALL_PROP_PAD_MODE, pointer_mode_name(d->pointer.mode));
+}
+
+/* /dev/uinput can be missing for a moment after boot; retry rather than
+ * leaving desktop mode without a pointer. */
+static void pointer_retry(struct daemon *d)
+{
+    int64_t now = ah_now_ms();
+
+    if (d->pointer.mode != POINTER_MODE_DESKTOP || d->pointer_fd >= 0)
+        return;
+    if (now - d->last_pointer_ms < MCU_OPEN_MS)
+        return;
+    d->last_pointer_ms = now;
+    d->pointer_fd = create_pointer_uinput(d);
 }
 
 /*
@@ -1383,10 +1539,33 @@ static void daemon_tick(struct daemon *d)
         deadzones_read(&d->ctx.dz);
         retry_calibration(&d->ctx, &d->cal_retries, &d->last_cal_ms);
         fusion_settings_read(&d->fusion);
+        if (pointer_mode_read(&d->pointer)) {
+            apply_pad_mode(d);
+            ah_logf(AH_LOG_INFO, "pad mode: %s (property)",
+                    pointer_mode_name(d->pointer.mode));
+        }
         d->last_props_ms = now;
     }
 
     uinput_retry(d);
+
+    pointer_retry(d);
+    if (!d->grabbed) {
+        bool chord = false;
+
+        pointer_tick(&d->pointer, now, pointer_emit, d, &chord);
+        if (chord) {
+            enum pointer_mode next =
+                d->pointer.mode == POINTER_MODE_DESKTOP
+                    ? POINTER_MODE_GAME
+                    : POINTER_MODE_DESKTOP;
+
+            pointer_set_mode(&d->pointer, next);
+            apply_pad_mode(d);
+            ah_logf(AH_LOG_INFO, "pad mode: %s (L1+R1+Start)",
+                    pointer_mode_name(next));
+        }
+    }
 
     if (d->uinput_fd >= 0 && d->fusion.enabled != d->fusion_device)
         apply_fusion_mode(d, d->fusion.enabled);
@@ -1437,7 +1616,7 @@ int main(void)
     struct sigaction sa;
 
     memset(&d, 0, sizeof(d));
-    d.mcu_fd = d.uinput_fd = d.own_fd = d.notify_fd = -1;
+    d.mcu_fd = d.uinput_fd = d.pointer_fd = d.own_fd = d.notify_fd = -1;
     for (int i = 0; i < FUSION_MAX_PADS; i++)
         d.pads[i].fd = -1;
 
@@ -1456,6 +1635,12 @@ int main(void)
     fusion_defaults(&d.fusion);
     fusion_settings_read(&d.fusion);
     d.ctx.fusion = &d.fusion;
+
+    /* Desktop mode (#131): the effective mode is also a status property, so
+     * Parts/QS can show the state the daemon actually runs. */
+    pointer_defaults(&d.pointer);
+    pointer_mode_read(&d.pointer);
+    prop_set_str(ASHFALL_PROP_PAD_MODE, pointer_mode_name(d.pointer.mode));
 
     d.control = control_create(&d.ctx);
     if (!d.control)
@@ -1487,6 +1672,14 @@ int main(void)
     }
     d.last_scan_ms = ah_now_ms();
     ah_logf(AH_LOG_INFO, "fusion: %s", d.fusion.enabled ? "on" : "off");
+
+    if (d.pointer.mode == POINTER_MODE_DESKTOP) {
+        d.pointer_fd = create_pointer_uinput(&d);
+        d.last_pointer_ms = ah_now_ms();
+        ah_logf(AH_LOG_INFO, "pad mode: desktop (boot)");
+    } else {
+        ah_logf(AH_LOG_INFO, "pad mode: game");
+    }
 
     /*
      * One loop for everything: the MCU (which can disappear across a screen
@@ -1544,6 +1737,14 @@ int main(void)
                                 (int)ARRAY_SIZE(fds) - nfds);
 
         timeout = d.mcu_fd >= 0 && d.good_frames ? PROP_REFRESH_MS : 500;
+        /* Desktop mode emits on a fixed 125 Hz tick, so the loop must wake for
+         * it even when no MCU frame arrives. */
+        if (d.pointer_fd >= 0 && !d.grabbed) {
+            int pointer_ms = pointer_timeout_ms(&d.pointer, ah_now_ms());
+
+            if (pointer_ms >= 0 && pointer_ms < timeout)
+                timeout = pointer_ms;
+        }
         rc = poll(fds, (nfds_t)nfds, timeout);
         if (rc < 0) {
             if (errno == EINTR)
@@ -1646,6 +1847,9 @@ int main(void)
         else
             mcu_release(&d);
     }
+    /* No stuck mouse button when the daemon restarts. */
+    pointer_release(&d.pointer, d.grabbed ? NULL : pointer_emit, &d);
+    pointer_destroy(&d);
     pad_drop_all(&d);
     control_destroy(d.control);
     if (d.own_fd >= 0)

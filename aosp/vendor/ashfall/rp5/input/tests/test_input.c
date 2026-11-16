@@ -10,6 +10,7 @@
 #include "input.h"
 #include "mapping.h"
 #include "plat.h"
+#include "pointer.h"
 #include "session.h"
 #include "uinput_dev.h"
 
@@ -1568,6 +1569,8 @@ static void test_uinput_phase5_device(void)
     CHECK_EQ(call_index(&fake, UI_DEV_SETUP) >= 0, 1);
     CHECK(call_count_of(&fake, UI_SET_EVBIT, EV_FF) == 0);
     CHECK(call_count_of(&fake, UI_SET_FFBIT, FF_RUMBLE) == 0);
+    CHECK(call_count_of(&fake, UI_SET_EVBIT, EV_REL) == 0);
+    CHECK(call_count_of(&fake, UI_SET_PROPBIT, INPUT_PROP_POINTER) == 0);
     /* Holes in the keymap are skipped, never set as code 0. */
     CHECK(call_count_of(&fake, UI_SET_KEYBIT, 0) == 0);
     CHECK(call_count_of(&fake, UI_SET_KEYBIT, BTN_A) == 1);
@@ -1731,6 +1734,476 @@ static void test_deadzone_props(void)
     unsetenv("persist.ashfall.pad.trigger_deadzone");
 }
 
+/* --- #131: desktop-mode pointer ------------------------------------------ */
+
+#define CAPTURE_MAX 512
+
+struct pointer_capture {
+    int count;
+    uint16_t type[CAPTURE_MAX];
+    uint16_t code[CAPTURE_MAX];
+    int32_t value[CAPTURE_MAX];
+};
+
+static void capture_emit(void *ctx, uint16_t type, uint16_t code, int32_t value)
+{
+    struct pointer_capture *cap = ctx;
+
+    if (cap->count >= CAPTURE_MAX)
+        return;
+    cap->type[cap->count] = type;
+    cap->code[cap->count] = code;
+    cap->value[cap->count] = value;
+    cap->count++;
+}
+
+static int capture_count(const struct pointer_capture *cap, uint16_t type,
+                         uint16_t code, int32_t value)
+{
+    int count = 0;
+
+    for (int i = 0; i < cap->count; i++) {
+        if (cap->type[i] == type && cap->code[i] == code &&
+            cap->value[i] == value)
+            count++;
+    }
+    return count;
+}
+
+static int capture_sum(const struct pointer_capture *cap, uint16_t type,
+                       uint16_t code)
+{
+    int sum = 0;
+
+    for (int i = 0; i < cap->count; i++) {
+        if (cap->type[i] == type && cap->code[i] == code)
+            sum += cap->value[i];
+    }
+    return sum;
+}
+
+static int capture_max_abs(const struct pointer_capture *cap, uint16_t type,
+                           uint16_t code)
+{
+    int best = 0;
+
+    for (int i = 0; i < cap->count; i++) {
+        int value;
+
+        if (cap->type[i] != type || cap->code[i] != code)
+            continue;
+        value = cap->value[i] < 0 ? -cap->value[i] : cap->value[i];
+        if (value > best)
+            best = value;
+    }
+    return best;
+}
+
+static void test_pointer_mode(void)
+{
+    struct pointer_state ps;
+    enum pointer_mode mode = POINTER_MODE_DESKTOP;
+
+    pointer_defaults(&ps);
+    CHECK_EQ(ps.mode, POINTER_MODE_GAME);
+    CHECK(pointer_mode_parse("desktop", &mode));
+    CHECK_EQ(mode, POINTER_MODE_DESKTOP);
+    CHECK(pointer_mode_parse("game", &mode));
+    CHECK_EQ(mode, POINTER_MODE_GAME);
+    CHECK(!pointer_mode_parse("DESKTOP", &mode));
+    CHECK(!pointer_mode_parse("", &mode));
+    CHECK(!pointer_mode_parse(NULL, &mode));
+    CHECK(strcmp(pointer_mode_name(POINTER_MODE_DESKTOP), "desktop") == 0);
+    CHECK(strcmp(pointer_mode_name(POINTER_MODE_GAME), "game") == 0);
+
+    /* Missing property: game, and the first read only adopts the default. */
+    unsetenv(PROP_PAD_MODE);
+    pointer_defaults(&ps);
+    CHECK(!pointer_mode_read(&ps));
+    CHECK_EQ(ps.mode, POINTER_MODE_GAME);
+    CHECK(!pointer_mode_read(&ps));
+
+    setenv(PROP_PAD_MODE, "desktop", 1);
+    CHECK(pointer_mode_read(&ps));
+    CHECK_EQ(ps.mode, POINTER_MODE_DESKTOP);
+    CHECK(!pointer_mode_read(&ps));
+
+    /* The chord switches the live mode; the property text did not change, so
+     * the next 250 ms poll must not undo it. */
+    CHECK(pointer_set_mode(&ps, POINTER_MODE_GAME));
+    CHECK(!pointer_mode_read(&ps));
+    CHECK_EQ(ps.mode, POINTER_MODE_GAME);
+
+    /* A malformed value falls back to game; it was already game, so this is
+     * not a mode change, and the adopted text stops a per-poll log. */
+    setenv(PROP_PAD_MODE, "monitor", 1);
+    CHECK(!pointer_mode_read(&ps));
+    CHECK_EQ(ps.mode, POINTER_MODE_GAME);
+    CHECK(!pointer_mode_read(&ps));
+
+    unsetenv(PROP_PAD_MODE);
+}
+
+static void test_pointer_movement(void)
+{
+    struct pointer_state ps;
+    struct pointer_capture cap;
+    bool chord = false;
+    int64_t t = 1000;
+    int total;
+
+    /* Game mode emits nothing, even with the stick at full deflection. */
+    pointer_defaults(&ps);
+    memset(&cap, 0, sizeof(cap));
+    pointer_frame(&ps, POINTER_KEY_A | POINTER_KEY_B, 32767, 32767, 255, 255,
+                  t);
+    for (int i = 0; i < 20; i++)
+        pointer_tick(&ps, t + (int64_t)i * POINTER_TICK_MS, capture_emit, &cap,
+                     &chord);
+    CHECK_EQ(cap.count, 0);
+    CHECK(!ps.btn_left);
+    CHECK(!ps.btn_right);
+    CHECK(!ps.btn_middle);
+
+    /* Desktop, full right deflection: the ramp reaches ~1200 px/s and never
+     * exceeds it.  125 ticks is one second of motion. */
+    CHECK(pointer_set_mode(&ps, POINTER_MODE_DESKTOP));
+    pointer_frame(&ps, 0, 32767, 0, 0, 0, t);
+    pointer_release(&ps, NULL, NULL);
+    memset(&cap, 0, sizeof(cap));
+    pointer_tick(&ps, t, capture_emit, &cap, &chord); /* prime the dt */
+    for (int i = 1; i <= 125; i++)
+        pointer_tick(&ps, t + (int64_t)i * POINTER_TICK_MS, capture_emit, &cap,
+                     &chord);
+    total = capture_sum(&cap, EV_REL, REL_X);
+    CHECK(total > 1000);
+    CHECK(total <= 1200);
+    CHECK(capture_max_abs(&cap, EV_REL, REL_X) <= 10);
+    CHECK_EQ(capture_sum(&cap, EV_REL, REL_Y), 0);
+
+    /* Left deflection moves left. */
+    pointer_release(&ps, NULL, NULL);
+    pointer_frame(&ps, 0, -32767, 0, 0, 0, t);
+    memset(&cap, 0, sizeof(cap));
+    pointer_tick(&ps, t, capture_emit, &cap, &chord);
+    for (int i = 1; i <= 40; i++)
+        pointer_tick(&ps, t + (int64_t)i * POINTER_TICK_MS, capture_emit, &cap,
+                     &chord);
+    CHECK(capture_sum(&cap, EV_REL, REL_X) < 0);
+}
+
+static void test_pointer_deadzone_and_fraction(void)
+{
+    struct pointer_state ps;
+    struct pointer_capture cap;
+    bool chord = false;
+    int64_t t = 1000;
+    int total = 0;
+
+    memset(&cap, 0, sizeof(cap));
+    pointer_defaults(&ps);
+    pointer_set_mode(&ps, POINTER_MODE_DESKTOP);
+
+    /* 4.9 % of travel: inside the fixed 5 % deadzone, no motion at all. */
+    pointer_frame(&ps, 0, 1600, 0, 0, 0, t);
+    pointer_tick(&ps, t, capture_emit, &cap, &chord);
+    for (int i = 1; i <= 50; i++)
+        pointer_tick(&ps, t + (int64_t)i * POINTER_TICK_MS, capture_emit, &cap,
+                     &chord);
+    CHECK_EQ(capture_sum(&cap, EV_REL, REL_X), 0);
+
+    /* Just above the deadzone the speed is far below 1 px/tick.  Without
+     * fractional accumulation every tick would round to zero and the pointer
+     * would never move. */
+    pointer_release(&ps, NULL, NULL);
+    pointer_frame(&ps, 0, 4000, 0, 0, 0, t);
+    memset(&cap, 0, sizeof(cap));
+    pointer_tick(&ps, t, capture_emit, &cap, &chord);
+    for (int i = 1; i <= 100; i++)
+        pointer_tick(&ps, t + (int64_t)i * POINTER_TICK_MS, capture_emit, &cap,
+                     &chord);
+    total = capture_sum(&cap, EV_REL, REL_X);
+    CHECK(total >= 4);
+    CHECK(total <= 30);
+    CHECK_EQ(capture_max_abs(&cap, EV_REL, REL_X), 1);
+}
+
+static void test_pointer_buttons(void)
+{
+    struct pointer_state ps;
+    struct pointer_capture cap;
+    bool chord = false;
+    int64_t t = 1000;
+
+    memset(&cap, 0, sizeof(cap));
+    pointer_defaults(&ps);
+    pointer_set_mode(&ps, POINTER_MODE_DESKTOP);
+
+    /* A = left click. */
+    pointer_frame(&ps, POINTER_KEY_A, 0, 0, 0, 0, t);
+    pointer_tick(&ps, t, capture_emit, &cap, &chord);
+    CHECK(ps.btn_left);
+    CHECK_EQ(capture_count(&cap, EV_KEY, BTN_LEFT, 1), 1);
+
+    /* R3 keeps the same BTN_LEFT down: A -> R3 must not click twice. */
+    pointer_frame(&ps, POINTER_KEY_R3, 0, 0, 0, 0, t + 8);
+    pointer_tick(&ps, t + 8, capture_emit, &cap, &chord);
+    CHECK(ps.btn_left);
+    CHECK_EQ(capture_count(&cap, EV_KEY, BTN_LEFT, 1), 1);
+    CHECK_EQ(capture_count(&cap, EV_KEY, BTN_LEFT, 0), 0);
+
+    pointer_frame(&ps, 0, 0, 0, 0, 0, t + 16);
+    pointer_tick(&ps, t + 16, capture_emit, &cap, &chord);
+    CHECK(!ps.btn_left);
+    CHECK_EQ(capture_count(&cap, EV_KEY, BTN_LEFT, 0), 1);
+
+    /* B = right click. */
+    pointer_frame(&ps, POINTER_KEY_B, 0, 0, 0, 0, t + 24);
+    pointer_tick(&ps, t + 24, capture_emit, &cap, &chord);
+    CHECK(ps.btn_right);
+    CHECK_EQ(capture_count(&cap, EV_KEY, BTN_RIGHT, 1), 1);
+    pointer_frame(&ps, 0, 0, 0, 0, 0, t + 32);
+    pointer_tick(&ps, t + 32, capture_emit, &cap, &chord);
+    CHECK(!ps.btn_right);
+
+    /* R2 = middle click, with 50 %/37.5 % hysteresis. */
+    pointer_frame(&ps, 0, 0, 0, 0, 255, t + 40);
+    pointer_tick(&ps, t + 40, capture_emit, &cap, &chord);
+    CHECK(ps.btn_middle);
+    CHECK_EQ(capture_count(&cap, EV_KEY, BTN_MIDDLE, 1), 1);
+    pointer_frame(&ps, 0, 0, 0, 0, 100, t + 48);
+    pointer_tick(&ps, t + 48, capture_emit, &cap, &chord);
+    CHECK(ps.btn_middle);
+    pointer_frame(&ps, 0, 0, 0, 0, 90, t + 56);
+    pointer_tick(&ps, t + 56, capture_emit, &cap, &chord);
+    CHECK(!ps.btn_middle);
+    CHECK_EQ(capture_count(&cap, EV_KEY, BTN_MIDDLE, 0), 1);
+
+    /* L2 = drag: hold BTN_LEFT for as long as the trigger is pulled. */
+    pointer_frame(&ps, 0, 0, 0, 255, 0, t + 64);
+    pointer_tick(&ps, t + 64, capture_emit, &cap, &chord);
+    CHECK(ps.btn_left);
+    CHECK_EQ(capture_count(&cap, EV_KEY, BTN_LEFT, 1), 2);
+    pointer_frame(&ps, 0, 0, 0, 100, 0, t + 72);
+    pointer_tick(&ps, t + 72, capture_emit, &cap, &chord);
+    CHECK(ps.btn_left);
+    pointer_frame(&ps, 0, 0, 0, 90, 0, t + 80);
+    pointer_tick(&ps, t + 80, capture_emit, &cap, &chord);
+    CHECK(!ps.btn_left);
+    CHECK_EQ(capture_count(&cap, EV_KEY, BTN_LEFT, 0), 2);
+
+    /* A change is followed by exactly one SYN in that tick. */
+    CHECK(capture_count(&cap, EV_SYN, SYN_REPORT, 0) >= 1);
+}
+
+static void test_pointer_wheel(void)
+{
+    struct pointer_state ps;
+    struct pointer_capture cap;
+    bool chord = false;
+    int64_t t = 1000;
+
+    memset(&cap, 0, sizeof(cap));
+    pointer_defaults(&ps);
+    pointer_set_mode(&ps, POINTER_MODE_DESKTOP);
+
+    /* L1: one notch on press, then 400 ms initial / 80 ms repeat. */
+    pointer_frame(&ps, POINTER_KEY_L1, 0, 0, 0, 0, t);
+    pointer_tick(&ps, t, capture_emit, &cap, &chord);
+    CHECK_EQ(capture_count(&cap, EV_REL, REL_WHEEL, 1), 1);
+    pointer_tick(&ps, t + 80, capture_emit, &cap, &chord);
+    CHECK_EQ(capture_count(&cap, EV_REL, REL_WHEEL, 1), 1);
+    pointer_tick(&ps, t + 392, capture_emit, &cap, &chord);
+    CHECK_EQ(capture_count(&cap, EV_REL, REL_WHEEL, 1), 1);
+    pointer_tick(&ps, t + 400, capture_emit, &cap, &chord);
+    CHECK_EQ(capture_count(&cap, EV_REL, REL_WHEEL, 1), 2);
+    pointer_tick(&ps, t + 480, capture_emit, &cap, &chord);
+    CHECK_EQ(capture_count(&cap, EV_REL, REL_WHEEL, 1), 3);
+
+    pointer_frame(&ps, 0, 0, 0, 0, 0, t + 488);
+    pointer_tick(&ps, t + 488, capture_emit, &cap, &chord);
+    CHECK_EQ(capture_count(&cap, EV_REL, REL_WHEEL, 1), 3);
+
+    /* A fresh press scrolls immediately again. */
+    pointer_frame(&ps, POINTER_KEY_L1, 0, 0, 0, 0, t + 496);
+    pointer_tick(&ps, t + 496, capture_emit, &cap, &chord);
+    CHECK_EQ(capture_count(&cap, EV_REL, REL_WHEEL, 1), 4);
+
+    /* R1 scrolls the other way. */
+    pointer_frame(&ps, POINTER_KEY_R1, 0, 0, 0, 0, t + 504);
+    pointer_tick(&ps, t + 504, capture_emit, &cap, &chord);
+    CHECK_EQ(capture_count(&cap, EV_REL, REL_WHEEL, -1), 1);
+}
+
+static void test_pointer_chord(void)
+{
+    struct pointer_state ps;
+    struct pointer_capture cap;
+    bool chord = false;
+    int fires = 0;
+    int64_t t = 1000;
+
+    memset(&cap, 0, sizeof(cap));
+    pointer_defaults(&ps);
+
+    /* Two of the three buttons never fire it, however long they are held. */
+    pointer_frame(&ps, POINTER_KEY_L1 | POINTER_KEY_R1, 0, 0, 0, 0, t);
+    pointer_tick(&ps, t, capture_emit, &cap, &chord);
+    pointer_frame(&ps, POINTER_KEY_L1 | POINTER_KEY_R1, 0, 0, 0, 0, t + 1500);
+    pointer_tick(&ps, t + 1500, capture_emit, &cap, &chord);
+    CHECK(!chord);
+
+    /* All three: exactly one fire after ~1 s, not one per tick. */
+    pointer_frame(&ps, POINTER_CHORD_MASK, 0, 0, 0, 0, t + 2000);
+    pointer_tick(&ps, t + 2000, capture_emit, &cap, &chord);
+    CHECK(!chord);
+    pointer_tick(&ps, t + 2999, capture_emit, &cap, &chord);
+    CHECK(!chord);
+    pointer_tick(&ps, t + 3000, capture_emit, &cap, &chord);
+    CHECK(chord);
+    fires++;
+    chord = false;
+    pointer_tick(&ps, t + 3008, capture_emit, &cap, &chord);
+    CHECK(!chord);
+
+    /* Released and pressed again: the chord re-arms. */
+    pointer_frame(&ps, POINTER_KEY_L1 | POINTER_KEY_R1, 0, 0, 0, 0, t + 3016);
+    pointer_tick(&ps, t + 3016, capture_emit, &cap, &chord);
+    CHECK(!chord);
+    pointer_frame(&ps, POINTER_CHORD_MASK, 0, 0, 0, 0, t + 3024);
+    pointer_tick(&ps, t + 3024, capture_emit, &cap, &chord);
+    pointer_tick(&ps, t + 4024, capture_emit, &cap, &chord);
+    CHECK(chord);
+    fires++;
+    CHECK_EQ(fires, 2);
+    CHECK_EQ(cap.count, 0); /* the chord itself injects nothing */
+}
+
+static void test_pointer_release(void)
+{
+    struct pointer_state ps;
+    struct pointer_capture cap;
+    bool chord = false;
+    int64_t t = 1000;
+    int emitted;
+
+    memset(&cap, 0, sizeof(cap));
+    pointer_defaults(&ps);
+    pointer_set_mode(&ps, POINTER_MODE_DESKTOP);
+
+    /* A + B + both triggers: three buttons down at once. */
+    pointer_frame(&ps, POINTER_KEY_A | POINTER_KEY_B, 0, 0, 255, 255, t);
+    pointer_tick(&ps, t, capture_emit, &cap, &chord);
+    CHECK(ps.btn_left);
+    CHECK(ps.btn_right);
+    CHECK(ps.btn_middle);
+
+    emitted = pointer_release(&ps, capture_emit, &cap);
+    CHECK_EQ(emitted, 3);
+    CHECK_EQ(capture_count(&cap, EV_KEY, BTN_LEFT, 0), 1);
+    CHECK_EQ(capture_count(&cap, EV_KEY, BTN_RIGHT, 0), 1);
+    CHECK_EQ(capture_count(&cap, EV_KEY, BTN_MIDDLE, 0), 1);
+    CHECK_EQ(capture_count(&cap, EV_SYN, SYN_REPORT, 0), 2);
+    CHECK(!ps.btn_left);
+    CHECK(!ps.btn_right);
+    CHECK(!ps.btn_middle);
+    CHECK(ps.vx == 0.0);
+    CHECK(ps.frac_x == 0.0);
+
+    /* Nothing held: no second release. */
+    CHECK_EQ(pointer_release(&ps, capture_emit, &cap), 0);
+
+    /* Silent release still clears the state (GRAB ON / shutdown path). */
+    pointer_frame(&ps, POINTER_KEY_A, 0, 0, 0, 0, t + 8);
+    pointer_tick(&ps, t + 8, capture_emit, &cap, &chord);
+    CHECK(ps.btn_left);
+    CHECK_EQ(pointer_release(&ps, NULL, NULL), 0);
+    CHECK(!ps.btn_left);
+}
+
+static void test_pointer_stale_frame(void)
+{
+    struct pointer_state ps;
+    struct pointer_capture cap;
+    bool chord = false;
+    int64_t t = 1000;
+
+    memset(&cap, 0, sizeof(cap));
+    pointer_defaults(&ps);
+    pointer_set_mode(&ps, POINTER_MODE_DESKTOP);
+    pointer_frame(&ps, POINTER_KEY_A, 32767, 0, 0, 0, t);
+    pointer_tick(&ps, t, capture_emit, &cap, &chord);
+    CHECK(ps.btn_left);
+
+    /* The MCU went quiet for >2 s: the held click must not stay down and the
+     * stick must stop (no motion was integrated before the timeout). */
+    pointer_tick(&ps, t + POINTER_FRAME_TIMEOUT_MS + 1, capture_emit, &cap,
+                 &chord);
+    CHECK(!ps.btn_left);
+    CHECK_EQ(capture_count(&cap, EV_KEY, BTN_LEFT, 0), 1);
+    CHECK_EQ(capture_sum(&cap, EV_REL, REL_X), 0);
+}
+
+static void test_pointer_timeout(void)
+{
+    struct pointer_state ps;
+
+    pointer_defaults(&ps);
+    CHECK_EQ(pointer_timeout_ms(&ps, 1000), -1);
+
+    pointer_set_mode(&ps, POINTER_MODE_DESKTOP);
+    CHECK_EQ(pointer_timeout_ms(&ps, 1000), 1);
+    pointer_release(&ps, NULL, NULL);
+    /* pointer_release() resets the tick reference: the first tick primes it. */
+    CHECK_EQ(pointer_timeout_ms(&ps, 1000), 1);
+}
+
+static void test_uinput_pointer_device(void)
+{
+    struct uinput_dev_spec spec;
+    struct uinput_dev_ops ops;
+    struct uinput_fake fake;
+    bool rumble = true;
+    int fd;
+
+    fake_init(&fake, &ops);
+    memset(&spec, 0, sizeof(spec));
+    spec.name = POINTER_NAME;
+    spec.bustype = BUS_USB;
+    spec.vendor = POINTER_VID;
+    spec.product = POINTER_PID;
+    spec.version = 1;
+    spec.keys = pointer_keys;
+    spec.key_count = pointer_key_count;
+    spec.rels = pointer_rels;
+    spec.rel_count = pointer_rel_count;
+    spec.props = pointer_props;
+    spec.prop_count = pointer_prop_count;
+
+    fd = uinput_dev_create(&ops, &spec, &rumble);
+    CHECK(fd >= 0);
+    CHECK(!rumble);
+    CHECK_EQ(fake.creates, 1);
+    CHECK(strcmp(fake.setup.name, POINTER_NAME) == 0);
+    CHECK_EQ(fake.setup.id.vendor, POINTER_VID);
+    CHECK_EQ(fake.setup.id.product, POINTER_PID);
+    CHECK_EQ(fake.setup.id.bustype, BUS_USB);
+    CHECK_EQ(fake.setup.ff_effects_max, 0);
+
+    /* A pointer, not a gamepad: EV_KEY/EV_REL/EV_SYN only. */
+    CHECK_EQ(call_count_of(&fake, UI_SET_EVBIT, EV_KEY), 1);
+    CHECK_EQ(call_count_of(&fake, UI_SET_EVBIT, EV_REL), 1);
+    CHECK_EQ(call_count_of(&fake, UI_SET_EVBIT, EV_SYN), 1);
+    CHECK_EQ(call_count_of(&fake, UI_SET_EVBIT, EV_ABS), 0);
+    CHECK_EQ(call_count_of(&fake, UI_SET_EVBIT, EV_FF), 0);
+
+    for (int i = 0; i < pointer_key_count; i++)
+        CHECK_EQ(call_count_of(&fake, UI_SET_KEYBIT, pointer_keys[i]), 1);
+    for (int i = 0; i < pointer_rel_count; i++)
+        CHECK_EQ(call_count_of(&fake, UI_SET_RELBIT, pointer_rels[i]), 1);
+    CHECK_EQ(call_count_of(&fake, UI_SET_PROPBIT, INPUT_PROP_POINTER), 1);
+}
+
 int main(void)
 {
     make_dir();
@@ -1762,6 +2235,16 @@ int main(void)
     test_uinput_phase5_device();
     test_uinput_ff_refused();
     test_uinput_axis_range();
+    test_pointer_mode();
+    test_pointer_movement();
+    test_pointer_deadzone_and_fraction();
+    test_pointer_buttons();
+    test_pointer_wheel();
+    test_pointer_chord();
+    test_pointer_release();
+    test_pointer_stale_frame();
+    test_pointer_timeout();
+    test_uinput_pointer_device();
     test_fusion_node_mergeable();
     test_fusion_hotplug();
 
