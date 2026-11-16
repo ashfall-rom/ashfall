@@ -58,8 +58,9 @@ Pillow; ffmpeg is only needed for the mp4 preview.
 * **Speed arc.** The intro does not drift at one rate. A speed profile runs
   slow -> peak (32x the ambient drift, `SPEED_PEAK`) -> slow, and *position is
   its integral*, so each frame's streak length comes from the real velocity
-  rather than a guess. The ramps are symmetric (0.85 s each, `T_RAMP_UP` /
-  `T_RAMP_DOWN`) around a 1.8 s hold (`T_HOLD`). Streak energy is divided by its
+  rather than a guess. The acceleration is short (0.425 s, `T_RAMP_UP`) so even
+  a quick boot reaches the burst; the deceleration is longer (0.85 s,
+  `T_RAMP_DOWN`) around a 2.2 s hold (`T_HOLD`). Streak energy is divided by its
   length, so fast motes smear and dim instead of turning into laser lines, and
   stretched motes are forced slightly defocused so the smear stays soft-edged.
   The profile ends at exactly the ambient rate, which is why the hand-off to the
@@ -83,8 +84,8 @@ Pillow; ffmpeg is only needed for the mp4 preview.
 Timeline:
 
 1. **part0, once (5.8 s)** - ash drifts slowly for half a second, ramps to a
-   blur over 0.85 s, holds there for 1.8 s, then decelerates over the same
-   0.85 s. The bloom arrives with the slowdown, and the A fades up over 2 s
+   blur over 0.425 s, holds it for 2.2 s, then decelerates over 0.85 s. The
+   bloom arrives with the slowdown, and the A fades up over 2 s
    (`GLYPH_IN`, 3.7 -> 5.7 s) lit by it, finishing right as the intro ends.
 2. **part1, loops (12 s)** - the mark holds with the bloom breathing gently
    while motes drift past in front and behind it.
