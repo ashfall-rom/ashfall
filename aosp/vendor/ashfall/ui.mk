@@ -20,11 +20,51 @@
 #       before the launcher has written the user's appearance, so the first
 #       boot, Recents and the app-to-home transition are never stock.
 #
+#   overlay/no-rro/frameworks/base/core/res/res/values/config.xml
+#       #131: enable Android 17 desktop windowing on the internal display
+#       (config_isDesktopModeSupported, config_canInternalDisplayHostDesktops,
+#       config_isDesktopModeDevOptionSupported = true;
+#       config_enterDesktopByDefaultOnFreeformDisplay stays false, a handheld
+#       does not boot into desktop mode). The overlay tree mirrors
+#       frameworks/base/core/res/res exactly like the wallpaper one above, and
+#       is merged into frameworks-res statically - no RRO APK. Docs:
+#       docs/desktop-mode.md.
+#
 # Future UI-only overlays (strings, dimens) go under the same root, mirroring
 # the package's resource dir, e.g.
 # overlay/no-rro/packages/apps/Settings/res/values/strings.xml.
 PRODUCT_ENFORCE_RRO_EXCLUDED_OVERLAYS += vendor/ashfall/overlay/no-rro
 PRODUCT_PACKAGE_OVERLAYS += vendor/ashfall/overlay/no-rro
+
+# --- platform features ------------------------------------------------------
+#
+# #131: desktop windowing runs on freeform windows, so the product has to
+# declare android.software.freeform_window_management. Freeform is a platform
+# feature flag, not a runtime setting: without it
+# PackageManager.hasSystemFeature(FEATURE_FREEFORM_WINDOW_MANAGEMENT) is false,
+# DesktopState.isFreeformEnabled stays false and the shell refuses to put a
+# display (and its tasks) into WINDOWING_MODE_FREEFORM, so
+# `wm set-display-windowing-mode -d 0 5` is a no-op (docs/desktop-mode.md).
+#
+# Nothing in the AOSP/LineageOS product makefiles
+# (build/make/target/product/base_system.mk, handheld_product.mk,
+# handheld_system_ext.mk, generic_system.mk) copies it. LineageOS *does* copy
+# it, but into $(TARGET_COPY_OUT_PRODUCT) (vendor/lineage/config/common_mobile.mk
+# at lineage-24.0, inherited through common_full_phone -> common_mobile_full ->
+# common_mobile). On this GSI TARGET_COPY_OUT_PRODUCT resolves to
+# system/product (build/make/core/board_config.mk: no product image), so the
+# feature is already declared from /system/product/etc/permissions. This entry
+# declares it from /system as well: it is the partition the GSI build owns, and
+# it keeps the platform prerequisite in the AshFall product instead of depending
+# on a LineageOS config detail. PackageManager keys the feature by name, so a
+# second copy of the same XML is not a duplicate feature.
+#
+# The destination is a fixed path, so the PC build pass must confirm there is no
+# "Duplicate PRODUCT_COPY_FILES" error (two sources into one destination) and
+# that out/soong/build.ninja lists both destinations, /system and /system/product.
+# A second copy under system/product/... is expected and comes from LineageOS.
+PRODUCT_COPY_FILES += \
+    frameworks/native/data/etc/android.software.freeform_window_management.xml:$(TARGET_COPY_OUT_SYSTEM)/etc/permissions/android.software.freeform_window_management.xml
 
 # --- patches ----------------------------------------------------------------
 #
