@@ -1700,6 +1700,79 @@ static void test_status_interval(void)
     CHECK(STATUS_LIVE_MS <= STATUS_INTERVAL_MS);
 }
 
+/* --- #94/#180: ashfall.ui.* publisher heartbeat tokens ------------------- */
+
+static void test_ui_heartbeat(void)
+{
+    struct hwd_ui_heartbeat beat;
+
+    memset(&beat, 0, sizeof(beat));
+    /* No token change observed yet: nothing is fresh. */
+    CHECK(!hwd_ui_heartbeat_fresh(&beat, 0));
+
+    /* A changed, non-empty token is a beat. */
+    CHECK(hwd_ui_heartbeat_update(&beat, "1000", 1000));
+    CHECK(hwd_ui_heartbeat_fresh(&beat, 1000));
+    CHECK(hwd_ui_heartbeat_fresh(&beat, 2500)); /* exactly 1.5 s */
+    CHECK(!hwd_ui_heartbeat_fresh(&beat, 2501));
+
+    /* The same token again is not a new beat (no serial/side channel). */
+    CHECK(!hwd_ui_heartbeat_update(&beat, "1000", 2000));
+    CHECK(!hwd_ui_heartbeat_fresh(&beat, 2501));
+
+    /* The next changed token refreshes it again. */
+    CHECK(hwd_ui_heartbeat_update(&beat, "1500", 2600));
+    CHECK(hwd_ui_heartbeat_fresh(&beat, 2600));
+    CHECK(!hwd_ui_heartbeat_fresh(&beat, 4101));
+
+    /* Empty values never count as a heartbeat. */
+    CHECK(!hwd_ui_heartbeat_update(&beat, "", 3000));
+    CHECK(!hwd_ui_heartbeat_update(&beat, NULL, 3000));
+
+    /* A token already present at startup is seeded, not treated as a beat;
+     * the first genuine change after it is. */
+    hwd_ui_heartbeat_seed(&beat, "4000");
+    CHECK(!hwd_ui_heartbeat_fresh(&beat, 0));
+    CHECK(!hwd_ui_heartbeat_update(&beat, "4000", 5000));
+    CHECK(!hwd_ui_heartbeat_fresh(&beat, 5000));
+    CHECK(hwd_ui_heartbeat_update(&beat, "4500", 5100));
+    CHECK(hwd_ui_heartbeat_fresh(&beat, 5100));
+
+    CHECK_EQ(HWD_UI_HEARTBEAT_MS, 500);
+    CHECK_EQ(HWD_UI_HEARTBEAT_TIMEOUT_MS, 1500);
+    CHECK(HWD_UI_HEARTBEAT_MS * 3 == HWD_UI_HEARTBEAT_TIMEOUT_MS);
+}
+
+/* --- #184: the preview re-arm gate must see the whole curve string -------- */
+
+static void test_preview_rearm(void)
+{
+    struct hwd_value_watch watch;
+    char a[FAN_CURVE_MAX_LEN + 1];
+    char b[FAN_CURVE_MAX_LEN + 1];
+
+    /* Valid curves that differ only in their last point: identical first 31
+     * characters, so a 32-byte token buffer would collapse them. */
+    snprintf(a, sizeof(a), "40:10,50:20,60:35,70:55,80:75,90:100");
+    snprintf(b, sizeof(b), "40:10,50:20,60:35,70:55,80:75,95:100");
+    CHECK(HWD_VALUE_WATCH_MAX >= FAN_CURVE_MAX_LEN + 1);
+    CHECK(strncmp(a, b, 31) == 0);
+    CHECK(strcmp(a, b) != 0);
+
+    hwd_value_watch_seed(&watch, a);
+    /* The abandoned value itself is not a rewrite... */
+    CHECK(!hwd_value_watch_update(&watch, a));
+    /* ...but a curve that differs past the 31st character is (issue #184). */
+    CHECK(hwd_value_watch_update(&watch, b));
+    CHECK(!hwd_value_watch_update(&watch, b));
+    CHECK(hwd_value_watch_update(&watch, a));
+
+    /* Empty values compare normally too. */
+    hwd_value_watch_seed(&watch, "");
+    CHECK(!hwd_value_watch_update(&watch, ""));
+    CHECK(hwd_value_watch_update(&watch, a));
+}
+
 /* --- #129: max_pct lowered while the spin-up kick is open ---------------- */
 
 static void test_kick_max_lowered(void)
@@ -1776,6 +1849,8 @@ int main(void)
     test_gpu_clock();
     test_gpu_load();
     test_status_interval();
+    test_ui_heartbeat();
+    test_preview_rearm();
     test_swap_header();
     test_cpu();
     test_cpu_load();

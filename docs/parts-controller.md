@@ -16,7 +16,7 @@ QS tiles) is described in `docs/parts.md`.
 | 2. "X and Y appear swapped" / "A/B are swapped" | The drawing, not the daemon, was wrong (see §2).  #84 moved X to the top and Y to the left; #101 swapped the drawn A and B (A right, B bottom). |
 | 3. "L2/R2 jump to 100 % at about half travel" | The old bar filled the whole trigger rect as soon as the analog value passed 0.5 (a drawing bug), and the view only saw `AXIS_*` values.  The tester now draws the exact analog value as a fill from the bottom and shows the percentage, computed from the raw MCU counts after calibration (so the number can be compared with the raw value). |
 | 4. "B, Back, Home, Select don't show" | The tester now sends `GRAB ON` on its raw-stream socket (§3).  Nothing is injected into uinput, so every button is only reported in the `RAW` mask and drawn.  Leaving: hold **Start + Select for 2 s** (progress bar under the pills) or tap **Close**.  The old "Select toggles the raw overlay" mode is gone; the raw values are always visible. |
-| 5. "Fun: light each side's LED ring with its activity" | `ashfall.ui.led_override` is published at <= 29 Hz (§4) and cleared on pause. |
+| 5. "Fun: light each side's LED ring with its activity" | `ashfall.ui.led_override` is published at <= 29 Hz (§4), with a 500 ms `ashfall.ui.led_override_live` token heartbeat while the tester owns it, and both are cleared on pause. |
 | 6. "Calibration waits for Start" | The wizard's timed steps were replaced by Start-paced steps (§5). |
 | 7. #104: "the app's D-pad is twice the editor's size" | `drawDpad` treated `r` as the offset to each arrow, so the total span was `4*r*H`; #104 changed it to `2*r*H`, and #105 rebuilt it as the four-pentagon 3x3 cross below (total `3*r*H`). |
 | 8. #104: "ABXY distances are not equal" | The view is not 16:9, so scaling x by width and y by height made the diamond rectangular.  The group centre and a single pixel offset are computed from the four layout circles; X/Y/A/B are placed on a square diamond (distance X-B = Y-A = 2*off, diagonals off*sqrt(2)). |
@@ -88,10 +88,14 @@ progress bar under the pills fills for 2 s and the activity finishes.
 
 ```
 ashfall.ui.led_override = RRGGBB:RRGGBB      (left:right, empty = normal)
+ashfall.ui.led_override_live = <token>       (changed every 500 ms while owned)
 ```
 
-at most every 34 ms and only when the value changes.  Each side's level is the
-maximum of that half's activity:
+at most every 34 ms and only when the value changes.  The heartbeat token is an
+opaque `SystemClock.elapsedRealtime()` value refreshed every 500 ms (even when
+the colour is unchanged); `ashfall-hwd` ignores a non-empty override once the
+token has not changed for 1.5 s, so a force-stop cannot latch the rings.  Each
+side's level is the maximum of that half's activity:
 
 | side | inputs |
 |---|---|
@@ -132,7 +136,7 @@ still cancels.
 | `src/org/ashfall/parts/ui/TesterLayout.java` | loader/validator for `res/raw/tester_layout.json`, per-value fallbacks |
 | `res/raw/tester_layout.json` | control geometry, owned by the temporary web layout editor |
 | `tools/check_tester_layout.py` | host check: schema v1 keys and ranges |
-| `src/org/ashfall/parts/ui/LedFeedback.java` | new: `ashfall.ui.led_override` publisher |
+| `src/org/ashfall/parts/ui/LedFeedback.java` | new: `ashfall.ui.led_override` publisher plus its 500 ms `..._live` token heartbeat |
 | `src/org/ashfall/parts/hw/PadState.java` | new: raw counts -> calibrated/deadzoned values on the app side |
 | `src/org/ashfall/parts/ipc/RawStream.java` | `GRAB ON/OFF` on the raw connection, reply handling |
 | `src/org/ashfall/parts/CalibrationActivity.java` | Start-paced steps, travel validation, readable live status |
@@ -310,7 +314,11 @@ writer), and a full-circle calibration with the sticks at rest.
   is shown to the user as "Button capture failed; Home, Back and Select may
   still reach the system."
 * `ashfall.ui.led_override` is written at <= 29 Hz as `RRGGBB:RRGGBB` and cleared
-  with an empty value; the daemon must treat empty as "normal lighting".
+  with an empty value, and `ashfall.ui.led_override_live` must be refreshed with
+  a **changing token** at least every 500 ms while the override is owned (the
+  daemon drops it after 1.5 s without a change); the daemon must treat empty as
+  "normal lighting".  A publisher that writes a constant value or skips the
+  heartbeat is silently ignored after 1.5 s.
 * Triggers are displayed from the raw counts with `(max - raw) / (max - min)`,
   so a 50 % pull must be reported as 50 % in the mask's analog values, not
   snapped.

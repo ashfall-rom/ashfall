@@ -127,8 +127,8 @@ Phase 5 v2 additions (docs/phase5.md §6.1):
 | `persist.ashfall.fan.kick` | `1`/`0` | `1` | spin-up kick after the fan was stopped |
 | `persist.ashfall.fan.kick_pct` | 10..60 | `30` | kick level (never 100 %) |
 | `persist.ashfall.fan.screen_off` | `off`/`run` | `off` | `off` stops the fan while the screen is off; `run` keeps it running |
-| `ashfall.ui.fan_live` | `1` | empty | status every 500 ms instead of 2 s while a fan UI is visible |
-| `ashfall.ui.fan_preview_curve` | curve string | empty | while non-empty and mode=`smart`, used instead of `persist.ashfall.fan.curve` (live editor preview; the app clears it) |
+| `ashfall.ui.fan_live` | `0`/empty, otherwise a changing token | empty | `0`/empty = no fan UI; any other value (refreshed every 500 ms with a token that changes) selects the 500 ms status cadence and is the heartbeat that keeps the live preview valid |
+| `ashfall.ui.fan_preview_curve` | curve string | empty | while non-empty, mode=`smart` and `ashfall.ui.fan_live` is fresh (<1.5 s since its last token change), used instead of `persist.ashfall.fan.curve` (live editor preview; the app clears it, and hwd drops it after 1.5 s without a heartbeat) |
 
 Phase 5 v3 additions (docs/phase5.md §7.1, issue #121):
 
@@ -205,7 +205,8 @@ Phase 5 v3 additions (docs/phase5.md §7.1, issue #121):
   high limit, not even for the 500 ms kick); the safety override is exempt.
 
 `ashfall.status.*` (written at most every 2 s, or every 500 ms while
-`ashfall.ui.fan_live=1` or `ashfall.ui.power_live=1`; only on change):
+`ashfall.ui.fan_live` is non-zero or `ashfall.ui.power_live=1`; only on
+change):
 
 | property | meaning |
 |---|---|
@@ -335,6 +336,85 @@ Animation runs at 50 fps in the daemon.  The hardware `breath` attribute is
 **not used**: it is `--w--w---- root root` (root-only, and only a fixed
 breath effect - no `duo`/`rainbow`, no exact period).  Software animation gives
 the documented periods and effects.
+
+### UI override heartbeat (issue #94)
+
+Both UI-owned overrides can outlive their writer: a force-stop, an ANR kill or
+an app crash never runs the `clear()` path that resets the property, and the
+values are deliberately non-persistent, which resets them at reboot but not
+within a boot.  A property that stays non-empty would otherwise latch the
+hardware indefinitely (rings stuck on the tester's last colour, fan stuck on a
+preview curve from a closed editor).
+
+The publishers therefore refresh a companion liveness property while they own
+the value, with an **opaque token that changes on every write** (the app uses
+`SystemClock.elapsedRealtime()`); the daemon only compares it with the previous
+sample, so a busy or idle tester produces a visible heartbeat either way:
+
+| value | heartbeat | publisher cadence |
+|---|---|---|
+| `ashfall.ui.led_override` | `ashfall.ui.led_override_live` = `elapsedRealtime()` token | `LedFeedback` (gamepad tester) every 500 ms, even while the colour is unchanged; the tick stops on `onPause`/`clear()` and on force-stop |
+| `ashfall.ui.fan_preview_curve` | `ashfall.ui.fan_live` = token (`0`/empty when hidden) | `CurveActivity`/fan UI 500 ms tick, already required for the live status cadence; the preview is cleared on close |
+
+`ashfall-hwd` samples both heartbeats on every loop tick (the loop already
+wakes at least every 500 ms via `IDLE_WAIT_MS`, and `prop_wait_any()` wakes it
+on any property write).  A value is honoured only while its heartbeat token
+has changed within the last **1.5 s** (three missed 500 ms beats):
+
+* `ashfall.ui.led_override`: dropped, `force_led` re-applies the configured
+  `persist.ashfall.led.*` mode/colours; one `ui: ashfall.ui.led_override
+  expired ...` warning is logged per transition.
+* `ashfall.ui.fan_preview_curve`: dropped and `persist.ashfall.fan.curve` is
+  used again on the next control tick (`ui: ashfall.ui.fan_preview_curve
+  expired ...`).  A live publisher is unaffected because its own token changes
+  keep the value fresh.  The expired preview is not honoured again until the
+  editor publishes a **different** curve, because `ashfall.ui.fan_live` is
+  shared by every fan page: another page's heartbeat must not revive a curve
+  that a force-stopped editor left behind.  An identical rewrite cannot be
+  distinguished from the abandoned value (the value-change mechanism has no
+  serial side channel).  That is normally invisible: the editor only publishes
+  a preview for the *active* Smart preset, and both `save()` and preset
+  activation write the same curve to `persist.ashfall.fan.curve`.  Note that
+  `CurveActivity.publishPreview()` on resume republishes the stored preset
+  curve **without** writing `persist.ashfall.fan.curve`; if the stored preset
+  and the persisted curve have drifted (or the earlier write failed), the
+  preview stays ignored until the first edit, whose `save()` rewrites both.
+
+A fresh heartbeat plus a value is honoured again immediately (next loop tick);
+there is no mode change and no reboot requirement.  With the publisher gone
+the daemon's worst-case detection latency is the 1.5 s timeout plus one 500 ms
+loop tick (~2 s).  The expiry does **not** reset the effect phase: an expired
+override returns to the configured mode as it would have rendered at that
+moment (`anim_start_ms` is only set by `led_state_init()`), so breathing,
+rainbow and duo resume continuously rather than restarting.  Timing is measured
+on the daemon's `CLOCK_MONOTONIC` (`ah_now_ms()`); the app's clock is never
+compared.  Liveness is the token change itself, not a property-write serial
+and not the value's meaning, so there is no dependency on undocumented
+property-service behaviour (issue #180) and `getprop` shows the last token
+written.
+
+Empty values never need a heartbeat.  The property type (`ashfall_ui_prop`),
+labels and `system_app` -> `ashfall_hwd` permissions are unchanged.
+
+**Verification (no device needed for the property logic):**
+
+```sh
+# simulate a dead publisher: the override is set but its heartbeat token is
+# not refreshed, so the daemon must ignore it after 1.5 s
+adb shell 'setprop ashfall.ui.led_override FF0000:0000FF; setprop ashfall.ui.led_override_live 1'
+# keep refreshing with a changing token for <1.5 s, then stop: the daemon
+# must log the expiry once
+adb shell 'i=0; while [ $i -lt 3 ]; do i=$((i+1)); setprop ashfall.ui.led_override_live $i; sleep 0.5; done'
+adb shell 'logcat -d -s ashfall-hwd | grep expired'
+adb shell getprop ashfall.ui.led_override   # still set; the daemon ignores it
+# live check: keep the token changing (Ctrl-C to stop) -> the override stays
+adb shell 'setprop ashfall.ui.led_override FF0000:0000FF; i=0; while true; do i=$((i+1)); setprop ashfall.ui.led_override_live $i; sleep 0.5; done'
+```
+
+The same pattern applies to the fan preview: write
+`ashfall.ui.fan_preview_curve`, then refresh `ashfall.ui.fan_live` with a
+changing token every 500 ms for the duration of the check, and clear both
+(`fan_preview_curve=""`, `fan_live=0`) afterwards.
 
 ### Boot ordering and write retries (issue #69)
 
@@ -478,8 +558,9 @@ Run on a build that contains `ashfall-hwd` (a manually pushed binary runs as
    `off` stops it.  `ashfall.status.fan.pct`
    follows, `ashfall.status.fan.temp` tracks `cpu-1-*`.
 3. Smart: heat the device (game/benchmark); output rises along the curve and
-   drops only ~3 °C later than it rose.  With `ashfall.ui.fan_live=1` the
-   status properties update every ~500 ms (tach included).
+   drops only ~3 °C later than it rose.  With a non-zero `ashfall.ui.fan_live`
+   (refreshed every 500 ms, see §4) the status properties update every ~500 ms
+   (tach included).
 4. Kick: `kick=1 kick_pct=30` and a stopped fan -> the tach shows a short
    30 % burst, never 100 %; `kick=0` -> the target speed directly.
 5. Screen: `screen_off=off` -> the fan stops with the screen and resumes with
@@ -493,8 +574,10 @@ Run on a build that contains `ashfall-hwd` (a manually pushed binary runs as
    `color_right=0000FF` (with `sync=0`) the right one blue; `breathing`,
    `rainbow` and `duo` animate smoothly and slowly at speed 5
    (rainbow: one turn per 10.8 s);
-   `brightness 0` is dark; `ashfall.ui.led_override=FF0000:0000FF` shows the
-   exact colours regardless of mode and stops the animation.
+   `brightness 0` is dark; `ashfall.ui.led_override=FF0000:0000FF` with
+   `ashfall.ui.led_override_live` refreshed every 500 ms (changing token, see
+   §4) shows the exact colours regardless of mode and stops the animation;
+   without the heartbeat the daemon ignores the override after 1.5 s.
 8. Performance override: `setprop ashfall.perf.throttle_override 1` ->
    `ashfall.status.perf.throttle=1`, the clock trips bound to the CPU/GPU
    cooling devices raised to 105 °C (`ddr`) / 110 °C (GPU-only trips), `0`
@@ -771,14 +854,17 @@ builds `integ/phase5` and hands the RP5 over serially).  The checks to run:
    daemon mapping is stock; the tester drawing is the app worker's item).
    Move L2/R2 slowly: `ABS_BRAKE`/`ABS_GAS` should rise 0..255 roughly
    linearly; note the raw `l2`/`r2` counts at rest/half/full in the RAW line.
-4. `ashfall.ui.fan_live=1` -> `ashfall.status.fan.rpm` updates every 500 ms;
-   `ashfall.ui.fan_preview_curve` changes the smart output immediately;
+4. `ashfall.ui.fan_live` non-zero (refresh a changing token every 500 ms, §4)
+   -> `ashfall.status.fan.rpm` updates every 500 ms;
+   `ashfall.ui.fan_preview_curve` (with `fan_live` still refreshing) changes
+   the smart output immediately, and is ignored once the heartbeat stops;
    `kick`/`kick_pct` produce a 30 % burst; `fan.screen_off=off` stops the fan
    with the screen and kicks on wake.
 5. LEDs: they are dark with the screen off (no `ashfall.led.screen_off`
    property exists any more) and come back on screen-on after toggling
    modes; `rainbow` turns once per 10.8 s at speed 5; `breathing` is smooth;
-   `ashfall.ui.led_override=FF0000:0000FF` shows exactly red:blue.
+   `ashfall.ui.led_override=FF0000:0000FF` with `ashfall.ui.led_override_live`
+   refreshed every 500 ms (changing token, §4) shows exactly red:blue.
 6. Wake re-apply (#109): the 20-cycle power-button test in §4 -> both rings
    lit after every unlock, one `ashfall-hwd` line per transition, no write
    errors and no retries while the screen is off.
