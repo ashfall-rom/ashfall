@@ -73,9 +73,13 @@ public class DesktopTileService extends TileService {
     public void onClick() {
         // A mode toggle has no dialog, so there is nothing to unlock for and
         // no DialogGate to hold: the tap is applied immediately.
-        final boolean applied = Desktop.isDesktop() ? Desktop.exit() : Desktop.enter();
-        if (!applied) {
-            Toast.makeText(this, R.string.display_desktop_failed, Toast.LENGTH_SHORT).show();
+        final Desktop.Result result = Desktop.isDesktop() ? Desktop.exit() : Desktop.enter();
+        if (result != Desktop.Result.OK) {
+            Toast.makeText(this,
+                    result == Desktop.Result.PARTIAL
+                            ? R.string.display_desktop_incomplete
+                            : R.string.display_desktop_failed,
+                    Toast.LENGTH_SHORT).show();
         }
         updateTile();
     }

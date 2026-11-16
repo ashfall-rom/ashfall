@@ -102,11 +102,12 @@ immediately to the properties from §2 of the contract; there is no Apply button
 
 | Page | Activity | Content |
 |---|---|---|
-| AshFall settings | `HandheldActivity` | Fan / Lighting / Controller / Power / Memory rows with live summaries, daemon note |
+| AshFall settings | `HandheldActivity` | Fan / Lighting / Display / Controller / Power / Memory rows with live summaries, daemon note |
 | Fan | `FanActivity` | main switch, live graph, presets, curve, manual %, fan speed limits, kick, screen-off, throttling override, GPU max frequency |
 | Fan presets | `PresetActivity` | create / rename / duplicate / delete / change mode |
 | Curve | `CurveActivity` | drag-and-D-pad curve editor, live marker, live preview, stress test |
 | Lighting | `LightingActivity` | switch, target, live colour picker, brightness, effect (incl. Match screen), screen rate, speed |
+| Display | `DisplayActivity` | desktop mode switch, internal-screen/taskbar/restart note, pointer-only chord note |
 | Controller | `ControllerActivity` | tester, calibration wizard, factory reset, deadzones, fusion |
 | Power | `PowerActivity` | presets, CPU caps, governor, GPU cap, throttle override, live graph ([parts-power.md](parts-power.md)) |
 | Memory | `MemoryActivity` | swapfile ([parts-memory.md](parts-memory.md)) |
@@ -437,7 +438,12 @@ fixes that for the whole app:
 | Lighting (`qs.LightingTileService`) | “Lighting” | effect name / “Off” | inactive when `led.mode=off` |
 | Power (`qs.PowerTileService`) | active power preset | CPU/GPU summary | inactive when no preset is active |
 | Fusion (`qs.FusionTileService`) | “Fusion” | pad count / “Off” | active when fusion is on |
+| Desktop mode (`qs.DesktopTileService`) | “Desktop mode” | “On” / “Off” | active when display 0 is in freeform/desktop windowing |
 
+* The Desktop tile is a **plain toggle**, not a dialog tile: a tap enters or
+  leaves desktop mode, there is no `showDialog()` / `unlockAndRun()` /
+  `DialogGate`, and the tile reads display 0's real windowing mode.  It is the
+  exception to the "tap opens the dialog" rule below.
 * Tap opens the dialog with `TileService.showDialog(dialog)` (window type
   `TYPE_QS_DIALOG`, so it behaves like the Internet/Bluetooth dialogs).  If the
   device is locked the action runs through `unlockAndRun`.
@@ -504,7 +510,8 @@ fixes that for the whole app:
   package and passes the tile component in `EXTRA_COMPONENT_NAME`.
   `qs/TilePreferencesActivity` (a no-UI trampoline) opens the Fan page for the
   Fan tile, the Lighting page for the Lighting tile, the Power page for the
-  Power tile and the Controller page for the Fusion tile.
+  Power tile, the Controller page for the Fusion tile and the Display page for
+  the Desktop tile.
 * Dice note: dialogs are built from the tile **service** context.  The service
   declares `android:theme="@style/Theme.AshFall.QsDialog"`; the dialog theme
   uses a literal accent (a self-referential `?android:attr/colorAccent` makes
@@ -589,6 +596,8 @@ Read/written exactly as specified in `docs/phase5.md`:
 * `ashfall.status.perf.{gpu_max_mhz,gpu_oc}` (read only; `ashfall-hwd` is the
   single writer; `docs/phase6.md` §3)
 * `persist.ashfall.pad.{deadzone_inner,deadzone_outer,trigger_deadzone}`
+* `persist.ashfall.pad.mode` (`game`/`desktop`; desktop mode, #131 F2)
+* `persist.ashfall.display.density_restore` (density before desktop mode, #131 F2)
 * `/dev/socket/ashfall_input`: `GET CAL`, `SET CAL`, `RESET CAL`, `RAW ON/OFF`
 
 `persist.ashfall.fan.safety_c` and `persist.ashfall.led.screen_off` are **no

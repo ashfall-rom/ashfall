@@ -116,9 +116,12 @@ public class DisplayActivity extends PartsActivity {
         }
 
         private void onSwitch(boolean checked) {
-            final boolean applied = checked ? Desktop.enter() : Desktop.exit();
-            if (!applied) {
-                Toast.makeText(requireContext(), R.string.display_desktop_failed,
+            final Desktop.Result result = checked ? Desktop.enter() : Desktop.exit();
+            if (result != Desktop.Result.OK) {
+                Toast.makeText(requireContext(),
+                        result == Desktop.Result.PARTIAL
+                                ? R.string.display_desktop_incomplete
+                                : R.string.display_desktop_failed,
                         Toast.LENGTH_SHORT).show();
             }
             DesktopTileService.requestUpdate(requireContext());

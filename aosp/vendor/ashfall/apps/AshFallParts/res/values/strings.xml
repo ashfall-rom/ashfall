@@ -246,8 +246,9 @@
     <string name="display_desktop_summary_off">Fullscreen, one app at a time</string>
     <string name="display_desktop_summary_unknown">This build cannot report the display mode</string>
     <string name="display_limits_note">Internal screen only. Desktop mode adds a taskbar and a mouse pointer. Apps restart while the screen switches.</string>
-    <string name="display_chord_note">Hold L1 + R1 + Start to switch from a game.</string>
+    <string name="display_chord_note">L1 + R1 + Start switches the pointer from a game; the display stays the same.</string>
     <string name="display_desktop_failed">Couldn\'t switch the display mode. Nothing changed.</string>
+    <string name="display_desktop_incomplete">Couldn\'t finish switching the display. Check the display settings.</string>
 
     <!-- Controller -->
     <string name="controller_tester_title">Controller tester</string>

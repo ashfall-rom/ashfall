@@ -49,22 +49,28 @@ It is statically merged because `vendor/lineage/config/common.mk` sets
 
 ## 2. Step 0 - prove it on the current build (no rebuild)
 
-Run this on the **userdebug GSI that is already flashed**. It sets two
-`persist.*` properties and one global setting (they survive a reboot) plus a
-per-boot display windowing mode, which a reboot clears. Take the device lease
-first: the RP5 is single-tenant (`AGENTS.md`, `docs/HANDOFF.md` §0). `adb root`
-is required, both for `setprop persist.*` and because
-`wm set-display-windowing-mode` ends up in
-`WindowManagerService.setWindowingMode()`, which checks
-`INTERNAL_SYSTEM_WINDOW` (`WindowManagerService.java:8095` in the pinned tree).
-`lock.sh run` takes and releases the lease per command, so keep this sequence
-contiguous and start no other `adb` session while it runs.
+Run this on the **userdebug GSI that is already flashed**. Everything it sets
+survives a reboot: the two `persist.*` properties and the global setting, and
+also the display windowing mode and the density override, which WindowManager
+stores in `/data/system/display_settings.xml` and
+`Settings.Secure.DISPLAY_DENSITY_FORCED` (section 2.1). Take the device lease
+first: the RP5 is single-tenant (`AGENTS.md`, `docs/HANDOFF.md` §0).
+
+`adb root` is needed for the two `setprop persist.*` commands only. `wm` and
+`settings put global` work as the ordinary shell user: `wm` runs inside
+`com.android.shell`, which is platform-signed, privileged and holds
+`INTERNAL_SYSTEM_WINDOW` (`packages/Shell/AndroidManifest.xml:183`,
+`packages/Shell/Android.bp`: `platform_apis: true`, `certificate: "platform"`,
+`privileged: true`), so the `WindowManagerService.setWindowingMode()` check
+(`WindowManagerService.java:8095`) passes for the shell. `lock.sh run` takes
+and releases the lease per command, so keep this sequence contiguous and start
+no other `adb` session while it runs.
 
 ```sh
 # 0.1 who holds the RP5?
 scripts/device/lock.sh status
 
-# 0.2 root adb (the shell must be root for setprop persist.* and wm)
+# 0.2 root adb - only the setprop persist.* lines need it, wm does not
 scripts/device/lock.sh run desktop-step0 --ttl 3600 -- \
     scripts/device/run.sh adb root
 
@@ -108,9 +114,11 @@ Expected at 0.5 (verified command shapes in the pinned tree,
 - `wm get-display-windowing-mode -d 0` prints
   `display windowing mode=freeform for displayId=0` after the set (`fullscreen`
   before it);
-- if the set is refused you get `SecurityException: Requires
-  INTERNAL_SYSTEM_WINDOW permission` (shell not root) or the read-back stays
-  `fullscreen` (freeform feature missing).
+- a `SecurityException: Requires INTERNAL_SYSTEM_WINDOW permission` is not
+  expected from `adb shell wm` - the Shell package holds that permission - and
+  would mean the caller is not `com.android.shell`; a read-back that stays
+  `fullscreen` means freeform is unavailable on this build (feature missing, or
+  the display refuses `WINDOWING_MODE_FREEFORM`).
 
 What the three knobs do, checked against the pinned tree (so Step 0 records a
 combination, not folklore):
@@ -163,16 +171,46 @@ scripts/device/lock.sh run desktop-step0 --ttl 3600 -- \
 4. `logcat -b all -d | grep -i -E "ShellDesktopMode|DesktopTasksController|desktop mode"`
    around the entry, and the `dumpsys` output above - these are the artefacts the
    productisation is validated against.
-5. Whether a reboot returns the device to plain fullscreen (it must: the density
-   and windowing mode are per-boot overrides, the two `persist.*` props stay).
+5. That the reset in 2.1 really took: `wm get-display-windowing-mode -d 0`
+   reads `fullscreen` again, `wm density -d 0` shows `Physical density: 360`
+   and no `Override density` line, and both are still like that after another
+   reboot - the windowing mode and the density override are persisted, so a
+   reboot is **not** a reset.
 
-Reset back to fullscreen, and release the lease:
+### 2.1 Resetting afterwards - the display overrides are persisted
+
+Both display overrides outlive a reboot, so a reboot is not a reset:
+
+- `wm set-display-windowing-mode -d 0 5` goes through
+  `DisplayWindowSettings.setWindowingModeLocked`, which writes the mode into the
+  per-user override settings
+  (`DisplayWindowSettingsProvider.getOverrideSettingsFileForUser`,
+  `/data/system/display_settings.xml`); `DisplayWindowSettingsXmlHelper` stores
+  it as the `windowingMode` attribute and reads it back, and
+  `DisplayWindowSettings.getWindowingModeLocked` applies the stored
+  `freeform` at boot while the display still supports it.
+- `wm density 320 -d 0` goes through `DisplayWindowSettings.setForcedDensity`,
+  which writes `Settings.Secure.DISPLAY_DENSITY_FORCED` for display 0 (read
+  back by `WindowManagerService.getForcedDisplayDensityForUserLocked`), so the
+  device can boot at 320 dpi.
+
+That is why the reset is a mandatory part of Step 0, and why F2 needs the same
+two-step restore in its failure path and a boot-time guard (see section 6):
 
 ```sh
 scripts/device/lock.sh run desktop-step0 --ttl 3600 -- \
     scripts/device/run.sh adb shell wm set-display-windowing-mode -d 0 1
+scripts/device/lock.sh run desktop-step0 --ttl 3600 -- \
+    scripts/device/run.sh adb shell wm density reset -d 0
+scripts/device/lock.sh run desktop-step0 --ttl 3600 -- \
+    scripts/device/run.sh adb shell wm get-display-windowing-mode -d 0
+scripts/device/lock.sh run desktop-step0 --ttl 3600 -- \
+    scripts/device/run.sh adb shell wm density -d 0
 scripts/device/lock.sh release desktop-step0
 ```
+
+The last two commands must print `display windowing mode=fullscreen for
+displayId=0` and `Physical density: 360` with no `Override density` line.
 
 If none of the three knobs is enough, the remaining candidate is the aconfig
 surface that gates desktop mode itself (`lse_desktop_experience` namespace:
@@ -224,25 +262,31 @@ so the feature is already declared from
 `/system/product/etc/permissions/`. The `/system` copy above is kept anyway: it
 declares the prerequisite from the partition this product owns, and it survives
 a LineageOS config change. `PackageManager` keys features by name, so declaring
-the same feature from two partitions is harmless; only a *duplicate
-destination* would be a build error.
+the same feature from two partitions is harmless.
 
 **PC build check (no device needed):**
 
 ```sh
-# the destinations of the copy - expect system/etc/permissions/... and
-# system/product/etc/permissions/..., never the same path twice
-grep -o "[^ ]*etc/permissions/android.software.freeform_window_management.xml" \
-    out/soong/build.ninja | sort -u
-# must be empty
-grep -r "Duplicate PRODUCT_COPY_FILES" out/ 2>/dev/null
+# 1. nothing was silently dropped: this file must not mention the freeform XML
+cat out/target/product/$TARGET_PRODUCT/product_copy_files_ignored.txt
+# 2. both staged copies exist, one per destination
+find out/target/product/$TARGET_PRODUCT \
+    -name android.software.freeform_window_management.xml
+# expect .../system/etc/permissions/... and .../system/product/etc/permissions/...
 ```
 
-`out/soong/build.ninja` is the reliable place: it lists one copy rule per
-destination, so a duplicated destination shows up as a single path with two
-sources (and the build fails before the image is made). After the flash, the
-runtime check is `pm list features | grep freeform` (section 7) - that is the
-only one that proves the file was picked up by `PackageManager`.
+Why not a ninja grep or a "duplicate" error: `PRODUCT_COPY_FILES` are Make
+rules, not Soong rules. Kati writes them to `out/build-*.ninja`
+(`build/make/core/ninja_config.mk:7`, `KATI_OUTPUT_PATTERNS :=
+$(OUT_DIR)/build%.ninja`), so `out/soong/build.ninja` has none of them. A
+duplicated destination does **not** fail the build either: `build/make/core/Makefile`
+de-duplicates by destination, keeps the first pair and appends the dropped ones
+to `$(PRODUCT_OUT)/product_copy_files_ignored.txt`
+(`build/make/core/Makefile:137-169`), without a warning - there is no
+`Duplicate PRODUCT_COPY_FILES` diagnostic in this tree. The two checks above are
+the ones that can actually fail. After the flash, the runtime check is
+`pm list features | grep freeform` (section 7) - that is the only one that
+proves the file was picked up by `PackageManager`.
 
 ### 3.3 Launcher3 taskbar patch
 
@@ -306,6 +350,12 @@ relation needs one device check (section 6).
   is a visible, several-second operation and must not be done twice in a row.
   `wm density` accepts a per-display override
   (`WindowManagerShellCommand.runDisplayDensity`, `density [reset|DENSITY] [-d DISPLAY_ID]`).
+- **Both overrides outlive a reboot** (section 2.1): a crash or a killed process
+  between "enter" and "exit" leaves display 0 at 320 dpi (and freeform) after the
+  next boot. F2 therefore needs a boot-time guard, e.g. on boot
+  `wm density reset -d 0` + `wm set-display-windowing-mode -d 0 1` whenever
+  `persist.ashfall.pad.mode` is not `desktop`, and a reset in every failure path;
+  it must not rely on a reboot.
 
 F2 owns the implementation; the contract is exactly:
 
@@ -339,13 +389,14 @@ daemon chord **L1+R1+Start**. All three do the same two steps (section 4):
 2. on exit: `wm set-display-windowing-mode -d 0 1`, restore the stored density,
    `persist.ashfall.pad.mode=game`.
 
-Failure handling: if `wm set-display-windowing-mode` fails (non-zero exit /
-`SecurityException`), restore the density immediately and leave the pad mode at
-`game`; do not report the mode change as applied. How F2 gets the permission
-(Parts' privileged helper, a root helper, or the QS tile calling the same
-command) is F2's call - F1 only fixes the two commands and their order. F2 must
-not write `enable_taskbar` or `navigation_bar_hint`: the taskbar is the Launcher3
-patch's job.
+Failure handling: if `wm set-display-windowing-mode` fails, restore the density
+immediately and leave the pad mode at `game`; do not report the mode change as
+applied. There is no special permission to arrange: `com.android.shell` already
+holds `INTERNAL_SYSTEM_WINDOW` (`packages/Shell/AndroidManifest.xml:183`), and a
+platform-signed privileged Parts app or QS tile can declare the same permission
+and call the same WM binder API, so F2 may either use the binder or the two
+`wm`-equivalent calls above. F2 must not write `enable_taskbar` or
+`navigation_bar_hint`: the taskbar is the Launcher3 patch's job.
 
 ## 6. Open points that need the build/flash pass
 
@@ -369,12 +420,23 @@ Record all of these in #131 with the observed output; do not assume:
    `Override density: 320` in desktop mode, and the app relaunch finishes (no
    half-scaled UI left after exit).
 4. **Overlay actually applied**: the overlay is merged into `framework-res`,
-   so there is no RRO to look for in `cmd overlay list`. If desktop mode is
-   still unavailable, read the resource back from the built APK on the build
-   host (`aapt2 dump resources .../system/framework/framework-res.apk` must list
-   `config_isDesktopModeSupported` as a bool resource) - a value dump on the
-   device needs an image mount, so `dumpsys window | grep -i desktop` and
-   whether the developer option appears are the practical proofs.
+   so there is no RRO to look for in `cmd overlay list`, and the resource itself
+   exists in every build (`config_isDesktopModeSupported` is an AOSP resource),
+   so the check has to assert the **value**. On the build host:
+
+   ```sh
+   out/host/linux-x86/bin/aapt2 dump resources \
+       out/target/product/$TARGET_PRODUCT/system/framework/framework-res.apk \
+     | grep -A2 "config_isDesktopModeSupported" | grep -q "(bool) true" \
+     && echo "overlay applied" || echo "OVERLAY MISSING"
+   ```
+
+   `(bool) true` in the value line under the resource is the merged value;
+   `false` or no match means the overlay root did not apply (check that
+   `PRODUCT_PACKAGE_OVERLAYS` still points at
+   `vendor/ashfall/overlay/no-rro`). On the device the practical proofs are
+   `pm list features`, whether the desktop-mode developer option appears, and
+   `dumpsys window | grep -i desktop`.
 
 ## 7. Device command list for the later build/flash pass
 
@@ -382,6 +444,7 @@ After `scripts/build.sh` produces a `system.img` and
 `scripts/device/flash-gsi.sh` has flashed it, on the running build:
 
 ```sh
+# optional: only needed if you also set the persist.* properties below
 scripts/device/lock.sh run desktop-verify --ttl 3600 -- \
     scripts/device/run.sh adb root
 
@@ -418,6 +481,17 @@ scripts/device/lock.sh run desktop-verify --ttl 3600 -- \
     scripts/device/run.sh adb shell wm get-display-windowing-mode -d 0
 scripts/device/lock.sh run desktop-verify --ttl 3600 -- \
     scripts/device/run.sh adb shell wm density -d 0
+
+# and once more after a reboot - the reset must stick (section 2.1)
+scripts/device/lock.sh run desktop-verify --ttl 3600 -- \
+    scripts/device/run.sh adb reboot
+scripts/device/lock.sh run desktop-verify --ttl 3600 -- \
+    scripts/device/run.sh adb shell \
+        'while [ "$(getprop sys.boot_completed)" != 1 ]; do sleep 2; done'
+scripts/device/lock.sh run desktop-verify --ttl 3600 -- \
+    scripts/device/run.sh adb shell wm get-display-windowing-mode -d 0
+scripts/device/lock.sh run desktop-verify --ttl 3600 -- \
+    scripts/device/run.sh adb shell wm density -d 0
 ```
 
 Acceptance for that pass is the #131 checklist (taskbar visible in desktop mode
@@ -441,9 +515,12 @@ the same two commands; the pointer checks belong to workstream B.
   `core/java/android/window/flags/lse_desktop_experience.aconfig`,
   `libs/WindowManager/Shell/shared/src/com/android/wm/shell/shared/desktopmode/{DesktopModeStatus.java,DesktopState.kt,DesktopStateImpl.kt}`,
   `libs/WindowManager/Shell/src/com/android/wm/shell/desktopmode/DesktopTasksController.kt`,
-  `services/core/java/com/android/server/wm/{WindowManagerShellCommand.java,WindowManagerService.java,DisplayContent.java}`),
+  `packages/Shell/AndroidManifest.xml:183` and `packages/Shell/Android.bp`
+  (`INTERNAL_SYSTEM_WINDOW`, platform signing),
+  `services/core/java/com/android/server/wm/{WindowManagerShellCommand.java,WindowManagerService.java,DisplayContent.java,DisplayWindowSettings.java,DisplayWindowSettingsProvider.java,DisplayWindowSettingsXmlHelper.java}`),
   `android_build` @ `90d0063` (`core/envsetup.mk:256`,
-  `core/board_config.mk:736-738`, no `target/product/*.mk` freeform copy),
+  `core/board_config.mk:736-738`, `core/Makefile:137-169`,
+  `core/ninja_config.mk:7`, no `target/product/*.mk` freeform copy),
   `android_vendor_lineage` @ `5a1814d916321aecb72d60d13b5e52bc719251bd`
   (`config/common_mobile.mk:56-57`),
   `android_packages_apps_Launcher3` @ `ee4a31eaf8e57f8e3eeff6a58508de92a1361972`
@@ -462,12 +539,23 @@ this session. The page below is the contract the build/flash pass verifies.
 
 | Entry point | Behaviour |
 |---|---|
-| **AshFall Parts > Handheld > Display** | a "Desktop mode" switch, the same large Settings main-switch row the Lighting page uses, plus two read-only notes: internal screen only / taskbar and pointer / apps restart, and the L1+R1+Start chord |
+| **AshFall Parts > Handheld > Display** | a "Desktop mode" switch, the same large Settings main-switch row the Lighting page uses, plus read-only notes: internal screen only / taskbar and pointer / apps restart, and what the chord really does |
 | **Quick Settings "Desktop mode" tile** | one tap toggles; no dialog, no unlock prompt, active state = display 0 really is in desktop windowing; long-press opens the Display page through `qs/TilePreferencesActivity` |
-| **L1+R1+Start** | daemon-owned (`docs/rp5/input.md`); the page and the tile poll the display mode every 1.5 s / 2 s while visible so a mode change made elsewhere shows up |
 
-There is **no boot receiver** and no default entry: a normal boot is
-fullscreen. The page and tile only act on an explicit tap.
+The L1+R1+Start chord is **not** a desktop-mode entry point in v1: the daemon
+only switches its pointer mode, does not write `persist.ashfall.pad.mode` and
+does not touch display 0 (`docs/rp5/input.md`).  The page and tile read the
+display, so after a chord they keep showing the real display mode; the copy on
+the page says exactly that.  A chord that enters desktop mode would need a
+workstream-B follow-up.
+
+A boot guard, `DesktopBootReceiver`, runs on `LOCKED_BOOT_COMPLETED` and
+`BOOT_COMPLETED` and is deliberately *not* an entry point: it always forces
+display 0 fullscreen, restores the saved density and writes
+`persist.ashfall.pad.mode=game`.  A boot is therefore always fullscreen, even
+after a crash between enter and exit; it never enters desktop mode by itself.
+The page and tile poll the display mode every 1.5 s / 2 s while visible so a
+change made elsewhere shows up.
 
 ### 9.2 State: WindowManager, not the property
 
@@ -488,10 +576,12 @@ the two signature permissions below are granted:
 |---|---|
 | `android.permission.INTERNAL_SYSTEM_WINDOW` | `getWindowingMode(int)`, `setWindowingMode(int,int)` |
 | `android.permission.WRITE_SECURE_SETTINGS` | `setForcedDisplayDensityForUser(...)`, `clearForcedDisplayDensityForUser(...)` |
+| `android.permission.RECEIVE_BOOT_COMPLETED` | `DesktopBootReceiver` (`LOCKED_BOOT_COMPLETED`, `BOOT_COMPLETED`) |
 
 Hidden calls used: `WindowManagerGlobal.getWindowManagerService()`;
 `IWindowManager.getWindowingMode(int)`, `setWindowingMode(int,int)`,
-`getBaseDisplayDensity(int)`, `setForcedDisplayDensityForUser(int,int,int)`,
+`getBaseDisplayDensity(int)`, `getInitialDisplayDensity(int)`,
+`setForcedDisplayDensityForUser(int,int,int)`,
 `clearForcedDisplayDensityForUser(int,int)`.
 
 ### 9.3 Enter: density, display, property
@@ -510,28 +600,55 @@ succeeded:
 6. ask SystemUI to rebind the tile (`TileService.requestListeningState`), so
    the tile is active immediately even when the panel is closed.
 
-The density key is a `persist.*` property, so it survives a reboot; the
-display windowing mode and the per-display density do not. Reading the key
-back is what makes a failed property write fail the whole operation instead of
-leaving the property and the display out of step.
+The density key is a `persist.*` property, so it survives a reboot.  So do the
+display windowing mode and the per-display density override: WindowManager
+writes them to `/data/system/display_settings.xml` and
+`Settings.Secure.DISPLAY_DENSITY_FORCED` (F1 §2.1), which is why a crash
+between enter and exit can come back in desktop mode.  The boot guard in §9.1
+forces fullscreen and applies the key on every boot; reading the key back is
+what makes a failed property write fail the whole operation instead of leaving
+the property and the display out of step.
 
 ### 9.4 Exit: display, density, property
 
 1. `setWindowingMode(0, 1)` and read it back; it must report fullscreen;
-2. only when the panel is currently at **320**: re-apply
-   `persist.ashfall.display.density_restore`; if the key is missing and the
-   call started from a real desk (the desk was entered outside F2), clear the
-   forced density.  This also repairs a reboot that left the density at 320
+2. only when the panel is currently at **320** (or the density cannot be
+   read): re-apply `persist.ashfall.display.density_restore`, retry once, and
+   verify the read-back; if the key is missing and the call started from a
+   real desk (the desk was entered outside F2), clear the forced density and
+   verify it too.  This also repairs a reboot that left the density at 320
    with a fullscreen display, without touching a user's own override;
 3. write `persist.ashfall.pad.mode=game`;
 4. refresh the tile.
 
-A second "off" tap while already fullscreen writes `game` and leaves the
-density alone, so a stale key cannot re-apply 320 dpi after a reboot. Entering
-while already in desktop windowing only writes `desktop` and does not touch a
-density the user already had.
+If the density restore or the property write fails after the display has
+already returned to fullscreen, the result is `PARTIAL`, not success: the page
+and tile show "Couldn't finish switching the display. Check the display
+settings." rather than claiming nothing changed.  The restore key is kept, so
+the next tap or the boot guard retries.
 
-### 9.5 Failure path
+A second "off" tap while already fullscreen writes `game` and leaves the
+density alone. Entering while already in desktop windowing only writes
+`desktop` and does not touch a density the user already had.
+
+### 9.5 Boot guard (#207)
+
+`DesktopBootReceiver` is a direct-boot receiver (the app is already
+`directBootAware`) for both `LOCKED_BOOT_COMPLETED` and `BOOT_COMPLETED`.  It
+calls `Desktop.resetForBoot()`:
+
+1. `setWindowingMode(0, 1)` - display 0 fullscreen;
+2. if `persist.ashfall.display.density_restore` exists, apply it (`wm density
+   reset` when it equals the stock density, otherwise set it);
+3. `persist.ashfall.pad.mode=game`.
+
+Both broadcasts run the same idempotent path, so a WindowManager that was not
+ready for the first call gets a second attempt, and a clean device simply
+re-applies the same values.  The receiver sends no broadcast and starts no
+worker, so it cannot loop.  A failure is logged by `Desktop` and leaves the
+real display state alone; the next boot retries.
+
+### 9.6 Failure path
 
 | Failure | What is put back |
 |---|---|
@@ -540,36 +657,34 @@ density the user already had.
 | `setWindowingMode(0,5)` throws or the read-back is not 5 | fullscreen is set again (best effort), the pre-entry density is restored, `persist.ashfall.pad.mode=game` |
 | `persist.ashfall.pad.mode=desktop` does not read back | fullscreen is set again, the pre-entry density is restored, `persist.ashfall.pad.mode=game` |
 | exit cannot set/read back fullscreen | property stays `desktop` (the display is still a desk), the page/tile show the real state and the short error message |
-| exit cannot write `game` | the display is already fullscreen; the next tap retries the property write |
+| exit cannot write `game` | the display is already fullscreen; the page/tile report `PARTIAL`; the next tap retries the property write |
+| exit: density restore/clear fails or the read-back is still 320 | the display is fullscreen and `game` is written; the page/tile report `PARTIAL` ("Couldn't finish..."); the key stays for the next tap or the boot guard |
+| enter: density rollback fails after a display failure | the display is fullscreen and `game` is written; the page/tile report `PARTIAL`; the boot guard retries the density |
+| process killed between enter and exit | the next boot's `DesktopBootReceiver` forces fullscreen, applies the saved density and writes `game` |
 
 The page shows one short message on any failure ("Couldn't switch the display
 mode. Nothing changed."); the tile shows the same message as a toast. No
 failure path reports desktop mode while display 0 is fullscreen.
 
-### 9.6 What the build/device pass must confirm
+### 9.7 What the build/device pass must confirm
 
 1. `wm get-display-windowing-mode -d 0` changes to
    `display windowing mode=freeform` after the switch, and back to `fullscreen`
    after it, matching the page and tile within one tick.
 2. `wm density -d 0` shows `Override density: 320` in desktop mode and the
-   value from `persist.ashfall.display.density_restore` after exit.  Also
-   check what a reboot does **while desktop mode is still active**: AOSP
-   stores the display windowing mode and the density override in persistent
-   display settings (`/data/system/display_settings.xml` and
-   `Settings.Secure.DISPLAY_DENSITY_FORCED`), so F1 §2's "per-boot" wording
-   may be wrong and the device may come back in desktop mode.  F2 adds no boot
-   receiver by decision; if the read-back is still freeform/320 after the
-   reboot, record it in #131 and correct F1's note rather than assuming the
-   display reset.
+   value from `persist.ashfall.display.density_restore` after exit.  Both
+   overrides persist (F1 §2.1), so reboot **while desktop mode is still
+   active**: the boot guard must bring the device back fullscreen at the saved
+   density with `persist.ashfall.pad.mode=game`, not into a desk at 320 dpi.
 3. The taskbar appears only in desktop mode (#131 F1 Launcher3 patch) and the
    normal fullscreen session still has none (#63/#81 unchanged).
 4. `getprop persist.ashfall.pad.mode` is `desktop` after entry and `game`
    after exit, and `ashfall.status.pad.mode` agrees within one daemon poll
-   (250 ms). The chord's current pointer-only switch is a known B limitation:
-   it does not change the display, so the page correctly keeps showing
-   fullscreen unless the display itself changed.
-5. No `SecurityException` for `INTERNAL_SYSTEM_WINDOW` or
-   `WRITE_SECURE_SETTINGS` in logcat, no ANR from the density restart, and the
-   page/tile/`wm` read-back agree after a forced chord/Settings change.
+   (250 ms).  L1+R1+Start changes only the pointer; the page keeps showing the
+   real display mode and its note says the display stays the same.
+5. No `SecurityException` for `INTERNAL_SYSTEM_WINDOW`,
+   `WRITE_SECURE_SETTINGS` or `RECEIVE_BOOT_COMPLETED` in logcat, no ANR from
+   the density restart, and the page/tile/`wm` read-back agree after a forced
+   Settings/`wm` change.
 6. The D-pad reaches the switch and the notes, and the page follows the day /
    night theme like the other Parts pages.
