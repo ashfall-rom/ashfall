@@ -29,10 +29,10 @@ Fixes #50
  .../android/systemui/classifier/ZigZagClassifier.java  |  8 +++++++-
  2 files changed, 16 insertions(+), 2 deletions(-)
 
-diff --git a/frameworks/base/packages/SystemUI/src/com/android/systemui/classifier/DistanceClassifier.java b/frameworks/base/packages/SystemUI/src/com/android/systemui/classifier/DistanceClassifier.java
+diff --git a/packages/SystemUI/src/com/android/systemui/classifier/DistanceClassifier.java b/packages/SystemUI/src/com/android/systemui/classifier/DistanceClassifier.java
 index 9d512f9..2a9fcec 100644
---- a/frameworks/base/packages/SystemUI/src/com/android/systemui/classifier/DistanceClassifier.java
-+++ b/frameworks/base/packages/SystemUI/src/com/android/systemui/classifier/DistanceClassifier.java
+--- a/packages/SystemUI/src/com/android/systemui/classifier/DistanceClassifier.java
++++ b/packages/SystemUI/src/com/android/systemui/classifier/DistanceClassifier.java
 @@ -49,7 +49,15 @@ import javax.inject.Inject;
  class DistanceClassifier extends FalsingClassifier {
  
@@ -50,10 +50,10 @@ index 9d512f9..2a9fcec 100644
      private static final float HORIZONTAL_SWIPE_THRESHOLD_DISTANCE_IN = 3;
      private static final float VERTICAL_SWIPE_THRESHOLD_DISTANCE_IN = 3;
      private static final float VELOCITY_TO_DISTANCE = 30f;
-diff --git a/frameworks/base/packages/SystemUI/src/com/android/systemui/classifier/ZigZagClassifier.java b/frameworks/base/packages/SystemUI/src/com/android/systemui/classifier/ZigZagClassifier.java
+diff --git a/packages/SystemUI/src/com/android/systemui/classifier/ZigZagClassifier.java b/packages/SystemUI/src/com/android/systemui/classifier/ZigZagClassifier.java
 index 7d1f65d..35c1b2e 100644
---- a/frameworks/base/packages/SystemUI/src/com/android/systemui/classifier/ZigZagClassifier.java
-+++ b/frameworks/base/packages/SystemUI/src/com/android/systemui/classifier/ZigZagClassifier.java
+--- a/packages/SystemUI/src/com/android/systemui/classifier/ZigZagClassifier.java
++++ b/packages/SystemUI/src/com/android/systemui/classifier/ZigZagClassifier.java
 @@ -48,7 +48,13 @@ class ZigZagClassifier extends FalsingClassifier {
      // most swipes will follow somewhat of a 'C' or 'S' shape, we allow more deviance along the
      // `SECONDARY` axis.
