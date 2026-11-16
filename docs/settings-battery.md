@@ -435,16 +435,6 @@ If an `avc: denied` does appear for the factory service or the property write,
 that is a new finding for a separate issue: do not ship a rule with this patch
 without the domain/type names from the log.
 
-```bash
-adb root
-adb shell 'dmesg | grep avc' | grep -iE 'factory|charger|ashfall_prop'   # must be empty
-adb shell 'logcat -d | grep "avc: denied"' | grep -iE 'factory|charge'   # must be empty
-```
-
-If an `avc: denied` does appear for the factory service or the property write,
-that is a new finding for a separate issue: do not ship a rule with this patch
-without the domain/type names from the log.
-
 ### 8.5 Boot, unplug and fail-open
 
 `ChargingControlReceiver` is the only piece that runs outside the page:
