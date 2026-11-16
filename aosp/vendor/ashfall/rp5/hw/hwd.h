@@ -7,7 +7,8 @@
  * STATUS_INTERVAL_MS to STATUS_LIVE_MS.  There is no second timer and no
  * per-page reader (docs/phase6.md §9.3).
  *
- *   ashfall.ui.fan_live=1    Fan page / fan editor / Fan QS dialog visible
+ *   ashfall.ui.fan_live      non-zero token = Fan page / fan editor / Fan QS
+ *                            dialog visible (0/empty = none)
  *   ashfall.ui.power_live=1  Power page visible (issue #156 item 2)
  *
  * Either property keeps the fast tick; both empty returns to the background
@@ -82,6 +83,42 @@ static inline bool hwd_ui_heartbeat_fresh(const struct hwd_ui_heartbeat *beat,
 {
     return beat->observed &&
            now_ms - beat->seen_ms <= HWD_UI_HEARTBEAT_TIMEOUT_MS;
+}
+
+/*
+ * Re-arm gate for the fan preview curve (issue #184).  The preview property is
+ * a curve string (FAN_CURVE_MAX_LEN = 92), so it needs its own full-size
+ * buffer: comparing it through HWD_UI_HEARTBEAT_TOKEN_MAX would truncate two
+ * valid curves that share a 31-character prefix.  There is no timing here,
+ * only "did the value change since the old preview was abandoned".
+ * HWD_VALUE_WATCH_MAX must stay >= FAN_CURVE_MAX_LEN + 1 (asserted in
+ * ashfall_hwd.c).
+ */
+#define HWD_VALUE_WATCH_MAX 96
+
+struct hwd_value_watch {
+    char value[HWD_VALUE_WATCH_MAX];
+    bool have;
+};
+
+static inline bool hwd_value_watch_update(struct hwd_value_watch *watch,
+                                          const char *value)
+{
+    if (!value)
+        value = "";
+    if (watch->have && !strcmp(watch->value, value))
+        return false;
+    snprintf(watch->value, sizeof(watch->value), "%s", value);
+    watch->have = true;
+    return true;
+}
+
+static inline void hwd_value_watch_seed(struct hwd_value_watch *watch,
+                                        const char *value)
+{
+    watch->have = false;
+    watch->value[0] = '\0';
+    (void)hwd_value_watch_update(watch, value);
 }
 
 /* Status (and telemetry) period for the current UI liveness. */

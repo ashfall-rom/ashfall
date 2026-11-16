@@ -46,8 +46,10 @@ import java.util.List;
  * The Fan page.  Every change is written to the {@code persist.ashfall.fan.*}
  * properties immediately; the daemon applies it within a second.
  *
- * <p>While the page is visible it sets {@code ashfall.ui.fan_live=1} so the
- * daemon publishes status every 500 ms instead of every 2 s.
+ * <p>While the page is visible it refreshes {@code ashfall.ui.fan_live} with a
+ * changing token every 500 ms (non-zero; {@code 0} when no fan UI is open), so
+ * the daemon publishes status every 500 ms instead of 2 s and a force-stop
+ * cannot latch the state (#94/#180).
  *
  * <p>The Performance controls (throttling override, GPU max frequency, CPU caps
  * and presets) live on the Power page (#124); the one-line "Performance → Power"

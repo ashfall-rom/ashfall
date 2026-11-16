@@ -230,9 +230,13 @@ honoured again until the editor publishes a *different* curve:
 `ashfall.ui.fan_live` is shared by all fan pages, so a mere heartbeat refresh
 from another fan page must not revive a curve left behind by a force-stopped
 editor.  (An identical rewrite cannot be told apart without the property
-serial, which issue #180 removed; it is harmless because the editor has
-already saved that same curve to `persist.ashfall.fan.curve` whenever it
-publishes a preview.)  Timing uses the daemon's own monotonic clock
+serial, which issue #180 removed.  That is normally invisible: a preview is
+only published for the active Smart preset, and both `save()` and preset
+activation write the same curve to `persist.ashfall.fan.curve`.  However
+`publishPreview()` on resume republishes the stored preset curve without
+writing persist, so if the two have drifted or the earlier write failed, the
+preview stays ignored until the first edit rewrites both.)  Timing uses the
+daemon's own monotonic clock
 (`CLOCK_MONOTONIC`, `ah_now_ms()`), never the app's clock, so a wall-clock
 change cannot expire a live override or keep a dead one alive.  Empty values
 are always honoured as

@@ -30,6 +30,10 @@
 #include <string.h>
 #include <unistd.h>
 
+/* The preview curve watch is a full curve string, not a heartbeat token. */
+_Static_assert(HWD_VALUE_WATCH_MAX >= FAN_CURVE_MAX_LEN + 1,
+               "HWD_VALUE_WATCH_MAX must hold a whole fan curve");
+
 #define PROP_FAN_MODE "persist.ashfall.fan.mode"
 #define PROP_FAN_MANUAL "persist.ashfall.fan.manual_pct"
 #define PROP_FAN_CURVE "persist.ashfall.fan.curve"
@@ -542,9 +546,7 @@ int main(void)
     struct hwd_ui_heartbeat fan_live_beat = {.token = "",
                                              .seen_ms = 0,
                                              .observed = false};
-    struct hwd_ui_heartbeat preview_beat = {.token = "",
-                                            .seen_ms = 0,
-                                            .observed = false};
+    struct hwd_value_watch preview_watch = {.value = "", .have = false};
     bool led_expiry_logged = false;
     bool preview_expiry_logged = false;
     /* A preview that lost its lease (its publisher died) is not honoured
@@ -598,10 +600,11 @@ int main(void)
          * rewritten by the editor before it is followed again. */
         ui_heartbeat_seed(&led_beat, PROP_UI_LED_OVERRIDE_LIVE);
         ui_heartbeat_seed(&fan_live_beat, PROP_UI_FAN_LIVE);
-        ui_heartbeat_seed(&preview_beat, PROP_UI_FAN_PREVIEW);
-        if (!hwd_ui_heartbeat_fresh(&fan_live_beat, now) &&
-            prop_get_str(PROP_UI_FAN_PREVIEW, preview, sizeof(preview)) > 0 &&
-            preview[0])
+        if (prop_get_str(PROP_UI_FAN_PREVIEW, preview, sizeof(preview)) <= 0)
+            preview[0] = '\0';
+        /* The re-arm gate compares the whole curve, not a heartbeat token. */
+        hwd_value_watch_seed(&preview_watch, preview);
+        if (!hwd_ui_heartbeat_fresh(&fan_live_beat, now) && preview[0])
             preview_needs_rewrite = true;
 
         read_fan_settings(&fan.settings, &changed);
@@ -679,8 +682,17 @@ int main(void)
          * refresh the daemon has actually observed. */
         ui_heartbeat_sample(&led_beat, PROP_UI_LED_OVERRIDE_LIVE, now);
         ui_heartbeat_sample(&fan_live_beat, PROP_UI_FAN_LIVE, now);
-        if (ui_heartbeat_sample(&preview_beat, PROP_UI_FAN_PREVIEW, now))
-            preview_needs_rewrite = false;
+        {
+            char preview[FAN_CURVE_MAX_LEN + 1];
+
+            if (prop_get_str(PROP_UI_FAN_PREVIEW, preview,
+                             sizeof(preview)) <= 0)
+                preview[0] = '\0';
+            /* Full-string comparison: two curves sharing a long prefix must
+             * still count as a new preview (issue #184). */
+            if (hwd_value_watch_update(&preview_watch, preview))
+                preview_needs_rewrite = false;
+        }
         read_fan_settings(&fan.settings, &changed);
         {
             bool live = hwd_ui_heartbeat_fresh(&fan_live_beat, now);

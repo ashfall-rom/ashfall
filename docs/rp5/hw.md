@@ -372,9 +372,13 @@ has changed within the last **1.5 s** (three missed 500 ms beats):
   shared by every fan page: another page's heartbeat must not revive a curve
   that a force-stopped editor left behind.  An identical rewrite cannot be
   distinguished from the abandoned value (the value-change mechanism has no
-  serial side channel), and is harmless: while a preview is published the
-  editor has already saved the same curve to `persist.ashfall.fan.curve`, so
-  ignoring a leftover preview never changes the effective curve.
+  serial side channel).  That is normally invisible: the editor only publishes
+  a preview for the *active* Smart preset, and both `save()` and preset
+  activation write the same curve to `persist.ashfall.fan.curve`.  Note that
+  `CurveActivity.publishPreview()` on resume republishes the stored preset
+  curve **without** writing `persist.ashfall.fan.curve`; if the stored preset
+  and the persisted curve have drifted (or the earlier write failed), the
+  preview stays ignored until the first edit, whose `save()` rewrites both.
 
 A fresh heartbeat plus a value is honoured again immediately (next loop tick);
 there is no mode change and no reboot requirement.  With the publisher gone

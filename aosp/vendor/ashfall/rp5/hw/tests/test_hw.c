@@ -1743,6 +1743,36 @@ static void test_ui_heartbeat(void)
     CHECK(HWD_UI_HEARTBEAT_MS * 3 == HWD_UI_HEARTBEAT_TIMEOUT_MS);
 }
 
+/* --- #184: the preview re-arm gate must see the whole curve string -------- */
+
+static void test_preview_rearm(void)
+{
+    struct hwd_value_watch watch;
+    char a[FAN_CURVE_MAX_LEN + 1];
+    char b[FAN_CURVE_MAX_LEN + 1];
+
+    /* Valid curves that differ only in their last point: identical first 31
+     * characters, so a 32-byte token buffer would collapse them. */
+    snprintf(a, sizeof(a), "40:10,50:20,60:35,70:55,80:75,90:100");
+    snprintf(b, sizeof(b), "40:10,50:20,60:35,70:55,80:75,95:100");
+    CHECK(HWD_VALUE_WATCH_MAX >= FAN_CURVE_MAX_LEN + 1);
+    CHECK(strncmp(a, b, 31) == 0);
+    CHECK(strcmp(a, b) != 0);
+
+    hwd_value_watch_seed(&watch, a);
+    /* The abandoned value itself is not a rewrite... */
+    CHECK(!hwd_value_watch_update(&watch, a));
+    /* ...but a curve that differs past the 31st character is (issue #184). */
+    CHECK(hwd_value_watch_update(&watch, b));
+    CHECK(!hwd_value_watch_update(&watch, b));
+    CHECK(hwd_value_watch_update(&watch, a));
+
+    /* Empty values compare normally too. */
+    hwd_value_watch_seed(&watch, "");
+    CHECK(!hwd_value_watch_update(&watch, ""));
+    CHECK(hwd_value_watch_update(&watch, a));
+}
+
 /* --- #129: max_pct lowered while the spin-up kick is open ---------------- */
 
 static void test_kick_max_lowered(void)
@@ -1820,6 +1850,7 @@ int main(void)
     test_gpu_load();
     test_status_interval();
     test_ui_heartbeat();
+    test_preview_rearm();
     test_swap_header();
     test_cpu();
     test_cpu_load();
