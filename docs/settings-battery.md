@@ -73,8 +73,8 @@ refreshed on the 2 s telemetry tick while the page is started (the controller is
 a `LifecycleObserver`; the timer is removed on stop).
 
 Sub-screen order: Show indicator · [Placement, Detail, Time format, Font size,
-Tap to cycle] · [Averaging window, Sample interval, Battery capacity] ·
-[Charging symbol, Charging cycle, Cycle interval, Meters to cycle] · Live
+Tap to cycle] · [Average over, Update every, Battery capacity] ·
+[Charging symbol, Charging cycle, Cycle interval, Values to cycle] · Live
 values.
 
 | Row | Control | Property (written) | Values |
@@ -85,13 +85,13 @@ values.
 | Time format | list, 4 | `persist.ashfall.batt.fmt` | `COMPACT`, `SHORT`, `COLON`, `DETAILED` |
 | Font size | slider 10–16 sp | `persist.ashfall.batt.size_sp` | `10`..`16` |
 | Tap to cycle | switch | `persist.ashfall.batt.tap` | `0` \| `1` |
-| Averaging window | list, 4 | `persist.ashfall.batt.window` | `1`, `3`, `5`, `10` (min) |
-| Sample interval | slider 2–30 s | `persist.ashfall.batt.interval` | `2`..`30` (s) |
+| Average over | list, 4 | `persist.ashfall.batt.window` | `1`, `3`, `5`, `10` (min) |
+| Update every | slider 2–30 s | `persist.ashfall.batt.interval` | `2`..`30` (s) |
 | Battery capacity | numeric dialog | `persist.ashfall.batt.capacity_mah` | `0` = auto, else `1`..`20000` mAh |
 | Charging symbol | list, 4 | `persist.ashfall.batt.chg_symbol` | `BOLT` (`↯`), `PLUS` (`+`), `TEXT` (`CHG`), `EMOJI` (`⚡`) |
 | Charging cycle | switch | `persist.ashfall.batt.chg_cycle` | `0` \| `1` |
 | Cycle interval | slider 0.5–5 s | `persist.ashfall.batt.chg_cycle_ms` | `500`..`5000` ms, 100 ms steps |
-| Meters to cycle | multi-select, 4 | `persist.ashfall.batt.chg_meters` | 2–3 of `TIME`, `PERCENT`, `WATTS`, `VOLTS`, written in that order |
+| Values to cycle | multi-select, 4 | `persist.ashfall.batt.chg_meters` | 2–3 of `TIME`, `PERCENT`, `WATTS`, `VOLTS`, written in that order |
 | Live values | non-selectable | read only (no property) | `BatteryManager` (§4) |
 
 The cycle-interval slider stores steps `0`..`45` and writes
