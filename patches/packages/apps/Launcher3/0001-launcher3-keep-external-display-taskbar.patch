@@ -1,4 +1,4 @@
-From faadfa4ba5b1296e1c4dae75ad9ea00239a2c697 Mon Sep 17 00:00:00 2001
+From df60236b39e3df5fa56d5184a7c22b9e19480ceb Mon Sep 17 00:00:00 2001
 From: AshFall UI <ui@ashfall.local>
 Date: Fri, 13 Nov 2026 23:21:24 +0000
 Subject: [PATCH] Launcher3: keep the external-display taskbar enabled
@@ -12,15 +12,23 @@ there.
 
 Ignore the switch for non-primary displays: they keep the stock behaviour
 (enabled), while the primary display follows the user/product setting.
+
+The primary display additionally keeps the taskbar while that display is in
+desktop windowing (#131): desktop mode has no navigation bar and no window
+switcher, so a disabled taskbar leaves no way back to HOME or between windows.
+The signal is the display's own windowing mode, the same one
+SystemWindowManagerProxy#isDisplayDesktopFirst uses, gated on desktop mode
+being available at all. Fullscreen behaviour is unchanged: a normal boot still
+has no taskbar, and a user who enabled the taskbar manually sees no change.
 ---
- .../android/launcher3/taskbar/TaskbarActivityContext.java  | 7 ++++++-
- 1 file changed, 6 insertions(+), 1 deletion(-)
+ .../taskbar/TaskbarActivityContext.java        | 18 +++++++++++++++++-
+ 1 file changed, 17 insertions(+), 1 deletion(-)
 
 diff --git a/quickstep/src/com/android/launcher3/taskbar/TaskbarActivityContext.java b/quickstep/src/com/android/launcher3/taskbar/TaskbarActivityContext.java
-index ba7d96c..11db8aa 100644
+index ba7d96c1b2..866bb16d00 100644
 --- a/quickstep/src/com/android/launcher3/taskbar/TaskbarActivityContext.java
 +++ b/quickstep/src/com/android/launcher3/taskbar/TaskbarActivityContext.java
-@@ -361,7 +361,12 @@ public class TaskbarActivityContext extends BaseTaskbarContext {
+@@ -361,7 +361,23 @@ public class TaskbarActivityContext extends BaseTaskbarContext {
          SettingsCache settingsCache = SettingsCache.INSTANCE.get(this);
          mIsUserSetupComplete = settingsCache.getValue(URI_USER_SETUP_COMPLETE);
          mIsNavBarKidsMode = settingsCache.getValue(URI_NAV_BAR_KIDS_MODE);
@@ -29,7 +37,18 @@ index ba7d96c..11db8aa 100644
 +        // large-screen taskbar. A secondary/external display keeps its taskbar (the
 +        // navigation bar) enabled: it is the only navigation affordance there and is
 +        // intentionally left alone by the RP5 UI defaults (docs/ui.md).
-+        mIsTaskbarEnabled = !isPrimaryDisplay()
++        //
++        // Desktop windowing (#131) needs the same taskbar on the primary display even
++        // though the product default keeps it off for a fullscreen handheld: there is no
++        // navigation bar and no window switcher there. Follow the display's own windowing
++        // mode (the signal SystemWindowManagerProxy#isDisplayDesktopFirst uses), and only
++        // when desktop mode is actually available on this device. Switching the display's
++        // windowing mode is a configuration change, so TaskbarManagerImpl recreates this
++        // context and re-reads the value.
++        boolean isDesktopWindowing = mDesktopState.canEnterDesktopMode()
++                && mWindowContext.getResources().getConfiguration().windowConfiguration
++                        .getWindowingMode() == WINDOWING_MODE_FREEFORM;
++        mIsTaskbarEnabled = !isPrimaryDisplay() || isDesktopWindowing
 +                || settingsCache.getValue(URI_ENABLE_TASKBAR);
          mIsNavbarHintEnabled = settingsCache.getValue(URI_NAVIGATION_BAR_HINT);
          mBubbleFeatureConfig =

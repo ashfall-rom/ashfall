@@ -19,7 +19,7 @@ the seamless HOME transition with the third-party AshFall launcher (section 3).
 | `patches/frameworks/base/0002-systemui-tune-falsing-for-landscape-handheld.patch` | #50: SystemUI falsing thresholds |
 | `patches/lineage-sdk/0001-lineagesettings-provider-ashfall-navigation-defaults.patch` | #51/#63: `navigation_bar_hint=0`, `enable_taskbar=0` defaults and the 24 -> 25 DB migration |
 | `aosp/vendor/ashfall/overlay/no-rro/packages/apps/SetupWizard/app/src/main/res/layout/setup_navigation.xml` | #63: setup's "hide gesture hint" switch defaults to on |
-| `patches/packages/apps/Launcher3/0001-launcher3-keep-external-display-taskbar.patch` | #63: only the primary display follows `enable_taskbar=0` |
+| `patches/packages/apps/Launcher3/0001-launcher3-keep-external-display-taskbar.patch` | #63: only the primary display follows `enable_taskbar=0`; #131: the primary display keeps the taskbar while it is in desktop windowing (`docs/desktop-mode.md` 3.3) |
 | `patches/frameworks/base/0003-settingsprovider-keep-settings-version.patch` | keeps the AOSP settings DB version at 237 after removing the old seed |
 | `patches/frameworks/base/0004-wm-shell-instant-third-party-home.patch` | #64: no default task-open animation for a third-party HOME |
 | `patches/packages/apps/Launcher3/0002-launcher3-drop-home-candidacy.patch` | #81: Trebuchet is not a HOME app; Quickstep keeps recents |
@@ -202,7 +202,9 @@ with the hint enabled the stashed height is `taskbar_stashed_size`; with it
 disabled both the stashed height and the handle view height are **0**, so nothing
 is drawn *and* the window reports no `navigationBars` inset. `TaskbarManagerImpl`
 gates the taskbar itself on `LineageSettings.System.ENABLE_TASKBAR` (the
-LineageOS "Enable taskbar" switch). Both default to *enabled* in Launcher3's
+LineageOS "Enable taskbar" switch), and the Launcher3 patch also enables it
+while a display is in desktop windowing (`docs/desktop-mode.md` 3.3). Both
+default to *enabled* in Launcher3's
 `SettingsCache` (`SETTINGS_ENABLED_BY_DEFAULT`), because they are LineageOS
 settings whose consumers pass no default of their own.
 
@@ -295,7 +297,10 @@ Two changes are needed, because two different code paths write the key:
    `enable_taskbar` is one global LineageSettings key, but the second display's
    taskbar is its navigation bar. `TaskbarActivityContext` now only honours the
    switch on the primary display; a secondary/external display keeps its taskbar
-   (the stock behaviour), as before.
+   (the stock behaviour), as before. The same patch keeps the taskbar enabled on
+   the primary display while that display is in desktop windowing (#131,
+   `docs/desktop-mode.md` 3.3): desktop mode has no navigation bar and no window
+   switcher, so `enable_taskbar=0` alone would leave no way back to HOME.
 
 The old `patches/frameworks/base/0003-settingsprovider-ashfall-ui-defaults.patch`
 is replaced by
