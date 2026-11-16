@@ -61,10 +61,15 @@ REPO = HERE.parent.parent.parent
 MARK_SVG = REPO / "assets" / "brand" / "ashfall-mark.svg"
 
 FPS = 30
-INTRO_S = 5.8
+# 4.7 s = 141 frames.  The fast part was shortened by 1.1 s (#166: the user
+# asked for about half of the previous 2.225 s hold), and the light, the settle
+# and the glyph fade move with it so the arc keeps its shape - the intro is
+# exactly as long after the burst as it used to be, just 1.1 s shorter overall.
+INTRO_S = 4.7
 LOOP_S = 12.0
-# glyph fade, in seconds from the start of the intro (deliberately slow)
-GLYPH_IN = (3.70, 5.70)
+# glyph fade, in seconds from the start of the intro (deliberately slow,
+# finishing 0.1 s before the intro ends, as before)
+GLYPH_IN = (INTRO_S - 2.10, INTRO_S - 0.10)
 
 # scene constants, in pixels at the mark's plane
 FOCAL = 1400.0
@@ -79,8 +84,16 @@ SPEED_PEAK = 32.0
 # 0.425 s of acceleration (was 0.85 s): the user wants the fast part to
 # arrive sooner so a quick boot still shows it.
 T_RAMP_UP = (0.50, 0.925)
-T_HOLD = (0.925, 3.15)
-T_RAMP_DOWN = (3.15, 4.00)
+# 1.10 s at full speed, down from 2.225 s: the user found the burst too long
+# (#166).  The acceleration is untouched; only the time actually spent flying
+# fast was halved.  The deceleration below keeps its 0.85 s.
+T_HOLD = (0.925, 2.025)
+T_RAMP_DOWN = (2.025, 2.875)
+# The light arrives with the slowdown and the mark settles into the bloom.
+# Both are anchored to the speed profile so shortening the hold carries them
+# along instead of leaving a gap after the burst.
+BLOOM_IN = (T_HOLD[1] - 0.235, 1.70)
+SETTLE_IN = (T_RAMP_DOWN[1] - 0.585, 1.80)
 GLYPH_H = 0.40  # mark height as a fraction of frame height
 EXPOSURE = 1.15
 
@@ -409,9 +422,9 @@ class Scene:
 
         if part == "intro":
             # light arrives with the slowdown, not with the speed
-            bloom = smoothstep((t - 2.9) / 1.7) * 1.55
+            bloom = smoothstep((t - BLOOM_IN[0]) / BLOOM_IN[1]) * 1.55
             glyph_a = smoothstep((t - GLYPH_IN[0]) / (GLYPH_IN[1] - GLYPH_IN[0]))
-            settle = smoothstep((t - 3.4) / 1.8)
+            settle = smoothstep((t - SETTLE_IN[0]) / SETTLE_IN[1])
             flick = lerp(1.0, 0.86 + 0.24 * self.flicker(self.offset_u), settle)
         else:
             k = u

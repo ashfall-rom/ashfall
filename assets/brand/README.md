@@ -11,7 +11,7 @@ first, promote later.
 | `png/ashfall-avatar-*.png` | Org avatar, 512 px for GitHub plus a 1024 px copy. Square, Soot-filled, no transparent corners. |
 | `social/<repo>.png` | Social preview card per repository, 1280x640, mark on the bloom + repo name + tagline. |
 | `bootanimation/generate.py` | Renders the boot animation frames and packages `bootanimation.zip`. |
-| `bootanimation/preview.mp4` | 23.8 s watchable preview (1280x720): the intro once, then 1.5 ambient loops. |
+| `bootanimation/preview.mp4` | 22.7 s watchable preview (1280x720): the intro once, then 1.5 ambient loops. |
 | `bootanimation/build/` | Generated output (gitignored). |
 
 ## The idea
@@ -60,7 +60,8 @@ Pillow; ffmpeg is only needed for the mp4 preview.
   its integral*, so each frame's streak length comes from the real velocity
   rather than a guess. The acceleration is short (0.425 s, `T_RAMP_UP`) so even
   a quick boot reaches the burst; the deceleration is longer (0.85 s,
-  `T_RAMP_DOWN`) around a 2.2 s hold (`T_HOLD`). Streak energy is divided by its
+  `T_RAMP_DOWN`) around a 1.1 s hold (`T_HOLD`, halved at the reporter's
+  request, #166). Streak energy is divided by its
   length, so fast motes smear and dim instead of turning into laser lines, and
   stretched motes are forced slightly defocused so the smear stays soft-edged.
   The profile ends at exactly the ambient rate, which is why the hand-off to the
@@ -83,10 +84,12 @@ Pillow; ffmpeg is only needed for the mp4 preview.
 
 Timeline:
 
-1. **part0, once (5.8 s)** - ash drifts slowly for half a second, ramps to a
-   blur over 0.425 s, holds it for 2.2 s, then decelerates over 0.85 s. The
-   bloom arrives with the slowdown, and the A fades up over 2 s
-   (`GLYPH_IN`, 3.7 -> 5.7 s) lit by it, finishing right as the intro ends.
+1. **part0, once (4.7 s, 141 frames)** - ash drifts slowly for half a second,
+   ramps to a blur over 0.425 s, holds it for 1.1 s, then decelerates over
+   0.85 s. The bloom arrives with the slowdown, and the A fades up over 2 s
+   (`GLYPH_IN`, 2.6 -> 4.6 s) lit by it, finishing right as the intro ends.
+   Only the time spent at full speed was shortened (#166); the ramps and the
+   bloom/settle beats moved with it, which is why the intro is 1.1 s shorter.
 2. **part1, loops (12 s)** - the mark holds with the bloom breathing gently
    while motes drift past in front and behind it.
 
