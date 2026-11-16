@@ -304,10 +304,11 @@ configured lighting as soon as the override stops.
   ignores the override after 1.5 s without a fresh token (#94/#171).
 * **Lifecycle**: `LedSyncService` (`specialUse` foreground service, "LED screen
   sync" notification with a Stop action) is started only while the effect is
-  selected and the panel is on, never at boot.  Sampling pauses and the
-  override plus heartbeat are cleared on: effect change, lighting off, screen
-  off/doze, the gamepad tester taking over (`ashfall.ui.led_suspend=1`), the
-  Stop action, service destruction and a capture failure.  A failure also
+  selected, never at boot; sampling runs only while the panel is on and the
+  service stays alive while paused so it resumes on screen-on.  Sampling pauses
+  and the override plus heartbeat are cleared on: effect change, lighting off,
+  screen off/doze, the gamepad tester taking over (`ashfall.ui.led_suspend=1`),
+  the Stop action, service destruction and a capture failure.  A failure also
   switches the effect off, restores the previous effect and shows a short
   message.
 

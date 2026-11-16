@@ -351,7 +351,8 @@ contract does not change — the sampler is one more publisher of
   screen sync" notification and a Stop action.  It starts only while Match
   screen is selected, never at boot, and pauses sampling (clearing the override
   and heartbeat) while the panel is off, while the gamepad tester is visible
-  (`ashfall.ui.led_suspend=1`), and on the Stop action.
+  (`ashfall.ui.led_suspend=1`), and on the Stop action.  It stays alive while
+  paused so it can resume on screen-on without a new user action.
 * If capture cannot start, the effect switches itself off, the previous effect
   returns and a short message says so.  Every exit clears the override and the
   heartbeat.

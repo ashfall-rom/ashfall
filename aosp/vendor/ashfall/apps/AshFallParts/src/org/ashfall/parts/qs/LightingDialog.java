@@ -77,6 +77,7 @@ public class LightingDialog extends Dialog {
     private LinearLayout mScreenRow;
     private TextView mScreenRateValue;
     private TextView mScreenNote;
+    private TextView mSpeedTitle;
 
     private boolean mUpdating;
     private int mPendingColor;
@@ -150,6 +151,15 @@ public class LightingDialog extends Dialog {
 
         final LinearLayout container = (LinearLayout) mSpeed.getParent();
         final int index = container.indexOfChild(mSpeed) + 1;
+        // The "Speed" caption above the seek bar; relabelled to "Smoothing"
+        // while Match screen is selected, like the page does (#167).
+        final View speedCaption = container.getChildAt(index - 2);
+        if (speedCaption instanceof LinearLayout) {
+            final View first = ((LinearLayout) speedCaption).getChildAt(0);
+            if (first instanceof TextView) {
+                mSpeedTitle = (TextView) first;
+            }
+        }
 
         mScreenRow = new LinearLayout(context);
         mScreenRow.setOrientation(LinearLayout.HORIZONTAL);
@@ -230,6 +240,9 @@ public class LightingDialog extends Dialog {
                 Prefs.setLastLedMode(getContext(), Led.mode());
                 Led.setMode(Led.MODE_OFF);
             }
+            // Effect changed: the page does the same so the sampler stops in
+            // the same frame instead of at the next supervisor tick.
+            LedSyncService.sync(getContext());
             refresh();
             notifyChanged();
         });
@@ -398,6 +411,10 @@ public class LightingDialog extends Dialog {
             if (mScreenRateValue != null) {
                 mScreenRateValue.setText(getContext().getString(
                         R.string.lighting_screen_rate_value, Led.screenRate()));
+            }
+            if (mSpeedTitle != null) {
+                mSpeedTitle.setText(screen ? R.string.lighting_smoothing_title
+                        : R.string.tile_speed);
             }
         } finally {
             mUpdating = false;

@@ -62,6 +62,7 @@ public class LedSyncService extends Service {
     private ScreenLedSync mSync;
     private boolean mSupervising;
     private boolean mFailed;
+    private boolean mDestroyed;
 
     /** Starts or stops the service to match the current effect. */
     public static void sync(Context context) {
@@ -77,7 +78,13 @@ public class LedSyncService extends Service {
             ContextCompat.startForegroundService(context,
                     new Intent(context, LedSyncService.class).setAction(ACTION_START));
         } catch (Throwable t) {
+            // A refused foreground start must not leave the effect selected
+            // with nothing running: fail the same way a capture error does.
             Log.w(TAG, "screen sync: cannot start the service", t);
+            Led.setScreenSync(false);
+            Led.setMode(Led.mode());
+            Toast.makeText(context.getApplicationContext(),
+                    R.string.lighting_screen_failed, Toast.LENGTH_LONG).show();
         }
     }
 
@@ -131,6 +138,7 @@ public class LedSyncService extends Service {
 
     @Override
     public void onDestroy() {
+        mDestroyed = true;
         mSupervising = false;
         mHandler.removeCallbacksAndMessages(null);
         if (mSync != null) {
@@ -177,6 +185,9 @@ public class LedSyncService extends Service {
     }
 
     private void onCaptureFailed(String reason) {
+        if (mDestroyed) {
+            return;
+        }
         Log.w(TAG, "screen sync failed: " + reason);
         failSafe(getString(R.string.lighting_screen_failed));
     }
