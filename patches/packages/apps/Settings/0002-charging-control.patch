@@ -1,0 +1,846 @@
+From c6dfbb76f9ba383dc48401f9559fc9bb80dd6e89 Mon Sep 17 00:00:00 2001
+From: AshFall UI <ui@ashfall.local>
+Date: Mon, 16 Nov 2026 19:21:12 +0000
+Subject: [PATCH] Settings: add charging control to the battery page
+
+AshFall #140 v1: the manual charging-separation toggle on
+Settings > Battery > Charging control, as the second sequential Settings
+patch on the battery page (after #137). One row sits in the PlayTime
+category, after the PlayTime row, and opens a sub-screen with the toggle,
+the firmware support state and the 80 %/10 % battery-care line.
+
+State lives in persist.ashfall.batt.charge_sep (1 | 0). The switch
+applies it immediately, refuses to enable below 20 % or while the charger
+is disconnected, and Settings re-applies it from a direct-boot-aware
+receiver on LOCKED_BOOT_COMPLETED (BOOT_COMPLETED stays as the fallback),
+so separation starts before the first unlock. ACTION_POWER_DISCONNECTED
+clears the state and restores charging, and the page registers the same
+broadcast while it is open.
+
+The control is the retail vendor factory HAL, called reflectively:
+vendor.qti.hardware.factory@1.1::IFactory, falling back to @1.0. The RP5
+registers 1.1 only (docs/stock/vintf/manifest.xml), and HIDL lookup is an
+exact fqname match, so probing 1.0 alone would report "not supported" on
+a working firmware. The bridge probes V1_1 then V1_0 and logs the
+interface that answered.
+
+Reflection resolves through Settings' classloader, so the patch also adds
+best-effort uses-library entries for vendor.qti.hardware.factory-V1.1-java
+and -V1.0-java (required=false, with matching optional_uses_libs so the
+build stays green without the vendor module). No captured stock artifact
+proves such a shared library exists; if the stub is not linked,
+Class.forName fails, the page reports "Not supported on this firmware",
+and a native backend is the follow-up. The HAL is not claimed to work
+until the device log names the resolved interface.
+
+A missing class or method, a null service and a RemoteException all show
+"Not supported on this firmware" and disable the toggle without discarding
+the stored choice. Every error path fails open: the property is cleared
+and charging restored, a rejected property write is detected by reading it
+back, and the boot path does nothing when the stored state is off, so a
+missing HAL cannot cause a boot loop.
+
+The row key is ashfall_charging_control: the page already has a Lineage
+row keyed charging_control, which would collide in PreferenceGroup.
+
+Copy follows #155: one short sentence per summary, no property names,
+sysfs paths or HAL jargon in user text, and the single real warning
+(fuel-gauge drift on long separation sessions) kept as two lines.
+
+No QS tile, default off, no dependency on ashfall-hwd.
+---
+ Android.bp                                    |   6 +
+ AndroidManifest.xml                           |  23 ++
+ res/values/strings.xml                        |  30 +++
+ res/xml/charging_control_settings.xml         |  52 +++++
+ res/xml/power_usage_summary.xml               |   7 +
+ .../ChargingControlReceiver.java              |  93 ++++++++
+ .../ChargingControlSettings.java              | 199 ++++++++++++++++++
+ .../chargecontrol/ChargingSeparation.java     | 104 +++++++++
+ .../chargecontrol/ChargingSeparationHal.java  | 183 ++++++++++++++++
+ 9 files changed, 697 insertions(+)
+ create mode 100644 res/xml/charging_control_settings.xml
+ create mode 100644 src/com/android/settings/fuelgauge/chargecontrol/ChargingControlReceiver.java
+ create mode 100644 src/com/android/settings/fuelgauge/chargecontrol/ChargingControlSettings.java
+ create mode 100644 src/com/android/settings/fuelgauge/chargecontrol/ChargingSeparation.java
+ create mode 100644 src/com/android/settings/fuelgauge/chargecontrol/ChargingSeparationHal.java
+
+diff --git a/Android.bp b/Android.bp
+index 7f51f2e7c61..8340b06c7cf 100644
+--- a/Android.bp
++++ b/Android.bp
+@@ -211,6 +211,12 @@ android_app {
+     ],
+     static_libs: ["Settings-core"],
+     uses_libs: ["org.apache.http.legacy"],
++    // Best-effort retail factory HIDL stubs (charging separation, #140): optional so a build
++    // without the vendor shared library still installs and the page reports "Not supported".
++    optional_uses_libs: [
++        "vendor.qti.hardware.factory-V1.1-java",
++        "vendor.qti.hardware.factory-V1.0-java",
++    ],
+     use_resource_processor: true,
+     resource_dirs: [],
+     flags_packages: [
+diff --git a/AndroidManifest.xml b/AndroidManifest.xml
+index e45bc1b23bf..49ce4290c07 100644
+--- a/AndroidManifest.xml
++++ b/AndroidManifest.xml
+@@ -171,6 +171,16 @@
+             android:enableOnBackInvokedCallback="true">
+ 
+         <uses-library android:name="org.apache.http.legacy" />
++        <!-- AshFall: best-effort runtime stubs for the retail factory HAL, so Class.forName()
++             resolves through Settings' classloader on firmware that ships them. required=false:
++             a build without the shared library still installs and reports "Not supported"
++             (docs/settings-battery.md §8.4). -->
++        <uses-library
++            android:name="vendor.qti.hardware.factory-V1.1-java"
++            android:required="false" />
++        <uses-library
++            android:name="vendor.qti.hardware.factory-V1.0-java"
++            android:required="false" />
+ 
+ 
+         <property
+@@ -3874,6 +3884,19 @@
+             </intent-filter>
+         </receiver>
+ 
++        <!-- AshFall: re-apply charging separation at locked boot / boot and drop it on unplug
++             (docs/settings-battery.md). RECEIVE_BOOT_COMPLETED is already declared above. -->
++        <receiver
++            android:name=".fuelgauge.chargecontrol.ChargingControlReceiver"
++            android:directBootAware="true"
++            android:exported="false">
++            <intent-filter>
++                <action android:name="android.intent.action.LOCKED_BOOT_COMPLETED"/>
++                <action android:name="android.intent.action.BOOT_COMPLETED"/>
++                <action android:name="android.intent.action.ACTION_POWER_DISCONNECTED"/>
++            </intent-filter>
++        </receiver>
++
+         <receiver
+             android:name=".fuelgauge.batteryusage.PeriodicJobReceiver"
+             android:exported="false">
+diff --git a/res/values/strings.xml b/res/values/strings.xml
+index 57d699d0330..b2ffef8506c 100644
+--- a/res/values/strings.xml
++++ b/res/values/strings.xml
+@@ -15751,4 +15751,34 @@
+         <item>WATTS</item>
+         <item>VOLTS</item>
+     </string-array>
++
++    <!-- AshFall: charging control, Settings > Battery (docs/settings-battery.md). -->
++    <!-- Title of the row on Settings > Battery and of its sub-screen [CHAR LIMIT=30] -->
++    <string name="charging_control_title">Charging control</string>
++    <!-- Search keywords for the charging control page -->
++    <string name="keywords_charging_control">charging, separation, battery idle, battery care, charge limit, 80, 10</string>
++    <!-- Title of the toggle [CHAR LIMIT=30] -->
++    <string name="charging_separation_title">Charging separation</string>
++    <!-- Summary of the toggle [CHAR LIMIT=60] -->
++    <string name="charging_separation_summary">Run from the charger without charging the battery</string>
++    <!-- Title of the firmware support row [CHAR LIMIT=20] -->
++    <string name="charging_control_support_title">Firmware support</string>
++    <!-- Support row when the control works on this firmware [CHAR LIMIT=30] -->
++    <string name="charging_control_supported">Supported</string>
++    <!-- Support row when the firmware has no charging control [CHAR LIMIT=40] -->
++    <string name="charging_control_unsupported">Not supported on this firmware</string>
++    <!-- Title of the row that explains the 80 %/10 % battery care policy [CHAR LIMIT=30] -->
++    <string name="charging_control_policy_title">Battery care range</string>
++    <!-- The 80 %/10 % policy in one line [CHAR LIMIT=30] -->
++    <string name="charging_control_policy_summary">Keep it in the 80% to 10% range</string>
++    <!-- Safety warning about fuel-gauge drift on long separation sessions -->
++    <string name="charging_control_warning">Long sessions can make the battery percentage drift. Unplug now and then.</string>
++    <!-- Refusal while the charger is not connected [CHAR LIMIT=40] -->
++    <string name="charging_control_not_plugged">Connect the charger to use this</string>
++    <!-- Refusal when the battery is below 20 % [CHAR LIMIT=60] -->
++    <string name="charging_control_below_min">Keep the battery above 20% to use this</string>
++    <!-- Applying separation failed, charging was restored [CHAR LIMIT=40] -->
++    <string name="charging_control_apply_failed">Could not stop charging</string>
++    <!-- Restoring charging failed after separation was cleared -->
++    <string name="charging_control_restore_failed">Restart your device if charging does not resume.</string>
+ </resources>
+diff --git a/res/xml/charging_control_settings.xml b/res/xml/charging_control_settings.xml
+new file mode 100644
+index 00000000000..eb20e026445
+--- /dev/null
++++ b/res/xml/charging_control_settings.xml
+@@ -0,0 +1,52 @@
++<?xml version="1.0" encoding="utf-8"?>
++<!-- Copyright (C) 2026 The Android Open Source Project
++
++     Licensed under the Apache License, Version 2.0 (the "License");
++     you may not use this file except in compliance with the License.
++     You may obtain a copy of the License at
++
++          http://www.apache.org/licenses/LICENSE-2.0
++
++     Unless required by applicable law or agreed to in writing, software
++     distributed under the License is distributed on an "AS IS" BASIS,
++     WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++     See the License for the specific language governing permissions and
++     limitations under the License.
++-->
++
++<!-- AshFall: charging control, opened from Settings > Battery
++     (docs/settings-battery.md). The switch is backed by a property, so it is
++     non-persistent here; the support row is filled in by the fragment. -->
++<PreferenceScreen
++    xmlns:android="http://schemas.android.com/apk/res/android"
++    xmlns:settings="http://schemas.android.com/apk/res-auto"
++    android:key="charging_control_settings"
++    android:title="@string/charging_control_title">
++
++    <SwitchPreferenceCompat
++        android:key="charging_separation"
++        android:persistent="false"
++        android:summary="@string/charging_separation_summary"
++        android:title="@string/charging_separation_title" />
++
++    <Preference
++        android:key="charging_support"
++        android:persistent="false"
++        android:selectable="false"
++        android:title="@string/charging_control_support_title"
++        settings:searchable="false" />
++
++    <Preference
++        android:key="charging_policy"
++        android:persistent="false"
++        android:selectable="false"
++        android:summary="@string/charging_control_policy_summary"
++        android:title="@string/charging_control_policy_title"
++        settings:searchable="false" />
++
++    <com.android.settingslib.widget.FooterPreference
++        android:key="charging_control_warning"
++        android:persistent="false"
++        android:title="@string/charging_control_warning"
++        settings:searchable="false" />
++</PreferenceScreen>
+diff --git a/res/xml/power_usage_summary.xml b/res/xml/power_usage_summary.xml
+index 957a1e87846..7232437c759 100644
+--- a/res/xml/power_usage_summary.xml
++++ b/res/xml/power_usage_summary.xml
+@@ -110,6 +110,13 @@
+             android:title="@string/playtime_indicator_title"
+             settings:controller="com.android.settings.fuelgauge.playtime.PlayTimeSummaryController"
+             settings:keywords="@string/keywords_playtime" />
++        <!-- AshFall: charging control, docs/settings-battery.md.
++             Key is prefixed because the page already has a Lineage "charging_control" row. -->
++        <Preference
++            android:fragment="com.android.settings.fuelgauge.chargecontrol.ChargingControlSettings"
++            android:key="ashfall_charging_control"
++            android:title="@string/charging_control_title"
++            settings:keywords="@string/keywords_charging_control" />
+     </com.android.settingslib.widget.UntitledPreferenceCategory>
+ 
+     <Preference
+diff --git a/src/com/android/settings/fuelgauge/chargecontrol/ChargingControlReceiver.java b/src/com/android/settings/fuelgauge/chargecontrol/ChargingControlReceiver.java
+new file mode 100644
+index 00000000000..bcefcb7c481
+--- /dev/null
++++ b/src/com/android/settings/fuelgauge/chargecontrol/ChargingControlReceiver.java
+@@ -0,0 +1,93 @@
++/*
++ * Copyright (C) 2026 The Android Open Source Project
++ *
++ * Licensed under the Apache License, Version 2.0 (the "License");
++ * you may not use this file except in compliance with the License.
++ * You may obtain a copy of the License at
++ *
++ *      http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++
++package com.android.settings.fuelgauge.chargecontrol;
++
++import android.content.BroadcastReceiver;
++import android.content.Context;
++import android.content.Intent;
++
++/**
++ * Re-applies charging separation as soon as the framework is up and drops it when the charger goes
++ * away.
++ *
++ * <p>The receiver is direct-boot aware: {@code LOCKED_BOOT_COMPLETED} applies the stored state
++ * before the first unlock, {@code BOOT_COMPLETED} is the fallback for a build that does not deliver
++ * the locked broadcast (the static flag keeps the second delivery from repeating the HAL call). It
++ * touches only properties and the vendor HAL, never credential-encrypted storage.
++ *
++ * <p>When the stored state is off the boot path does nothing and makes no HAL call, so a missing
++ * factory HAL cannot produce a boot loop. A firmware without the HAL keeps the stored choice
++ * instead of discarding it, and every failure path clears the property first and then restores
++ * charging (docs/settings-battery.md).
++ */
++public class ChargingControlReceiver extends BroadcastReceiver {
++
++    /** Set once the boot re-apply ran in this process; both boot broadcasts are idempotent. */
++    private static boolean sBootApplied;
++
++    @Override
++    public void onReceive(Context context, Intent intent) {
++        final String action = intent.getAction();
++        if (Intent.ACTION_LOCKED_BOOT_COMPLETED.equals(action)
++                || Intent.ACTION_BOOT_COMPLETED.equals(action)) {
++            if (sBootApplied) {
++                return;
++            }
++            reapplyAtBoot(context);
++            sBootApplied = true;
++        } else if (Intent.ACTION_POWER_DISCONNECTED.equals(action)) {
++            disableOnDisconnect(context);
++        }
++    }
++
++    /**
++     * Re-applies the stored state after boot: once, idempotently, and only when it was on and the
++     * adapter is connected. Below the safety floor the stored state is dropped, with charging
++     * restored; a firmware without the HAL keeps the choice and skips the call.
++     */
++    static void reapplyAtBoot(Context context) {
++        if (!ChargingSeparation.isEnabled()) {
++            return;
++        }
++        if (!ChargingSeparation.isPlugged(context) || !ChargingSeparation.isAboveGuard(context)) {
++            disableOnDisconnect(context);
++            return;
++        }
++        if (!ChargingSeparationHal.isSupported()) {
++            // No HAL on this firmware: keep the user's choice, make no call, never loop.
++            return;
++        }
++        if (ChargingSeparationHal.setChargingEnabled(false)
++                != ChargingSeparationHal.Result.OK) {
++            // Fail open: the state is not trustworthy, so stop claiming separation and restore.
++            ChargingSeparation.setEnabled(false);
++            ChargingSeparationHal.setChargingEnabled(true);
++        }
++    }
++
++    /**
++     * Clears separation and restores charging when the adapter is unplugged. The restore is
++     * unconditional, so a crash between stopping charging and persisting the state is healed by the
++     * next unplug even though the property already reads {@code 0}.
++     */
++    static void disableOnDisconnect(Context context) {
++        if (ChargingSeparation.isEnabled()) {
++            ChargingSeparation.setEnabled(false);
++        }
++        ChargingSeparationHal.setChargingEnabled(true);
++    }
++}
+diff --git a/src/com/android/settings/fuelgauge/chargecontrol/ChargingControlSettings.java b/src/com/android/settings/fuelgauge/chargecontrol/ChargingControlSettings.java
+new file mode 100644
+index 00000000000..9c946bae8d5
+--- /dev/null
++++ b/src/com/android/settings/fuelgauge/chargecontrol/ChargingControlSettings.java
+@@ -0,0 +1,199 @@
++/*
++ * Copyright (C) 2026 The Android Open Source Project
++ *
++ * Licensed under the Apache License, Version 2.0 (the "License");
++ * you may not use this file except in compliance with the License.
++ * You may obtain a copy of the License at
++ *
++ *      http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++
++package com.android.settings.fuelgauge.chargecontrol;
++
++import android.app.settings.SettingsEnums;
++import android.content.BroadcastReceiver;
++import android.content.Context;
++import android.content.Intent;
++import android.content.IntentFilter;
++import android.os.Bundle;
++import android.widget.Toast;
++
++import androidx.preference.Preference;
++import androidx.preference.SwitchPreferenceCompat;
++
++import com.android.settings.R;
++import com.android.settings.SettingsPreferenceFragment;
++
++/**
++ * Settings &gt; Battery &gt; Charging control: the manual charging-separation toggle, the firmware
++ * support state and the battery-care note for the 80 %/10 % policy.
++ *
++ * <p>Separation stops charging while the adapter stays connected. The state is stored in {@code
++ * persist.ashfall.batt.charge_sep}, re-applied at boot by {@link ChargingControlReceiver}, dropped
++ * on unplug, and never enabled below 20 % or without the charger. Every error path fails open to
++ * charging (docs/settings-battery.md).
++ */
++public class ChargingControlSettings extends SettingsPreferenceFragment
++        implements Preference.OnPreferenceChangeListener {
++
++    private static final String KEY_SEPARATION = "charging_separation";
++    private static final String KEY_SUPPORT = "charging_support";
++
++    private SwitchPreferenceCompat mSeparation;
++    private Preference mSupport;
++    private boolean mSupported;
++
++    private final BroadcastReceiver mPowerReceiver =
++            new BroadcastReceiver() {
++                @Override
++                public void onReceive(Context context, Intent intent) {
++                    if (Intent.ACTION_POWER_DISCONNECTED.equals(intent.getAction())) {
++                        ChargingControlReceiver.disableOnDisconnect(context);
++                        bindState();
++                    }
++                }
++            };
++
++    @Override
++    public void onCreatePreferences(Bundle savedInstanceState, String rootKey) {
++        addPreferencesFromResource(R.xml.charging_control_settings);
++
++        mSeparation = findPreference(KEY_SEPARATION);
++        mSupport = findPreference(KEY_SUPPORT);
++        mSeparation.setOnPreferenceChangeListener(this);
++
++        mSupported = ChargingSeparationHal.isSupported();
++        if (mSupported) {
++            mSupport.setSummary(R.string.charging_control_supported);
++        } else {
++            // Keep the stored choice: getService() does not wait for the vendor service, so a miss
++            // can be transient. The toggle stays disabled and no HAL call is made.
++            mSupport.setSummary(R.string.charging_control_unsupported);
++            mSeparation.setEnabled(false);
++        }
++        bindState();
++    }
++
++    @Override
++    public void onResume() {
++        super.onResume();
++        getContext()
++                .registerReceiver(
++                        mPowerReceiver,
++                        new IntentFilter(Intent.ACTION_POWER_DISCONNECTED),
++                        Context.RECEIVER_NOT_EXPORTED);
++        // A state that survived while the adapter was away has no effect: drop it and restore.
++        if (ChargingSeparation.isEnabled()
++                && !ChargingSeparation.isPlugged(getContext())) {
++            ChargingControlReceiver.disableOnDisconnect(getContext());
++        }
++        bindState();
++    }
++
++    @Override
++    public void onPause() {
++        super.onPause();
++        getContext().unregisterReceiver(mPowerReceiver);
++    }
++
++    @Override
++    public int getMetricsCategory() {
++        return SettingsEnums.FUELGAUGE_POWER_USAGE_SUMMARY_V2;
++    }
++
++    @Override
++    public boolean onPreferenceChange(Preference preference, Object newValue) {
++        if (!KEY_SEPARATION.equals(preference.getKey())) {
++            return false;
++        }
++        final boolean enable = (Boolean) newValue;
++        if (!enable) {
++            return disable();
++        }
++        if (!mSupported) {
++            Toast.makeText(
++                            getContext(),
++                            R.string.charging_control_unsupported,
++                            Toast.LENGTH_SHORT)
++                    .show();
++            return false;
++        }
++        if (!ChargingSeparation.isPlugged(getContext())) {
++            Toast.makeText(
++                            getContext(),
++                            R.string.charging_control_not_plugged,
++                            Toast.LENGTH_SHORT)
++                    .show();
++            return false;
++        }
++        if (!ChargingSeparation.isAboveGuard(getContext())) {
++            Toast.makeText(
++                            getContext(),
++                            R.string.charging_control_below_min,
++                            Toast.LENGTH_SHORT)
++                    .show();
++            return false;
++        }
++        final ChargingSeparationHal.Result result =
++                ChargingSeparationHal.setChargingEnabled(false);
++        if (result == ChargingSeparationHal.Result.OK
++                && ChargingSeparation.setEnabled(true)) {
++            return true;
++        }
++        // Fail open: make sure the charger is enabled again and nothing is persisted.
++        ChargingSeparation.setEnabled(false);
++        ChargingSeparationHal.setChargingEnabled(true);
++        final boolean unsupported = result == ChargingSeparationHal.Result.UNSUPPORTED;
++        if (unsupported) {
++            mSupported = false;
++            mSupport.setSummary(R.string.charging_control_unsupported);
++            mSeparation.setEnabled(false);
++        }
++        Toast.makeText(
++                        getContext(),
++                        unsupported
++                                ? R.string.charging_control_unsupported
++                                : R.string.charging_control_apply_failed,
++                        Toast.LENGTH_LONG)
++                .show();
++        return false;
++    }
++
++    /** Turns separation off: clear the stored state first, then restore charging. */
++    private boolean disable() {
++        final boolean cleared = ChargingSeparation.setEnabled(false);
++        final boolean restored =
++                ChargingSeparationHal.setChargingEnabled(true)
++                        == ChargingSeparationHal.Result.OK;
++        if (!cleared) {
++            // The switch must not claim "off" while the property still re-applies at boot.
++            Toast.makeText(
++                            getContext(),
++                            R.string.charging_control_apply_failed,
++                            Toast.LENGTH_LONG)
++                    .show();
++            return false;
++        }
++        if (!restored) {
++            Toast.makeText(
++                            getContext(),
++                            R.string.charging_control_restore_failed,
++                            Toast.LENGTH_LONG)
++                    .show();
++        }
++        return true;
++    }
++
++    /** Mirrors the stored state; the property, not the switch, is the source of truth. */
++    private void bindState() {
++        if (mSeparation != null) {
++            mSeparation.setChecked(mSupported && ChargingSeparation.isEnabled());
++        }
++    }
++}
+diff --git a/src/com/android/settings/fuelgauge/chargecontrol/ChargingSeparation.java b/src/com/android/settings/fuelgauge/chargecontrol/ChargingSeparation.java
+new file mode 100644
+index 00000000000..820aa1c93a8
+--- /dev/null
++++ b/src/com/android/settings/fuelgauge/chargecontrol/ChargingSeparation.java
+@@ -0,0 +1,104 @@
++/*
++ * Copyright (C) 2026 The Android Open Source Project
++ *
++ * Licensed under the Apache License, Version 2.0 (the "License");
++ * you may not use this file except in compliance with the License.
++ * You may obtain a copy of the License at
++ *
++ *      http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++
++package com.android.settings.fuelgauge.chargecontrol;
++
++import android.content.Context;
++import android.content.Intent;
++import android.content.IntentFilter;
++import android.os.BatteryManager;
++import android.os.SystemProperties;
++import android.util.Log;
++
++/**
++ * Stored charging-separation state and the safety limits around it.
++ *
++ * <p>The property is the only storage: the boot receiver and the unplug receiver re-read it, and a
++ * value that is not exactly {@code 1} means off. A rejected property write is logged and reported
++ * to the caller, never thrown at the page (docs/settings-battery.md).
++ */
++public final class ChargingSeparation {
++
++    private static final String TAG = "ChargingSeparation";
++
++    /** Off ({@code 0}) or separation enabled ({@code 1}). */
++    public static final String KEY_ENABLED = "persist.ashfall.batt.charge_sep";
++
++    /** Separation is refused below this level, the same floor the stock policy resumes at. */
++    public static final int MIN_LEVEL = 20;
++
++    private static final int MAX_LEVEL = 100;
++
++    private ChargingSeparation() {}
++
++    /** Whether the user left separation on; anything but {@code 1} is off. */
++    public static boolean isEnabled() {
++        return "1".equals(SystemProperties.get(KEY_ENABLED, "0"));
++    }
++
++    /**
++     * Persists the user's choice.
++     *
++     * @return {@code true} when the property reads back as requested; a rejected write (SELinux,
++     *     invalid name) is logged and the caller fails open to charging.
++     */
++    public static boolean setEnabled(boolean enabled) {
++        final String value = enabled ? "1" : "0";
++        try {
++            SystemProperties.set(KEY_ENABLED, value);
++        } catch (RuntimeException e) {
++            Log.w(TAG, "Failed to set " + KEY_ENABLED + " to " + value, e);
++            return false;
++        }
++        return value.equals(SystemProperties.get(KEY_ENABLED, ""));
++    }
++
++    /**
++     * Battery percentage from the sticky {@code ACTION_BATTERY_CHANGED} broadcast, or {@code -1}
++     * when the framework does not report a usable level. Unknown counts as "not above the guard".
++     */
++    public static int batteryLevel(Context context) {
++        final Intent battery = stickyBattery(context);
++        if (battery == null) {
++            return -1;
++        }
++        final int level = battery.getIntExtra(BatteryManager.EXTRA_LEVEL, -1);
++        final int scale = battery.getIntExtra(BatteryManager.EXTRA_SCALE, -1);
++        if (level < 0 || scale <= 0) {
++            return -1;
++        }
++        return Math.min(MAX_LEVEL, Math.round(level * (float) MAX_LEVEL / scale));
++    }
++
++    /** True when the battery is known to be at or above {@link #MIN_LEVEL}. */
++    public static boolean isAboveGuard(Context context) {
++        return batteryLevel(context) >= MIN_LEVEL;
++    }
++
++    /**
++     * Whether an adapter is connected. Enabling separation while unplugged would show a switch that
++     * does nothing, and re-applying a stale state at boot must not disable charging the moment the
++     * user plugs in, so both paths ask this first.
++     */
++    public static boolean isPlugged(Context context) {
++        final Intent battery = stickyBattery(context);
++        return battery != null && battery.getIntExtra(BatteryManager.EXTRA_PLUGGED, 0) != 0;
++    }
++
++    private static Intent stickyBattery(Context context) {
++        return context.registerReceiver(null, new IntentFilter(Intent.ACTION_BATTERY_CHANGED));
++    }
++}
+diff --git a/src/com/android/settings/fuelgauge/chargecontrol/ChargingSeparationHal.java b/src/com/android/settings/fuelgauge/chargecontrol/ChargingSeparationHal.java
+new file mode 100644
+index 00000000000..a16ad827852
+--- /dev/null
++++ b/src/com/android/settings/fuelgauge/chargecontrol/ChargingSeparationHal.java
+@@ -0,0 +1,183 @@
++/*
++ * Copyright (C) 2026 The Android Open Source Project
++ *
++ * Licensed under the Apache License, Version 2.0 (the "License");
++ * you may not use this file except in compliance with the License.
++ * You may obtain a copy of the License at
++ *
++ *      http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++
++package com.android.settings.fuelgauge.chargecontrol;
++
++import android.os.RemoteException;
++import android.util.Log;
++
++import java.lang.reflect.InvocationTargetException;
++import java.lang.reflect.Method;
++import java.util.NoSuchElementException;
++
++/**
++ * Reflective bridge to the retail vendor factory HAL ({@code
++ * vendor.qti.hardware.factory@1.1::IFactory}), the only surface that stops charging on the RP5:
++ * the PM8150B power-supply nodes expose no writable charge-enable node, and the factory HIDL
++ * stubs are not part of Settings' compile-time classpath.
++ *
++ * <p>The RP5 registers the factory HAL at <b>1.1 only</b> ({@code
++ * docs/stock/vintf/manifest.xml}, {@code @1.1::IFactory/default}); HIDL service lookup is an exact
++ * fqname match, so a {@code @1.0} lookup never answers it. The bridge therefore probes {@code
++ * V1_1.IFactory} first, falls back to {@code V1_0.IFactory} for firmware that registered 1.0, and
++ * logs which interface answered. 1.1 extends 1.0, so {@code chargerEnable(boolean)} is inherited.
++ *
++ * <p>Every failure is reported instead of thrown: a missing class or method, a service that is not
++ * registered ({@code null}) and a {@link RemoteException} from the call all mean "this firmware
++ * cannot do it", so the page shows "Not supported on this firmware" and the caller fails open to
++ * charging (docs/settings-battery.md).
++ */
++public final class ChargingSeparationHal {
++
++    private static final String TAG = "ChargingSeparationHal";
++
++    /** Probe order: the retail firmware registers 1.1, older/other builds may register 1.0. */
++    private static final String[] IFACTORY_CLASSES = {
++        "vendor.qti.hardware.factory.V1_1.IFactory",
++        "vendor.qti.hardware.factory.V1_0.IFactory",
++    };
++
++    private static final String[] IFACTORY_VERSIONS = {"@1.1", "@1.0"};
++
++    private static final String METHOD_GET_SERVICE = "getService";
++    private static final String METHOD_CHARGER_ENABLE = "chargerEnable";
++
++    /** A resolved interface: the proxy, its inherited method and the version that answered. */
++    private static final class Hal {
++        final Object proxy;
++        final Method chargerEnable;
++        final String version;
++
++        Hal(Object proxy, Method chargerEnable, String version) {
++            this.proxy = proxy;
++            this.chargerEnable = chargerEnable;
++            this.version = version;
++        }
++    }
++
++    /** Positive resolution only; a miss is re-probed next time so a slow service can appear. */
++    private static Hal sHal;
++
++    /** Outcome of one {@code chargerEnable} call. */
++    public enum Result {
++        /** The HAL applied the request. */
++        OK,
++        /** This firmware has no factory HAL for charging control. */
++        UNSUPPORTED,
++        /** The HAL is present but the call failed; the caller must fail open to charging. */
++        FAILED
++    }
++
++    private ChargingSeparationHal() {}
++
++    /** Whether this firmware exposes a factory service with {@code chargerEnable(boolean)}. */
++    public static boolean isSupported() {
++        return resolve() != null;
++    }
++
++    /**
++     * Stops ({@code enabled=false}) or resumes ({@code enabled=true}) battery charging.
++     *
++     * <p>Never throws: {@link Result#UNSUPPORTED} covers a missing class, method or service and a
++     * {@link RemoteException}; {@link Result#FAILED} covers any other invocation error. Both let
++     * the caller fail open to charging.
++     */
++    public static Result setChargingEnabled(boolean enabled) {
++        final Hal hal = resolve();
++        if (hal == null) {
++            return Result.UNSUPPORTED;
++        }
++        try {
++            hal.chargerEnable.invoke(hal.proxy, enabled);
++            return Result.OK;
++        } catch (IllegalAccessException | SecurityException e) {
++            Log.w(TAG, "chargerEnable(" + enabled + ") is not accessible on " + hal.version, e);
++            return Result.FAILED;
++        } catch (InvocationTargetException e) {
++            final Throwable cause = e.getCause();
++            if (cause instanceof RemoteException) {
++                Log.w(TAG, "chargerEnable(" + enabled + ") failed in " + hal.version, cause);
++                // The proxy may be dead; let the next probe re-resolve.
++                sHal = null;
++                return Result.UNSUPPORTED;
++            }
++            Log.w(TAG, "chargerEnable(" + enabled + ") threw on " + hal.version, cause);
++            return Result.FAILED;
++        } catch (RuntimeException | LinkageError e) {
++            Log.w(TAG, "chargerEnable(" + enabled + ") failed on " + hal.version, e);
++            return Result.FAILED;
++        }
++    }
++
++    /** The resolved factory service, or {@code null} when no probed version answers. */
++    private static synchronized Hal resolve() {
++        if (sHal != null) {
++            return sHal;
++        }
++        for (int i = 0; i < IFACTORY_CLASSES.length; i++) {
++            final Hal hal = resolve(IFACTORY_CLASSES[i], IFACTORY_VERSIONS[i]);
++            if (hal != null) {
++                sHal = hal;
++                Log.i(
++                        TAG,
++                        "Factory HAL resolved: "
++                                + hal.version
++                                + " ("
++                                + IFACTORY_CLASSES[i]
++                                + ")");
++                return hal;
++            }
++        }
++        Log.i(TAG, "Factory HAL not found: tried @1.1 and @1.0");
++        return null;
++    }
++
++    /** One probe of one interface version; {@code null} means "this one did not answer". */
++    private static Hal resolve(String className, String version) {
++        try {
++            final Class<?> ifactory = Class.forName(className);
++            final Method getService = ifactory.getMethod(METHOD_GET_SERVICE);
++            final Object proxy = getService.invoke(null);
++            if (proxy == null) {
++                Log.i(TAG, version + " getService() returned null (not registered or not ready)");
++                return null;
++            }
++            final Method chargerEnable = ifactory.getMethod(METHOD_CHARGER_ENABLE, boolean.class);
++            return new Hal(proxy, chargerEnable, version);
++        } catch (ClassNotFoundException e) {
++            // The vendor stub is not on Settings' classloader (no shared library on this build).
++            Log.i(TAG, version + " stub is not on this build's classpath", e);
++            return null;
++        } catch (NoSuchMethodException e) {
++            Log.i(TAG, version + " has no getService()/chargerEnable(boolean)", e);
++            return null;
++        } catch (IllegalAccessException | SecurityException e) {
++            Log.w(TAG, version + " is not reachable", e);
++            return null;
++        } catch (InvocationTargetException e) {
++            final Throwable cause = e.getCause();
++            if (cause instanceof RemoteException || cause instanceof NoSuchElementException) {
++                Log.i(TAG, version + " is not registered", cause);
++            } else {
++                Log.w(TAG, version + " getService() failed", cause);
++            }
++            return null;
++        } catch (RuntimeException | LinkageError e) {
++            Log.w(TAG, version + " probe failed", e);
++            return null;
++        }
++    }
++}
+-- 
+2.53.0
+
