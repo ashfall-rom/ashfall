@@ -23,14 +23,32 @@ SEPOLICY = REPO / "aosp/vendor/ashfall/sepolicy"
 
 META_CHARS = ".^$?*+|[({"
 
+# kgsl attributes that ashfall-hwd publishes or caps for the Parts app
+# (read-only telemetry plus the devfreq cap/floor), so they carry
+# ashfall_gpu_sysfs and not the vendor label.  Every other kgsl attribute
+# (gpu_model, max_gpuclk, gpubusy, ...) and the /sys/class/kgsl symlinks must
+# keep vendor_sysfs_kgsl: stock vendor domains such as PERFD-SERVER still read
+# them through the vendor policy.
+KGSL_ATTRIBUTES = (
+    "gpu_available_frequencies",  # DT step table (read)
+    "max_freq",                   # devfreq cap (read/write)
+    "min_freq",                   # devfreq floor (write)
+    "gpuclk",                     # live clock, #124 (read)
+    "gpu_busy_percentage",        # live load, #156 (read)
+)
+
 # Paths (minus the /sys mount prefix) that must be relabelled.
 PLATFORM_PATHS = (
     "/devices/platform/soc/3d00000\\.qcom,kgsl-3d0/kgsl/kgsl-3d0/gpu_available_frequencies",
+    "/devices/platform/soc/3d00000\\.qcom,kgsl-3d0/kgsl/kgsl-3d0/gpuclk",
+    "/devices/platform/soc/3d00000\\.qcom,kgsl-3d0/kgsl/kgsl-3d0/gpu_busy_percentage",
     "/devices/platform/soc/3d00000\\.qcom,kgsl-3d0/devfreq/3d00000\\.qcom,kgsl-3d0/max_freq",
     "/devices/platform/soc/3d00000\\.qcom,kgsl-3d0/devfreq/3d00000\\.qcom,kgsl-3d0/min_freq",
 )
 LEGACY_PATHS = (
     "/devices/soc/3d00000\\.qcom,kgsl-3d0/kgsl/kgsl-3d0/gpu_available_frequencies",
+    "/devices/soc/3d00000\\.qcom,kgsl-3d0/kgsl/kgsl-3d0/gpuclk",
+    "/devices/soc/3d00000\\.qcom,kgsl-3d0/kgsl/kgsl-3d0/gpu_busy_percentage",
     "/devices/soc/3d00000\\.qcom,kgsl-3d0/devfreq/3d00000\\.qcom,kgsl-3d0/max_freq",
     "/devices/soc/3d00000\\.qcom,kgsl-3d0/devfreq/3d00000\\.qcom,kgsl-3d0/min_freq",
 )
@@ -58,8 +76,12 @@ def context_entries():
         if not line:
             continue
         parts = line.split()
+        # <path> [<file type>] <context>: a type-qualified entry is still a
+        # relabel, so keep it visible to the negative test below.
         if len(parts) == 2:
             entries[parts[0]] = parts[1]
+        elif len(parts) == 3:
+            entries[parts[0]] = parts[2]
     return entries
 
 
@@ -72,15 +94,20 @@ class GpuSepolicyTest(unittest.TestCase):
             self.assertFalse(has_meta(spec), f"{spec} is not an exact pathname")
 
     def test_no_broad_kgsl_relabel(self):
-        # Only the three attributes are relabelled; the rest of the kgsl tree
-        # must keep the vendor label so stock vendor domains keep working.
-        for spec, context in context_entries().items():
-            if "kgsl" not in spec:
-                continue
+        # Only the attributes in KGSL_ATTRIBUTES are relabelled, under both DT
+        # prefixes, and every spec stays an exact pathname.  A new or broadened
+        # kgsl entry (gpu_model, max_gpuclk, a /sys/class symlink, a prefix
+        # regex, ...) keeps stock vendor domains working, so it must fail here
+        # unless it is added to the allow-list deliberately.
+        entries = context_entries()
+        expected = {"/sys" + spec for spec in PLATFORM_PATHS + LEGACY_PATHS}
+        kgsl = {spec for spec in entries if "kgsl" in spec}
+        self.assertEqual(kgsl, expected)
+        for spec in sorted(kgsl):
             base = spec.rsplit("/", 1)[-1]
-            self.assertIn(base, ("gpu_available_frequencies", "max_freq", "min_freq"),
-                          f"unexpected kgsl relabel: {spec}")
-            self.assertEqual(context, "u:object_r:ashfall_gpu_sysfs:s0")
+            self.assertIn(base, KGSL_ATTRIBUTES, f"unexpected kgsl relabel: {spec}")
+            self.assertEqual(entries[spec], "u:object_r:ashfall_gpu_sysfs:s0")
+            self.assertFalse(has_meta(spec), f"{spec} is not an exact pathname")
 
     def test_genfscon_fallback(self):
         genfs = (SEPOLICY / "genfs_contexts").read_text()
