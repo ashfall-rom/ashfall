@@ -76,8 +76,10 @@ Z_FOCUS = 1450.0
 # slow -> very fast -> slow. The last value is exactly 1.0 so the drift speed
 # carries straight into the loop.
 SPEED_PEAK = 32.0
-T_RAMP_UP = (0.50, 1.35)
-T_HOLD = (1.35, 3.15)
+# 0.425 s of acceleration (was 0.85 s): the user wants the fast part to
+# arrive sooner so a quick boot still shows it.
+T_RAMP_UP = (0.50, 0.925)
+T_HOLD = (0.925, 3.15)
 T_RAMP_DOWN = (3.15, 4.00)
 GLYPH_H = 0.40  # mark height as a fraction of frame height
 EXPOSURE = 1.15
