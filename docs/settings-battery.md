@@ -258,3 +258,370 @@ opens the sub-screen; every row applies live; values survive reboot; invalid
 values fall back to the documented defaults; the read-out shows `-` per field
 when the framework does not report it; the page follows day/night/pure black,
 D-pad and landscape; no native battery behaviour changes.
+
+## 8. Charging control (#140)
+
+Second patch on the same page, stacked on §1 and independent of SystemUI:
+while the adapter stays connected, **Charging separation** stops battery
+charging and runs the device from the adapter. v1 is the manual toggle only.
+The automatic 80 %/10 % hysteresis needs an always-on sampler and stays a
+follow-up: `ashfall-hwd` cannot call a vendor HIDL service from `system_ext`,
+so the boot re-apply lives in Settings while the ongoing policy would live in
+hwd.
+
+### 8.1 Patch
+
+| | |
+|---|---|
+| Patch | `patches/packages/apps/Settings/0002-charging-control.patch` |
+| Baseline | same as §1: `LineageOS/android_packages_apps_Settings` @ `31b1a9f1cab9638bc6af9f4e6412fbf3b3a7947a` |
+| Order | applies **after** `0001-playtime-battery-page.patch`; both patches touch `res/xml/power_usage_summary.xml` and `res/values/strings.xml` |
+| Apply | `git am --3way 0001-playtime-battery-page.patch 0002-charging-control.patch` |
+
+Files in the patch:
+
+| File | Change |
+|---|---|
+| `res/xml/power_usage_summary.xml` | `ashfall_charging_control` row in the PlayTime category, immediately after the PlayTime row |
+| `res/xml/charging_control_settings.xml` | new sub-screen: toggle, support row, policy row, warning footer |
+| `res/values/strings.xml` | `charging_control_*` and `keywords_charging_control` strings |
+| `AndroidManifest.xml` | best-effort `uses-library` for the factory HIDL stubs; `ChargingControlReceiver`: `LOCKED_BOOT_COMPLETED` + `BOOT_COMPLETED`, direct-boot aware, not exported (no disconnect receiver) |
+| `Android.bp` | `optional_uses_libs` for the two factory stub libraries (so the manifest entries do not fail the build when the vendor jar is absent) |
+| `src/com/android/settings/fuelgauge/chargecontrol/ChargingControlSettings.java` | sub-screen fragment: the guards (including the low-battery guard on resume), applies the HAL |
+| `src/com/android/settings/fuelgauge/chargecontrol/ChargingControlReceiver.java` | locked-boot/boot re-apply and the clear-and-restore fail-open helper |
+| `src/com/android/settings/fuelgauge/chargecontrol/ChargingSeparation.java` | property contract and the battery-level/plugged guards |
+| `src/com/android/settings/fuelgauge/chargecontrol/ChargingSeparationHal.java` | reflective `IFactory` bridge: probe `@1.1`, fall back to `@1.0` |
+
+`RECEIVE_BOOT_COMPLETED` is already declared in the baseline manifest (line 95),
+so the patch adds only the receiver entry. No new activity, service, APK or QS
+tile; `SubSettings` hosts the fragment exactly as it hosts `PlayTimeSettings`,
+and the category key stays `playtime_category` so `0001` is untouched.
+
+### 8.2 Row and sub-screen
+
+`Settings > Battery` shows **Charging control** directly under **PlayTime
+indicator**. The new row uses the key `ashfall_charging_control`: the page
+already carries a Lineage row keyed `charging_control` (a `LineagePartsPreference`
+gated on `lineagehealth`), and androidx.preference rejects duplicate keys, so a
+second `charging_control` would log an error, collide in `findPreference` and,
+on a device with `lineagehealth`, show two rows with the same title. The Lineage
+row is left untouched.
+
+Opening the row shows:
+
+| Row | Text | Behaviour |
+|---|---|---|
+| Charging separation | switch, default off | manual separation; applies immediately, only while the charger is connected |
+| Firmware support | `Supported` / `Not supported on this firmware` | non-selectable, filled by the HAL probe when the page opens |
+| Battery care range | `Stay between 80% and 10%` | the 80 %/10 % policy in one short line; the automatic hysteresis is not in v1 |
+| footer | fuel-gauge drift warning | the one genuine safety note, two lines |
+
+The sub-screen is a plain `SettingsPreferenceFragment` with
+`res/xml/charging_control_settings.xml`; no controller and no `res/layout`, so
+day/night, pure black, font scale, landscape and D-pad come from Settings
+itself. No QS tile, no AshFall Parts page, nothing outside this patch.
+
+### 8.3 Property contract
+
+| Property | Values | Default | Written by |
+|---|---|---|---|
+| `persist.ashfall.batt.charge_sep` | `1` = separation on, `0` = off | `0` (absent) | `ChargingControlSettings` / `ChargingControlReceiver` |
+
+Anything other than the exact string `1` reads as off. Settings is platform
+signed with `android.uid.system` and runs as `system_app`, so the write uses the
+existing `set_prop(system_app, ashfall_prop)` rule that the PlayTime properties
+already use. There is no second copy in `SharedPreferences`: every preference in
+`charging_control_settings.xml` is `android:persistent="false"`.
+
+The automatic policy (stop at 80 %, resume at 10 %) is **not** in this patch:
+with the toggle on, the device stays separated until the user turns it off or
+unplugs. That is why the policy row reads as guidance ("Stay between 80% and
+10%") instead of claiming automation. A follow-up can add the automatic
+hysteresis in `ashfall-hwd` (the natural owner of an always-on loop) once it has
+a path to the vendor HAL; this patch only persists the property for it to read.
+
+### 8.4 Backend and gating
+
+The only writable control is the retail vendor factory HAL; the PM8150B/smb5
+power-supply nodes have no writable charge-enable node and `charge_control_limit`
+is read-only. `ChargingSeparationHal` therefore calls it by reflection.
+
+**Which version answers.** The RP5 registers the factory HAL at **1.1 only**:
+`docs/stock/vintf/manifest.xml` (`<fqname>@1.1::IFactory/default</fqname>`, and
+the same in `docs/stock/vendor-vintf-merged.txt`), `docs/stock/fcm-report.md`
+(`hidl | vendor.qti.hardware.factory | 1.1`) and the `.189` OTA
+(`docs/stock-189/vintf-summary-189.txt`). The init entry
+`vendor.qti.hardware.factory@1.0-service` is only the binary name; that binary
+registers 1.1. HIDL service lookup is an exact fqname match, so the bridge
+probes in this order and uses the first one that answers:
+
+```java
+vendor.qti.hardware.factory.V1_1.IFactory.getService();   // RP5
+vendor.qti.hardware.factory.V1_0.IFactory.getService();   // fallback for 1.0 firmware
+ifactory.chargerEnable(false);   // stop charging -> separation on
+ifactory.chargerEnable(true);    // resume charging -> separation off
+```
+
+1.1 extends 1.0, so `chargerEnable(boolean)` is inherited. The successful probe
+logs the exact interface, e.g.
+
+```
+I ChargingSeparationHal: Factory HAL resolved: @1.1 (vendor.qti.hardware.factory.V1_1.IFactory)
+I ChargingSeparationHal: Factory HAL not found: tried @1.1 and @1.0
+```
+
+**Runtime classloader.** Reflection resolves through Settings' own
+`PathClassLoader`, so the vendor HIDL Java stub has to be on it. HIDL jars are
+not in `BOOTCLASSPATH`, and nothing in the baseline manifest or `Android.bp`
+adds the factory stub, so the patch adds best-effort entries:
+
+```xml
+<uses-library android:name="vendor.qti.hardware.factory-V1.1-java"
+              android:required="false" />
+<uses-library android:name="vendor.qti.hardware.factory-V1.0-java"
+              android:required="false" />
+```
+
+```bp
+optional_uses_libs: [
+    "vendor.qti.hardware.factory-V1.1-java",
+    "vendor.qti.hardware.factory-V1.0-java",
+],
+```
+
+`optional_uses_libs` keeps Soong's `<uses-library>` verification green when the
+vendor module is not part of the AOSP build, and `required="false"` keeps a
+firmware without the jar installable. The HIDL Java module name is
+`<package>-V<maj>.<min>-java` (compare `android.hidl.base-V1.0-java`), so the
+dot form is the library name; the device's `pm list libraries | grep -i factory`
+is authoritative and a different string there is what the manifest must carry.
+
+**Evidence caveat (important).** The captured stock artifacts in this repo do
+not include `/system_ext/etc/permissions`, `/system/framework` or a
+`pm list libraries` dump, so there is **no proof in-repo that the factory stub is
+declared as a Java shared library on the RP5**. The #140 investigation found
+`IFactory` stubs in `system_ext`/`system`, but if they live in a boot jar or are
+bundled inside Retroid's own APKs rather than exposed through a permissions XML,
+`Class.forName` still fails on the RP5 and these entries change nothing. In that
+case the page must — and does — report `Not supported on this firmware`; making
+the control work then needs a native backend (a small privileged helper or a
+surface exposed by `ashfall-hwd`), tracked as a follow-up. Do not claim the HAL
+works until the device pass shows a resolved interface.
+
+Gating and failure modes:
+
+| Condition | Result |
+|---|---|
+| neither `V1_1` nor `V1_0` stub on the classpath | support row `Not supported on this firmware`, switch disabled; `ClassNotFoundException` logged with the version |
+| `getService()` returns `null` (not registered or not ready) | same as above, logged per version; the probe is retried on the next call (no negative cache) |
+| `RemoteException` from the call | same as above, logged; the cached proxy is dropped so the next call re-probes |
+| any other invocation error | `Could not stop charging`, charging restored, logged |
+| `@1.1` or `@1.0` present and reachable | support row `Supported`, switch enabled, resolved interface logged |
+
+The probe runs once when the page opens (main thread; `getService()` is a
+one-shot binder lookup) and never crashes: every reflective call and every
+invoke is wrapped and reported as an enum, not thrown.
+
+No daemon change and **no new SELinux rule is assumed**. The device pass must
+confirm it rather than adding policy blindly:
+
+```bash
+adb root
+adb shell 'dmesg | grep avc' | grep -iE 'factory|charger|ashfall_prop'   # must be empty
+adb shell 'logcat -d | grep "avc: denied"' | grep -iE 'factory|charge'   # must be empty
+```
+
+If an `avc: denied` does appear for the factory service or the property write,
+that is a new finding for a separate issue: do not ship a rule with this patch
+without the domain/type names from the log.
+
+```bash
+adb root
+adb shell 'dmesg | grep avc' | grep -iE 'factory|charger|ashfall_prop'   # must be empty
+adb shell 'logcat -d | grep "avc: denied"' | grep -iE 'factory|charge'   # must be empty
+```
+
+If an `avc: denied` does appear for the factory service or the property write,
+that is a new finding for a separate issue: do not ship a rule with this patch
+without the domain/type names from the log.
+
+### 8.5 Boot, unplug and fail-open
+
+`ChargingControlReceiver` is the only piece that runs outside the page:
+
+- **Boot** (`LOCKED_BOOT_COMPLETED`, then `BOOT_COMPLETED` as a fallback): the
+  receiver is `directBootAware`, so separation is applied **before the first
+  unlock** — the phone does not charge at full current while it sits at the lock
+  screen. A static flag makes the second delivery a no-op in the same process;
+  if the process is killed in between, the second delivery re-applies the same
+  state, which is idempotent. If the property is not `1`, do nothing and make no
+  HAL call. If it is `1` and the level is at or above the floor, call
+  `chargerEnable(false)` once; if the level is below the floor, drop the state
+  and restore charging. On a firmware without the HAL the stored choice is kept
+  and no call is made (the feature is simply not applicable there). The receiver
+  sends no broadcast and is not re-triggered by its own work, so there is no
+  boot loop, even with the HAL missing.
+- **Unplug** is not a receiver path. `ACTION_POWER_DISCONNECTED` is **not** on
+  the documented implicit-broadcast exemption list, so a manifest receiver is
+  not guaranteed it while the app is in the background and this patch does not
+  claim auto-off on unplug. The real behaviour: the stored setting **survives**
+  an unplug; separation only does anything while VBUS is present, so the device
+  charges normally on battery, and because the switch stays on the UI is honest.
+  On replug the vendor HAL keeps (or resumes) the request — the device pass in
+  §8.6 records whether charging stays stopped; the setting is not cleared by the
+  unplug itself. Only the low-battery guards and a failed apply clear it.
+- **Low-battery guard on page open**: opening the sub-screen below 20 % with the
+  property at `1` clears the state and restores charging immediately, so an old
+  request cannot strand a low battery after an unplug the app never saw.
+- **Fail-open**: every error path clears `persist.ashfall.batt.charge_sep`,
+  then asks for charging to be restored. Below the floor (boot or page open), a
+  firmware without the HAL, a failed `chargerEnable(false)`, a rejected property
+  write and a boot that cannot re-apply all end with charging enabled and, where
+  the property is ours to clear, at `0`. A rejected write is detected by reading
+  the property back, so the switch does not claim "off" while the next boot would
+  still re-apply; that case reports `Could not turn off charging separation`,
+  while a failed resume reports `Restart your device if charging does not
+  resume.` The one case software cannot fix is the HAL itself failing to resume
+  charging.
+- **Guards**: the toggle refuses to enable while the adapter is disconnected
+  (`Connect the charger to use this`) and below 20 % (`Keep the battery above 20%
+  to use this`). An unknown battery level counts as below the floor, so a device
+  that does not report a level cannot enable separation.
+
+### 8.6 Device validation (RP5, after the integration flash)
+
+The lease guard only accepts adb from a child of `lock.sh run`, which exports
+`ASH_DEVICE_OWNER`; a bare `lock.sh acquire` does **not** export it, so every
+`run.sh` call below is wrapped in `lock.sh run`. Paste the block as is.
+
+```bash
+R=scripts/device/lock.sh
+run() { "$R" run worker-140 --ttl 600 -- scripts/device/run.sh "$@"; }
+
+run adb devices -l
+run adb shell getprop persist.ashfall.batt.charge_sep    # empty or 0: default off
+run adb shell dumpsys package com.android.settings | grep userId   # userId=1000
+# Runtime stub + version: both must match what the class-name probe expects.
+run adb shell pm list libraries | grep -i factory
+run adb shell 'ls -l /system/framework/*factory* /system_ext/framework/*factory* /vendor/framework/*factory* 2>/dev/null'
+run adb shell logcat -c
+run adb shell am start -a android.intent.action.POWER_USAGE_SUMMARY
+```
+
+In the UI: **Charging control** sits under **PlayTime indicator**; open it and
+the support row must read **Supported** on the `.31`/`.189` vendor (factory HAL
+present). The probe line must name the interface, not a miss:
+
+```bash
+run adb shell logcat -d -s ChargingSeparationHal
+# expect: Factory HAL resolved: @1.1 (vendor.qti.hardware.factory.V1_1.IFactory)
+# fail:  "... not found: tried @1.1 and @1.0"        -> runtime stub/classloader (#201)
+# fail:  "... stub is not on this build's classpath" -> uses-library not linked
+```
+
+If `pm list libraries` shows a different exact name, that is the string the
+manifest `uses-library` must carry; record it. With the battery above 20 % and
+the adapter connected, enable **Charging separation** and check the effect:
+
+```bash
+run adb shell dumpsys battery | grep -E 'level:|status:|present:'   # adapter still present
+run adb shell getprop persist.ashfall.batt.charge_sep              # 1
+run adb shell 'find /sys/class/power_supply -name current_now -exec cat {} +'
+```
+
+Expected: the battery current magnitude collapses to ~0 A (compare with the
+value captured just before enabling) while `dumpsys battery` still shows
+`present: true` and an AC/USB powered status, and `level` stops climbing. Turn
+the switch off:
+
+```bash
+run adb shell getprop persist.ashfall.batt.charge_sep              # 0
+run adb shell 'find /sys/class/power_supply -name current_now -exec cat {} +'
+```
+
+Expected: the charge current returns (non-zero, sign as the node reports) and
+`level` climbs again. Do not expect a "Could not stop charging" toast on the
+normal path; it only appears when the HAL rejects the stop.
+
+Boot re-apply, before the first unlock. Enable **Charging separation** in the UI
+first (so the property is set through the supported path), then reboot and stay
+at the lock screen:
+
+```bash
+run adb shell getprop persist.ashfall.batt.charge_sep              # 1 before rebooting
+run adb shell reboot
+run adb wait-for-device
+# do NOT unlock; at the lock screen:
+run adb shell getprop persist.ashfall.batt.charge_sep              # 1 on a supported firmware
+run adb shell 'find /sys/class/power_supply -name current_now -exec cat {} +'   # ~0 before unlock
+run adb shell logcat -d -s ChargingSeparationHal | grep -c 'Factory HAL resolved'  # 1, not 2
+```
+
+`current_now` ~0 before unlock is the direct-boot evidence (#202): with the old
+`BOOT_COMPLETED`-only receiver it stayed at the charge current until the first
+unlock. If it is only ~0 after unlocking, the locked broadcast did not reach the
+receiver — record it.
+
+Unplug is deliberately **not** an auto-off path (#213). With separation on, pull
+the adapter and expect:
+
+```bash
+run adb shell getprop persist.ashfall.batt.charge_sep              # still 1: the setting persists
+# device now runs on battery and charges normally when replugged or not; the switch still reads on
+# replug the adapter, then:
+run adb shell 'find /sys/class/power_supply -name current_now -exec cat {} +'
+```
+
+Record whether charging stays stopped after the replug (the HAL may keep the
+request) or resumes; the property and the switch stay `1` either way. Open the
+sub-screen while unplugged: the setting is not cleared by the page.
+
+Low-battery guard (both paths). With the level below 20 %:
+
+```bash
+# page-open guard: with the property at 1, open Settings > Battery > Charging control
+run adb shell getprop persist.ashfall.batt.charge_sep              # becomes 0, switch off
+run adb shell 'find /sys/class/power_supply -name current_now -exec cat {} +'   # charging resumed
+# boot guard (root; if the shell write is refused, skip and record it):
+run adb root
+run adb shell setprop persist.ashfall.batt.charge_sep 1
+run adb shell reboot
+run adb wait-for-device
+run adb shell getprop persist.ashfall.batt.charge_sep              # 0 after boot below 20 %
+```
+
+Also try to enable below 20 %: the toast must read `Keep the battery above 20%
+to use this`, the switch stays off and the property stays `0`. Unplugged enable:
+the toast must read `Connect the charger to use this` and the property must stay
+`0`.
+
+Unsupported firmware or a missing HAL:
+
+```bash
+# On a build/firmware without vendor.qti.hardware.factory (or after masking it):
+run adb shell am start -a android.intent.action.POWER_USAGE_SUMMARY
+# UI: "Not supported on this firmware", the switch is disabled, no crash/ANR.
+run adb shell logcat -d -s ChargingSeparationHal | tail   # "not found"/"classpath" probe lines
+# Boot-loop check with the HAL missing (root as above):
+run adb root
+run adb shell setprop persist.ashfall.batt.charge_sep 1
+run adb shell reboot
+run adb wait-for-device
+# the device boots normally, the boot path ran once, and the stored choice is
+# kept (getprop reads 1) because this firmware cannot apply it.
+```
+
+Documentation / logs:
+
+```bash
+run adb shell logcat -d -s ChargingControlSettings ChargingSeparationHal ChargingSeparation
+run adb shell 'dmesg | grep avc' | grep -iE 'factory|charger|ashfall_prop'  # empty
+```
+
+The device pass is the acceptance evidence for #140: `@1.1` resolves from
+Settings' classloader, the HAL actually stops charging (`current_now` ~0 with the
+adapter status, including before the first unlock), it reverts cleanly, a stale
+low-battery request is dropped, the unsupported firmware shows the message
+instead of a dead toggle, and a missing HAL does not boot-loop. If
+`pm list libraries` has no factory stub, the page correctly reports unsupported
+and the native-backend follow-up is the unblock, not a patch tweak.
