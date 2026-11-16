@@ -124,8 +124,9 @@ immediately to the properties from §2 of the contract; there is no Apply button
   theme (see §9).
 * **Status** is a live graph, not a read-out (docs/phase5.md §7.2).  The page
   still reads `ashfall.status.fan.{temp,pct,rpm,safety}` every 500 ms while it
-  is visible (it sets `ashfall.ui.fan_live=1` on resume and clears it on pause,
-  so the daemon publishes at its fast cadence), and each tick appends one
+  is visible (it refreshes `ashfall.ui.fan_live` with a changing token every
+  500 ms on resume and writes `0` on pause, so the daemon publishes at its fast
+  cadence and a force-stop cannot latch the flag), and each tick appends one
   sample to a 120-sample (60 s) ring buffer that lives in the app.  Nothing is
   stored and the daemon keeps no history, so **reopening the page starts a new
   window** (`StatusPreference.resetHistory()` from `onCreatePreferences`).
@@ -448,7 +449,8 @@ fixes that for the whole app:
 * **Fan dialog**: header with the active preset and temperature, a
   single-choice preset list (applies immediately), “Edit presets” (opens the
   preset editor) and Done.  The header temperature refreshes every 500 ms and
-  the dialog sets `ashfall.ui.fan_live` while it is open.
+  the dialog refreshes `ashfall.ui.fan_live` with a changing token at the same
+  cadence while it is open (`0` when the last fan UI closes).
 * **Lighting dialog**: on/off switch, target (Both/Left/Right), preset colour
   swatches plus an **inline** custom colour picker (saturation/value square +
   hue slider; no second window, which would be hidden behind the QS dialog),
@@ -788,10 +790,13 @@ The user-test changes of `docs/phase5.md` §6.3 were implemented on
   row gets the native expressive card surface instead of black-on-black.
   Placement is inside the bottom Support card, after Accessibility/Support.
   Device pixel check in normal dark and pure black is still pending.
-* **Live fan status.**  `ashfall.ui.fan_live=1` is written on resume/onStart of
-  the Fan page, the curve editor and the QS Fan dialog and cleared when they
-  leave; their polling period is 500 ms.  A counter in `Fan.setLive()` keeps
-  the flag set while more than one fan UI is visible.
+* **Live fan status.**  `ashfall.ui.fan_live` is written on resume/onStart of
+  the Fan page, the curve editor and the QS Fan dialog as a changing token
+  (`SystemClock.elapsedRealtime()`), refreshed every 500 ms, and set to `0`
+  when they leave; their polling period is 500 ms.  A counter in
+  `Fan.setLive()` keeps the token flowing while more than one fan UI is
+  visible.  The token change is also the heartbeat that keeps the live curve
+  preview valid (#94/#180).
 * **Live curve preview.**  Every editor change writes the curve to
   `ashfall.ui.fan_preview_curve` (and the saved property) when the edited preset
   is the active Smart preset; `onPause` clears the preview.

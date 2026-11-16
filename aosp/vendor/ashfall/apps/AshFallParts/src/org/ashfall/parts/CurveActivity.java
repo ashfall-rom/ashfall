@@ -47,6 +47,15 @@ public class CurveActivity extends PartsActivity {
 
     public static final String EXTRA_PRESET_ID = "org.ashfall.parts.extra.PRESET_ID";
 
+    /**
+     * Fan UI refresh period.  It is also the cadence of the
+     * {@code ashfall.ui.fan_live} heartbeat: while the editor publishes a
+     * preview curve, the daemon honours it only while this tick keeps writing
+     * the property (1.5 s timeout, issue #94).  Do not lengthen it past that
+     * timeout.
+     */
+    private static final long LIVE_TICK_MS = 500;
+
     private PresetStore mStore;
     private Preset mPreset;
     private CurveEditorView mEditor;
@@ -79,7 +88,7 @@ public class CurveActivity extends PartsActivity {
                 }
                 updateStressStatus();
             }
-            mHandler.postDelayed(this, 500);
+            mHandler.postDelayed(this, LIVE_TICK_MS);
         }
     };
 

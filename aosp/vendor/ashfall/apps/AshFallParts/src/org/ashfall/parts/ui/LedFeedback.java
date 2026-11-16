@@ -16,6 +16,10 @@
 
 package org.ashfall.parts.ui;
 
+import android.os.Handler;
+import android.os.Looper;
+import android.os.SystemClock;
+
 import org.ashfall.parts.hw.Led;
 import org.ashfall.parts.ipc.Props;
 
@@ -28,25 +32,68 @@ import java.util.Locale;
  * <p>Value = {@code RRGGBB:RRGGBB} (left:right, final colours including
  * intensity); empty = normal lighting.  The daemon applies it at up to 30 Hz,
  * so this class rate-limits and only writes when the colour actually changes.
- * {@link #clear()} is always called when the tester leaves the foreground, and
- * the property is non-persistent, so a crash cannot leave the rings stuck.
+ *
+ * <p>A property alone cannot be crash-safe: a force-stop never runs
+ * {@link #clear()}, so the daemon would keep applying the last colour forever.
+ * While the tester is active this class therefore also refreshes
+ * {@code ashfall.ui.led_override_live} every 500 ms with a token that changes
+ * on every write ({@link SystemClock#elapsedRealtime()}), and the daemon drops
+ * the override once the last change is 1.5 s old (issue #94).  The value is
+ * opaque: only "different from the previous value" matters, so liveness does
+ * not depend on undocumented property-service behaviour (issue #180).  The
+ * heartbeat stops when the publisher stops: {@link #clear()} stops it and
+ * clears both properties, and a killed process stops writing it, so the rings
+ * return to the configured lighting on their own.
  */
 public final class LedFeedback {
 
     private static final String OVERRIDE = "ashfall.ui.led_override";
+    private static final String OVERRIDE_LIVE = "ashfall.ui.led_override_live";
     private static final long MIN_INTERVAL_MS = 34; // ~29 Hz
+    private static final long HEARTBEAT_MS = 500;
     private static final float IDLE_GLOW = 0.06f;
 
     private final int mLeftBase;
     private final int mRightBase;
     private final float mBrightness;
+    private final Handler mHandler = new Handler(Looper.getMainLooper());
     private long mLastPublish;
     private String mLastValue = "";
+    private boolean mHeartbeat;
+
+    private final Runnable mBeat = new Runnable() {
+        @Override
+        public void run() {
+            if (!mHeartbeat) {
+                return;
+            }
+            // A changing token, not a constant: the daemon treats a value
+            // change as the heartbeat, so this does not rely on the property
+            // service bumping a serial for an identical write (#180).
+            Props.set(OVERRIDE_LIVE,
+                    Long.toString(SystemClock.elapsedRealtime()));
+            mHandler.postDelayed(this, HEARTBEAT_MS);
+        }
+    };
 
     public LedFeedback() {
         mLeftBase = Led.colorToArgb(Led.colorLeft());
         mRightBase = Led.colorToArgb(Led.colorRight());
         mBrightness = Led.brightness() / 100f;
+    }
+
+    /**
+     * Starts the override heartbeat.  Called when the tester becomes active
+     * (it must run even while the sticks are idle and the colour is
+     * unchanged); {@link #clear()} stops it again.
+     */
+    public void start() {
+        if (mHeartbeat) {
+            return;
+        }
+        mHeartbeat = true;
+        mHandler.removeCallbacks(mBeat);
+        mHandler.post(mBeat);
     }
 
     /**
@@ -67,10 +114,16 @@ public final class LedFeedback {
         Props.set(OVERRIDE, value);
     }
 
-    /** Restores normal lighting (the daemon re-reads its own settings). */
+    /**
+     * Restores normal lighting (the daemon re-reads its own settings) and
+     * stops the heartbeat.  Safe to call more than once.
+     */
     public void clear() {
+        mHeartbeat = false;
+        mHandler.removeCallbacks(mBeat);
         mLastValue = "";
         Props.set(OVERRIDE, "");
+        Props.set(OVERRIDE_LIVE, "");
     }
 
     private String scale(int argb, float activity) {

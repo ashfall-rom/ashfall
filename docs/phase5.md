@@ -201,12 +201,48 @@ Supersedes the matching parts of §2/§3. Issue numbers in the per-area issues.
 | `persist.ashfall.fan.kick_pct` | `ashfall_prop` | app -> hwd | 10..60, default `30` (kick level; never 100 %) |
 | `persist.ashfall.fan.screen_off` | `ashfall_prop` | app -> hwd | `off` (default: fan off while the screen is off) or `run`; on screen-on the fan resumes with a kick if enabled |
 | `persist.ashfall.fan.safety_c` | - | - | **removed** (no UI). hwd keeps a fixed, undocumented last-resort rule: 100 % at >= 90 C (also with the screen off), released at 80 C |
-| `ashfall.ui.fan_live` | new `ashfall_ui_prop` (non-persist) | app -> hwd | `1` while a fan UI (page/editor/QS dialog) is visible: status every 500 ms (else 2 s) |
-| `ashfall.ui.fan_preview_curve` | `ashfall_ui_prop` | app -> hwd | curve string; while non-empty and the active mode is `smart`, hwd uses it instead of `persist.ashfall.fan.curve` (live curve editing); the app clears it when the editor closes |
+| `ashfall.ui.fan_live` | new `ashfall_ui_prop` (non-persist) | app -> hwd | `0`/empty = no fan UI; otherwise an opaque token that changes on every refresh (at least every 500 ms) while a fan UI (page/editor/QS dialog) is visible. Any non-zero value selects the 500 ms status cadence (else 2 s); value changes are the heartbeat that keeps the live preview valid |
+| `ashfall.ui.fan_preview_curve` | `ashfall_ui_prop` | app -> hwd | curve string; while non-empty and the active mode is `smart`, hwd uses it instead of `persist.ashfall.fan.curve` (live curve editing). Honoured only while `ashfall.ui.fan_live` has changed within the last **1.5 s**; the app clears it when the editor closes, and hwd drops it on its own after 1.5 s without a heartbeat (force-stop/crash) |
 | `persist.ashfall.led.screen_off` | - | - | **removed**; LEDs are always off while the screen is off and are re-applied on screen-on |
-| `ashfall.ui.led_override` | `ashfall_ui_prop` | app -> hwd | `` (empty = normal) or `RRGGBB:RRGGBB` (left:right, final colours incl. intensity); used by the gamepad tester (<= 30 Hz) |
+| `ashfall.ui.led_override` | `ashfall_ui_prop` | app -> hwd | `` (empty = normal) or `RRGGBB:RRGGBB` (left:right, final colours incl. intensity); used by the gamepad tester (<= 30 Hz). Honoured only while `ashfall.ui.led_override_live` is fresh; a non-empty value is dropped after 1.5 s without a heartbeat |
+| `ashfall.ui.led_override_live` | new `ashfall_ui_prop` (non-persist) | app -> hwd | opaque token that changes on every refresh (at least every 500 ms) while the gamepad tester owns `ashfall.ui.led_override`; the value has no meaning beyond "different from the previous one". hwd treats the override as expired after **1.5 s** without a change, so a force-stopped app cannot latch the rings. Cleared (with the override) when the tester leaves |
 | `ashfall.perf.throttle_override` | new `ashfall_perf_prop` (non-persist => resets on reboot) | app -> hwd | `1` = disable software clock throttling (kernel thermal mitigation / cooling devices; hardware limits stay) |
 | `persist.ashfall.perf.throttle_override_permanent` | `ashfall_perf_prop` | app -> hwd | `1` = apply the override at every boot (hidden "developer" switch, see §6.4) |
+
+**UI override heartbeat (issue #94).**  `ashfall.ui.led_override` and
+`ashfall.ui.fan_preview_curve` are owned by app code that a force-stop or crash
+can kill without running its `clear()` path, so a non-persistent property alone
+cannot guarantee that they are released.  While it publishes one of those
+values, the app therefore rewrites a companion liveness property every
+**500 ms** with an opaque token that differs from the previous one
+(`ashfall.ui.led_override_live` for the tester; `ashfall.ui.fan_live` also
+covers the curve preview; the app uses `SystemClock.elapsedRealtime()`).
+`ashfall-hwd` honours the value only while the liveness token has changed
+within the last **1.5 s** (three missed beats; the daemon samples it on every
+loop tick, at most 500 ms apart).  The token has no meaning of its own and is
+never parsed: only "different from the previous sample" is a heartbeat, so the
+mechanism does not depend on the property service bumping a write serial for
+an identical value (issue #180) and `getprop` shows the heartbeat directly.
+After the timeout the daemon drops the override and re-applies the configured
+lighting / `persist.ashfall.fan.curve`, and a fresh heartbeat plus value is
+honoured again immediately.  A fan preview that expired is additionally not
+honoured again until the editor publishes a *different* curve:
+`ashfall.ui.fan_live` is shared by all fan pages, so a mere heartbeat refresh
+from another fan page must not revive a curve left behind by a force-stopped
+editor.  (An identical rewrite cannot be told apart without the property
+serial, which issue #180 removed.  That is normally invisible: a preview is
+only published for the active Smart preset, and both `save()` and preset
+activation write the same curve to `persist.ashfall.fan.curve`.  However
+`publishPreview()` on resume republishes the stored preset curve without
+writing persist, so if the two have drifted or the earlier write failed, the
+preview stays ignored until the first edit rewrites both.)  Timing uses the
+daemon's own monotonic clock
+(`CLOCK_MONOTONIC`, `ah_now_ms()`), never the app's clock, so a wall-clock
+change cannot expire a live override or keep a dead one alive.  Empty values
+are always honoured as
+"no override" without a heartbeat.  The heartbeat is about ownership only: the
+`ashfall.ui.*` property type, SELinux label (`ashfall_ui_prop`) and the
+`system_app` -> `ashfall_hwd` permission do not change.
 
 Lighting: rainbow base speed = previous speed / 3; breathing uses a gamma-corrected
 brightness curve and a smoother update cadence (no visible steps at speed 5).

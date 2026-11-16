@@ -30,6 +30,10 @@
 #include <string.h>
 #include <unistd.h>
 
+/* The preview curve watch is a full curve string, not a heartbeat token. */
+_Static_assert(HWD_VALUE_WATCH_MAX >= FAN_CURVE_MAX_LEN + 1,
+               "HWD_VALUE_WATCH_MAX must hold a whole fan curve");
+
 #define PROP_FAN_MODE "persist.ashfall.fan.mode"
 #define PROP_FAN_MANUAL "persist.ashfall.fan.manual_pct"
 #define PROP_FAN_CURVE "persist.ashfall.fan.curve"
@@ -50,6 +54,7 @@
 #define PROP_UI_POWER_LIVE "ashfall.ui.power_live"
 #define PROP_UI_FAN_PREVIEW "ashfall.ui.fan_preview_curve"
 #define PROP_UI_LED_OVERRIDE "ashfall.ui.led_override"
+#define PROP_UI_LED_OVERRIDE_LIVE "ashfall.ui.led_override_live"
 
 #define PROP_PERF_OVERRIDE "ashfall.perf.throttle_override"
 #define PROP_PERF_PERMANENT "persist.ashfall.perf.throttle_override_permanent"
@@ -168,18 +173,67 @@ static void read_fan_settings(fan_settings *out, bool *changed)
     }
 }
 
-/* ashfall.ui.fan_preview_curve: live curve editing.  While it is non-empty
- * and valid, smart mode follows it instead of persist.ashfall.fan.curve.  The
- * app clears the property when the editor closes. */
-static void read_fan_preview(fan_state *fan, bool *changed)
+/* --- ashfall.ui.* publisher heartbeat (issue #94) ------------------------
+ *
+ * ashfall.ui.* values are written by the AshFall Parts app only.  The app
+ * normally clears them when the page closes, but a force-stop or a crash
+ * skips that path and would otherwise latch the value (a stuck LED override,
+ * a fan preview curve that outlives its editor).  Publishers therefore
+ * refresh a companion liveness property every HWD_UI_HEARTBEAT_MS with a
+ * token that changes on every write, and the daemon ignores the value once
+ * the last token change is older than HWD_UI_HEARTBEAT_TIMEOUT_MS.
+ *
+ * The token is opaque (the app writes SystemClock.elapsedRealtime()); only
+ * "different from the previous sample" matters.  This keeps liveness visible
+ * in the value itself instead of depending on the property service bumping a
+ * write serial for an identical value, which is an implementation detail
+ * (issue #180).  The clock is the daemon's own CLOCK_MONOTONIC (ah_now_ms):
+ * only observation times are compared, never the app's clock.
+ */
+static bool ui_heartbeat_sample(struct hwd_ui_heartbeat *beat,
+                                const char *prop, int64_t now_ms)
+{
+    char token[HWD_UI_HEARTBEAT_TOKEN_MAX];
+
+    if (prop_get_str(prop, token, sizeof(token)) <= 0) {
+        /* Empty/absent: no heartbeat (and forget the token, so a later
+         * re-write of the same value counts as a change). */
+        hwd_ui_heartbeat_seed(beat, "");
+        return false;
+    }
+    return hwd_ui_heartbeat_update(beat, token, now_ms);
+}
+
+/* Record the token already present without counting it as a live beat. */
+static void ui_heartbeat_seed(struct hwd_ui_heartbeat *beat, const char *prop)
+{
+    char token[HWD_UI_HEARTBEAT_TOKEN_MAX];
+
+    if (prop_get_str(prop, token, sizeof(token)) <= 0)
+        token[0] = '\0';
+    hwd_ui_heartbeat_seed(beat, token);
+}
+
+/* ashfall.ui.fan_preview_curve: live curve editing.  While it is non-empty,
+ * valid and the owning UI's heartbeat is fresh, smart mode follows it instead
+ * of persist.ashfall.fan.curve.  The app clears the property when the editor
+ * closes; the heartbeat covers the paths where it cannot (force-stop).
+ * *present reports a non-empty property so the caller can tell an expiry
+ * (log it) from the app's normal clear (do not). */
+static void read_fan_preview(fan_state *fan, bool live_fresh, bool *present,
+                             bool *changed)
 {
     fan_curve curve;
     char buf[FAN_CURVE_MAX_LEN + 1];
     bool valid = false;
 
     memset(&curve, 0, sizeof(curve));
-    if (prop_get_str(PROP_UI_FAN_PREVIEW, buf, sizeof(buf)) > 0)
-        valid = fan_parse_curve(buf, &curve);
+    *present = false;
+    if (prop_get_str(PROP_UI_FAN_PREVIEW, buf, sizeof(buf)) > 0 && buf[0]) {
+        *present = true;
+        if (live_fresh)
+            valid = fan_parse_curve(buf, &curve);
+    }
 
     if (valid != fan->preview_valid ||
         (valid && memcmp(&curve, &fan->preview, sizeof(curve)) != 0)) {
@@ -189,7 +243,12 @@ static void read_fan_preview(fan_state *fan, bool *changed)
     }
 }
 
-static void read_led_settings(led_settings *out, bool *changed)
+/* ashfall.ui.led_override is honoured only while its publisher heartbeat
+ * (ashfall.ui.led_override_live) is fresh; empty = normal lighting.
+ * *present reports a non-empty property so the caller can tell an expiry
+ * (log it) from the app's normal clear (do not). */
+static void read_led_settings(led_settings *out, bool override_live,
+                              bool *present, bool *changed)
 {
     led_settings next;
     led_settings defaults;
@@ -217,23 +276,28 @@ static void read_led_settings(led_settings *out, bool *changed)
     next.speed = prop_get_int_range(PROP_LED_SPEED, defaults.speed, 1, 10);
 
     /* ashfall.ui.led_override="RRGGBB:RRGGBB" (left:right, final colours incl.
-     * intensity), used by the gamepad tester.  Empty = normal lighting. */
+     * intensity), used by the gamepad tester.  Empty = normal lighting.  A
+     * non-empty value without a fresh heartbeat is stale: the app that owned
+     * it is gone (force-stop/crash) and the configured lighting returns. */
     next.override_valid = false;
-    if (prop_get_str(PROP_UI_LED_OVERRIDE, buf, sizeof(buf)) > 0 &&
-        strlen(buf) == 13 && buf[6] == ':') {
-        char left[7];
-        char right[7];
-        rgb_t l;
-        rgb_t r;
+    *present = false;
+    if (prop_get_str(PROP_UI_LED_OVERRIDE, buf, sizeof(buf)) > 0 && buf[0]) {
+        *present = true;
+        if (override_live && strlen(buf) == 13 && buf[6] == ':') {
+            char left[7];
+            char right[7];
+            rgb_t l;
+            rgb_t r;
 
-        memcpy(left, buf, 6);
-        left[6] = '\0';
-        memcpy(right, buf + 7, 6);
-        right[6] = '\0';
-        if (led_parse_colour(left, &l) && led_parse_colour(right, &r)) {
-            next.override[0] = l;
-            next.override[1] = r;
-            next.override_valid = true;
+            memcpy(left, buf, 6);
+            left[6] = '\0';
+            memcpy(right, buf + 7, 6);
+            right[6] = '\0';
+            if (led_parse_colour(left, &l) && led_parse_colour(right, &r)) {
+                next.override[0] = l;
+                next.override[1] = r;
+                next.override_valid = true;
+            }
         }
     }
 
@@ -387,6 +451,18 @@ static void publish_throttle_status(const throttle_state *throttle,
     }
 }
 
+/* ashfall.ui.fan_live is "0" (or empty) with no fan UI and an opaque changing
+ * heartbeat token otherwise (issue #180), so the fast status cadence only
+ * needs "non-zero".  prop_get_bool() would read the token as false. */
+static bool fan_ui_visible(void)
+{
+    char buf[HWD_UI_HEARTBEAT_TOKEN_MAX];
+
+    if (prop_get_str(PROP_UI_FAN_LIVE, buf, sizeof(buf)) <= 0)
+        return false;
+    return buf[0] && strcmp(buf, "0") != 0;
+}
+
 /* Display state published by framework DisplayPowerController: 1 = off,
  * 2 = on, 3/4 = doze, 5 = VR, 6 = on (suspended).  Anything else (or a
  * missing property, e.g. very early boot) is treated as "screen on". */
@@ -462,8 +538,25 @@ int main(void)
     bool force_led = true;
     bool screen_on = screen_is_on();
     bool led_want_on = false;
-    bool fan_live = prop_get_bool(PROP_UI_FAN_LIVE, false);
+    bool fan_live = fan_ui_visible();
     bool power_live = prop_get_bool(PROP_UI_POWER_LIVE, false);
+    struct hwd_ui_heartbeat led_beat = {.token = "",
+                                        .seen_ms = 0,
+                                        .observed = false};
+    struct hwd_ui_heartbeat fan_live_beat = {.token = "",
+                                             .seen_ms = 0,
+                                             .observed = false};
+    struct hwd_value_watch preview_watch = {.value = "", .have = false};
+    bool led_expiry_logged = false;
+    bool preview_expiry_logged = false;
+    /* A preview that lost its lease (its publisher died) is not honoured
+     * again until the editor publishes a *different* curve.  Identical
+     * rewrites are indistinguishable without the property serial, and are
+     * harmless: while a preview is published the editor has already saved the
+     * same curve to persist.ashfall.fan.curve.  This stops another fan page
+     * from reviving a leftover curve just by refreshing the shared fan_live
+     * heartbeat. */
+    bool preview_needs_rewrite = false;
     cpu_load cpu_load;
 
     memset(&sa, 0, sizeof(sa));
@@ -498,10 +591,30 @@ int main(void)
      * writer of the fan/LED nodes, so nothing else restores them. */
     {
         bool changed = false;
+        bool present = false;
+        char preview[FAN_CURVE_MAX_LEN + 1];
+
+        /* Seed the heartbeat observations; a value left over from a previous
+         * app run is only honoured once its publisher writes again.  A
+         * non-empty preview without a live editor is stale, so it must be
+         * rewritten by the editor before it is followed again. */
+        ui_heartbeat_seed(&led_beat, PROP_UI_LED_OVERRIDE_LIVE);
+        ui_heartbeat_seed(&fan_live_beat, PROP_UI_FAN_LIVE);
+        if (prop_get_str(PROP_UI_FAN_PREVIEW, preview, sizeof(preview)) <= 0)
+            preview[0] = '\0';
+        /* The re-arm gate compares the whole curve, not a heartbeat token. */
+        hwd_value_watch_seed(&preview_watch, preview);
+        if (!hwd_ui_heartbeat_fresh(&fan_live_beat, now) && preview[0])
+            preview_needs_rewrite = true;
 
         read_fan_settings(&fan.settings, &changed);
-        read_fan_preview(&fan, &changed);
-        read_led_settings(&led.settings, &changed);
+        read_fan_preview(&fan, hwd_ui_heartbeat_fresh(&fan_live_beat, now) &&
+                                  !preview_needs_rewrite,
+                         &present, &changed);
+        present = false;
+        read_led_settings(&led.settings,
+                          hwd_ui_heartbeat_fresh(&led_beat, now), &present,
+                          &changed);
     }
     last_temp = thermal_hottest_tenths(&thermal);
     next_thermal_ms = now + THERMAL_SWEEP_MS;
@@ -564,14 +677,70 @@ int main(void)
         int64_t screen_ms;
 
         now = ah_now_ms();
+        /* ashfall.ui.* lease (issue #94): sample the heartbeats before the
+         * values are read, so a value is only accepted together with a
+         * refresh the daemon has actually observed. */
+        ui_heartbeat_sample(&led_beat, PROP_UI_LED_OVERRIDE_LIVE, now);
+        ui_heartbeat_sample(&fan_live_beat, PROP_UI_FAN_LIVE, now);
+        {
+            char preview[FAN_CURVE_MAX_LEN + 1];
+
+            if (prop_get_str(PROP_UI_FAN_PREVIEW, preview,
+                             sizeof(preview)) <= 0)
+                preview[0] = '\0';
+            /* Full-string comparison: two curves sharing a long prefix must
+             * still count as a new preview (issue #184). */
+            if (hwd_value_watch_update(&preview_watch, preview))
+                preview_needs_rewrite = false;
+        }
         read_fan_settings(&fan.settings, &changed);
-        read_fan_preview(&fan, &changed);
+        {
+            bool live = hwd_ui_heartbeat_fresh(&fan_live_beat, now);
+            bool had_preview = fan.preview_valid;
+            bool present = false;
+
+            read_fan_preview(&fan, live && !preview_needs_rewrite, &present,
+                             &changed);
+            if (had_preview && !fan.preview_valid) {
+                changed = true;
+                if (!live && present) {
+                    preview_needs_rewrite = true;
+                    if (!preview_expiry_logged) {
+                        ah_logf(AH_LOG_WARN,
+                                "ui: ashfall.ui.fan_preview_curve expired (no "
+                                "ashfall.ui.fan_live for %d ms); using "
+                                "persist.ashfall.fan.curve",
+                                HWD_UI_HEARTBEAT_TIMEOUT_MS);
+                        preview_expiry_logged = true;
+                    }
+                }
+            } else if (fan.preview_valid) {
+                preview_expiry_logged = false;
+            }
+        }
         {
             led_settings before = led.settings;
+            bool live = hwd_ui_heartbeat_fresh(&led_beat, now);
+            bool had_override = led.settings.override_valid;
+            bool present = false;
 
-            read_led_settings(&led.settings, &changed);
+            read_led_settings(&led.settings, live, &present, &changed);
             if (memcmp(&before, &led.settings, sizeof(before)) != 0)
                 force_led = true;
+            if (had_override && !led.settings.override_valid) {
+                changed = true;
+                force_led = true;
+                if (!live && present && !led_expiry_logged) {
+                    ah_logf(AH_LOG_WARN,
+                            "ui: ashfall.ui.led_override expired (no "
+                            "ashfall.ui.led_override_live for %d ms); back "
+                            "to the configured lighting",
+                            HWD_UI_HEARTBEAT_TIMEOUT_MS);
+                    led_expiry_logged = true;
+                }
+            } else if (led.settings.override_valid) {
+                led_expiry_logged = false;
+            }
         }
         if (changed)
             force_led = true;
@@ -728,7 +897,7 @@ int main(void)
          * Fan page, ashfall.ui.power_live from the Power page) and 2 s
          * otherwise; a change of either property re-schedules immediately. */
         {
-            bool fan = prop_get_bool(PROP_UI_FAN_LIVE, false);
+            bool fan = fan_ui_visible();
             bool power = prop_get_bool(PROP_UI_POWER_LIVE, false);
 
             if (fan != fan_live || power != power_live) {

@@ -16,6 +16,8 @@
 
 package org.ashfall.parts.hw;
 
+import android.os.SystemClock;
+
 import org.ashfall.parts.ipc.Props;
 
 /**
@@ -39,7 +41,11 @@ public final class Fan {
     public static final String KICK_PCT = "persist.ashfall.fan.kick_pct";
     public static final String SCREEN_OFF = "persist.ashfall.fan.screen_off";
 
-    /** {@code 1} while a fan UI is visible: the daemon polls every 500 ms. */
+    /**
+     * {@code 0} while no fan UI is open, otherwise an opaque token that
+     * changes on every refresh: the daemon polls every 500 ms and treats a
+     * value change as the heartbeat that keeps the live preview valid.
+     */
     public static final String UI_LIVE = "ashfall.ui.fan_live";
     /** Live curve being edited; the daemon follows it instead of the saved curve. */
     public static final String UI_PREVIEW_CURVE = "ashfall.ui.fan_preview_curve";
@@ -150,7 +156,7 @@ public final class Fan {
     /**
      * Marks a fan UI (page, editor, QS dialog) as visible.  A counter is used
      * because the page and a dialog can be visible at the same time; the daemon
-     * only sees {@code 1} while at least one of them is open.
+     * only sees {@code 0} when none of them is open.
      */
     public static synchronized void setLive(boolean live) {
         if (live) {
@@ -161,9 +167,17 @@ public final class Fan {
         refreshLive();
     }
 
-    /** Re-publishes the current live flag (used by the 500 ms ui refresh). */
+    /**
+     * Re-publishes the current live flag (used by the 500 ms ui refresh).
+     * The value is a changing token, not a constant {@code 1}: the daemon
+     * treats a value change as a heartbeat, so liveness does not depend on
+     * the property service bumping a write serial for an identical write
+     * (issue #180).  {@code 0} means "no fan UI".
+     */
     public static synchronized void refreshLive() {
-        Props.set(UI_LIVE, sLiveCount > 0 ? "1" : "0");
+        Props.set(UI_LIVE, sLiveCount > 0
+                ? Long.toString(SystemClock.elapsedRealtime())
+                : "0");
     }
 
     /** Publishes the curve being edited; the daemon drops it when cleared. */
