@@ -380,14 +380,19 @@ at the stored value.
 
 ## 5. Entry and exit (F2 UX, for context)
 
-Fixed in #131: a **QS tile**, a `Handheld > Display` row in AshFall Parts and the
-daemon chord **L1+R1+Start**. All three do the same two steps (section 4):
+Fixed in #131: a **QS tile** and a `Handheld > Display` row in AshFall Parts.
+Both do the same two steps (section 4):
 
 1. require the desktop-mode preset: `wm density 320 -d 0` +
    `wm set-display-windowing-mode -d 0 5`, then `persist.ashfall.pad.mode=desktop`
    (B owns the property and the pointer device);
 2. on exit: `wm set-display-windowing-mode -d 0 1`, restore the stored density,
    `persist.ashfall.pad.mode=game`.
+
+The daemon chord **L1+R1+Start** is not a display entry point: it switches the
+live pointer mode only, does not write `persist.ashfall.pad.mode` and does not
+touch display 0 (`docs/rp5/input.md`, F2 §9.1).  A chord that entered desktop
+mode would need a workstream-B change.
 
 Failure handling: if `wm set-display-windowing-mode` fails, restore the density
 immediately and leave the pad mode at `game`; do not report the mode change as
@@ -600,32 +605,35 @@ succeeded:
 6. ask SystemUI to rebind the tile (`TileService.requestListeningState`), so
    the tile is active immediately even when the panel is closed.
 
-The density key is a `persist.*` property, so it survives a reboot.  So do the
-display windowing mode and the per-display density override: WindowManager
-writes them to `/data/system/display_settings.xml` and
-`Settings.Secure.DISPLAY_DENSITY_FORCED` (F1 §2.1), which is why a crash
-between enter and exit can come back in desktop mode.  The boot guard in §9.1
-forces fullscreen and applies the key on every boot; reading the key back is
-what makes a failed property write fail the whole operation instead of leaving
-the property and the display out of step.
+The density key is a `persist.*` property.  So are the display windowing mode
+and the per-display density override, which WindowManager writes to
+`/data/system/display_settings.xml` and `Settings.Secure.DISPLAY_DENSITY_FORCED`
+(F1 §2.1), which is why a crash between enter and exit can come back in desktop
+mode.  The boot guard in §9.1 forces fullscreen and only applies the key when
+the panel is still at 320 dpi; reading the key back is what makes a failed
+property write fail the whole operation instead of leaving the property and
+the display out of step.
 
 ### 9.4 Exit: display, density, property
 
 1. `setWindowingMode(0, 1)` and read it back; it must report fullscreen;
-2. only when the panel is currently at **320** (or the density cannot be
-   read): re-apply `persist.ashfall.display.density_restore`, retry once, and
-   verify the read-back; if the key is missing and the call started from a
-   real desk (the desk was entered outside F2), clear the forced density and
-   verify it too.  This also repairs a reboot that left the density at 320
-   with a fullscreen display, without touching a user's own override;
+2. only when the panel is currently at **320** is the density ours:
+   - a key exists: restore it, retry once, verify the read-back, then clear
+     the key;
+   - no key and the call started from a real desk (the desk was entered
+     outside F2): clear the forced density and verify it, returning to the
+     panel default;
+   - any other density is a user override: do not touch it, and drop any
+     stale key so it cannot be applied later;
 3. write `persist.ashfall.pad.mode=game`;
 4. refresh the tile.
 
 If the density restore or the property write fails after the display has
 already returned to fullscreen, the result is `PARTIAL`, not success: the page
 and tile show "Couldn't finish switching the display. Check the display
-settings." rather than claiming nothing changed.  The restore key is kept, so
-the next tap or the boot guard retries.
+settings." rather than claiming nothing changed.  A failed restore keeps the
+key so the next tap or the boot guard retries; a successful restore clears it,
+so the key cannot outlive the transition (#216).
 
 A second "off" tap while already fullscreen writes `game` and leaves the
 density alone. Entering while already in desktop windowing only writes
@@ -638,15 +646,22 @@ density alone. Entering while already in desktop windowing only writes
 calls `Desktop.resetForBoot()`:
 
 1. `setWindowingMode(0, 1)` - display 0 fullscreen;
-2. if `persist.ashfall.display.density_restore` exists, apply it (`wm density
-   reset` when it equals the stock density, otherwise set it);
-3. `persist.ashfall.pad.mode=game`.
+2. only when the panel is currently at **320** is the density ours:
+   - a key exists: restore it, retry once, verify it, then clear the key;
+   - no key: clear the forced density and verify it, returning to the panel
+     default (F1 Step 0 / an outside-F2 desk);
+   - any other density is a user override: leave it untouched and drop a
+     stale key;
+3. `persist.ashfall.pad.mode=game` (a failed write is logged).
 
 Both broadcasts run the same idempotent path, so a WindowManager that was not
 ready for the first call gets a second attempt, and a clean device simply
-re-applies the same values.  The receiver sends no broadcast and starts no
-worker, so it cannot loop.  A failure is logged by `Desktop` and leaves the
-real display state alone; the next boot retries.
+re-applies the same values.  A failed hidden-API lookup is not latched: it
+waits 2 s and retries, so the second broadcast or a later page/tile tick can
+recover.  The receiver sends no broadcast and starts no worker, so it cannot
+loop.  A density or property failure is logged by `Desktop` and keeps the key
+for the next boot.  A key is never applied to a panel that is not at 320, so a
+later Display-size choice is not reverted (#216).
 
 ### 9.6 Failure path
 
@@ -658,9 +673,9 @@ real display state alone; the next boot retries.
 | `persist.ashfall.pad.mode=desktop` does not read back | fullscreen is set again, the pre-entry density is restored, `persist.ashfall.pad.mode=game` |
 | exit cannot set/read back fullscreen | property stays `desktop` (the display is still a desk), the page/tile show the real state and the short error message |
 | exit cannot write `game` | the display is already fullscreen; the page/tile report `PARTIAL`; the next tap retries the property write |
-| exit: density restore/clear fails or the read-back is still 320 | the display is fullscreen and `game` is written; the page/tile report `PARTIAL` ("Couldn't finish..."); the key stays for the next tap or the boot guard |
-| enter: density rollback fails after a display failure | the display is fullscreen and `game` is written; the page/tile report `PARTIAL`; the boot guard retries the density |
-| process killed between enter and exit | the next boot's `DesktopBootReceiver` forces fullscreen, applies the saved density and writes `game` |
+| exit: density restore/clear fails or the read-back is still 320 | the display is fullscreen and `game` is written; the page/tile report `PARTIAL` ("Couldn't finish..."); the key is kept only when the restore failed, so the next tap or the boot guard retries |
+| enter: density rollback fails after a display failure | the display is fullscreen and `game` is written; the page/tile report `PARTIAL`; the boot guard retries the density; a successful rollback clears the key |
+| process killed between enter and exit | the next boot's `DesktopBootReceiver` forces fullscreen, restores a key only when the panel is still 320 and then clears it (or clears the forced density when 320 has no key), and writes `game` |
 
 A complete rollback (`FAILED`) shows "Couldn't switch the display mode. Nothing
 changed."; a display that changed but whose density/property did not settle
@@ -674,10 +689,14 @@ reports desktop mode while display 0 is fullscreen.
    `display windowing mode=freeform` after the switch, and back to `fullscreen`
    after it, matching the page and tile within one tick.
 2. `wm density -d 0` shows `Override density: 320` in desktop mode and the
-   value from `persist.ashfall.display.density_restore` after exit.  Both
-   overrides persist (F1 §2.1), so reboot **while desktop mode is still
-   active**: the boot guard must bring the device back fullscreen at the saved
-   density with `persist.ashfall.pad.mode=game`, not into a desk at 320 dpi.
+   saved value after exit; `getprop persist.ashfall.display.density_restore`
+   is cleared after a successful restore.  Both overrides persist (F1 §2.1),
+   so reboot **while desktop mode is still active**: the boot guard must bring
+   the device back fullscreen at the saved density with
+   `persist.ashfall.pad.mode=game`, and clear the key.  After a normal exit,
+   change Display size to a different override and reboot: the boot guard must
+   leave that choice alone (the key is gone, and it never applies a key to a
+   non-320 panel).
 3. The taskbar appears only in desktop mode (#131 F1 Launcher3 patch) and the
    normal fullscreen session still has none (#63/#81 unchanged).
 4. `getprop persist.ashfall.pad.mode` is `desktop` after entry and `game`
@@ -690,6 +709,8 @@ reports desktop mode while display 0 is fullscreen.
    Settings/`wm` change.
 6. Force a density restore failure (e.g. kill system_server during exit) and
    confirm the page/tile show the `PARTIAL` message, `wm density -d 0` is
-   reported, and the next tap or boot retries from the kept restore key.
-7. The D-pad reaches the switch and the notes, and the page follows the day /
+   reported, the key is kept, and the next tap or boot retries.
+7. Reproduce the F1 Step 0 state (`wm density 320 -d 0` with no key) and reboot:
+   the boot guard clears the forced density back to the panel default.
+8. The D-pad reaches the switch and the notes, and the page follows the day /
    night theme like the other Parts pages.

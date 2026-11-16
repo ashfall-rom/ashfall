@@ -16,6 +16,7 @@
 
 package org.ashfall.parts.hw;
 
+import android.os.SystemClock;
 import android.util.Log;
 
 import org.ashfall.parts.ipc.Props;
@@ -88,7 +89,19 @@ public final class Desktop {
     private static final int WINDOWING_MODE_UNDEFINED = 0;
     private static final int UNKNOWN = -1;
 
-    private static volatile boolean sInitialised;
+    /** How long a failed WindowManager lookup waits before retrying (#222). */
+    private static final long INIT_RETRY_MS = 2000;
+
+    /**
+     * WindowManager lookup state: {@code NEW} -> {@code READY} on success, or
+     * {@code RETRY_WAIT} after a failure until {@link #sInitRetryAtMs}.  A
+     * failed lookup is never permanent, so a later page/tile tick or the
+     * second boot broadcast can recover (#222).
+     */
+    private enum InitState { NEW, READY, RETRY_WAIT }
+
+    private static volatile InitState sInitState = InitState.NEW;
+    private static volatile long sInitRetryAtMs;
     private static volatile boolean sQueryFailed;
     private static Object sService;
     private static Method sGetWindowingMode;
@@ -135,11 +148,43 @@ public final class Desktop {
      */
     public static void resetForBoot() {
         setWindowingMode(WINDOWING_MODE_FULLSCREEN);
-        final int stored = Props.getInt(PROP_DENSITY_RESTORE, UNKNOWN);
-        if (stored > 0 && !applyStoredDensity(stored)) {
+        if (!restoreDensityForBoot()) {
             Log.w(TAG, "desktop: boot guard could not restore the density; next boot retries");
         }
-        setPadMode(PAD_MODE_GAME);
+        if (!setPadMode(PAD_MODE_GAME)) {
+            Log.w(TAG, "desktop: boot guard could not reset pad mode to game");
+        }
+    }
+
+    /**
+     * Boot density half of the guard.
+     *
+     * <p>Only a panel that is still at {@link #DESKTOP_DENSITY} is ours.  A key
+     * found there is applied and cleared; 320 with no key is the F1 Step 0 /
+     * outside-F2 state and is reset to the panel default.  Any other density is
+     * a user override and is not touched; a stale key is dropped so it cannot
+     * be applied on a later boot (#216).
+     */
+    private static boolean restoreDensityForBoot() {
+        final int stored = Props.getInt(PROP_DENSITY_RESTORE, UNKNOWN);
+        final int base = baseDensity();
+        if (base == UNKNOWN) {
+            // Cannot tell whose density this is; keep the key for the next boot
+            // and do not touch what may be a manual override.
+            return true;
+        }
+        if (base == DESKTOP_DENSITY) {
+            if (stored > 0) {
+                if (!applyStoredDensity(stored)) {
+                    return false;
+                }
+                return clearRestoreDensity();
+            }
+            return clearDensityVerified();
+        }
+        // Not our density: leave the user's override alone, but drop a stale
+        // key so it can never be applied later.
+        return stored <= 0 || clearRestoreDensity();
     }
 
     /** Result of an enter/exit request, so the page can report a partial failure. */
@@ -194,7 +239,7 @@ public final class Desktop {
 
         final boolean densityChanged = previousDensity != DESKTOP_DENSITY;
         if (densityChanged && !setDensityVerified(DESKTOP_DENSITY)) {
-            return applyStoredDensity(previousDensity) ? Result.FAILED : Result.PARTIAL;
+            return rollback(previousDensity, true);
         }
 
         if (!setWindowingMode(WINDOWING_MODE_FREEFORM)
@@ -255,7 +300,9 @@ public final class Desktop {
         // partially applied transition, and pad.mode=desktop with a fullscreen
         // panel is the one state this feature must never leave.
         final boolean displayOk = returnToFullscreen();
-        final boolean densityOk = !densityChanged || applyStoredDensity(previousDensity);
+        final boolean densityOk = densityChanged
+                ? applyStoredDensity(previousDensity) && clearRestoreDensity()
+                : clearRestoreDensity();
         // The write may have landed even though the read-back did not.
         final boolean padOk = setPadMode(PAD_MODE_GAME);
         return displayOk && densityOk && padOk ? Result.FAILED : Result.PARTIAL;
@@ -375,23 +422,38 @@ public final class Desktop {
 
     private static boolean restoreStoredDensity(boolean wasDesktop) {
         final int stored = Props.getInt(PROP_DENSITY_RESTORE, UNKNOWN);
-        if (stored > 0) {
-            final int base = baseDensity();
-            if (base == UNKNOWN || (base == DESKTOP_DENSITY && stored != DESKTOP_DENSITY)) {
-                // Could not read the panel, or it still has the desktop value:
-                // apply the saved value and verify it.
-                return applyStoredDensity(stored);
-            }
-            // Already restored, or a manual override that is not ours.
+        final int base = baseDensity();
+        if (base == UNKNOWN) {
+            // Cannot tell; keep the key so a later tap or boot can recover.
             return true;
         }
-        if (wasDesktop) {
-            // No stored value means the display was put into desktop mode by
-            // something other than this page/tile.  320 is the only value this
-            // feature applies, so clearing it is the safe way back.
-            return clearDensityVerified();
+        if (base == DESKTOP_DENSITY) {
+            if (stored > 0) {
+                if (!applyStoredDensity(stored)) {
+                    return false;
+                }
+                return clearRestoreDensity();
+            }
+            if (wasDesktop) {
+                // No stored value means the display was put into desktop mode
+                // by something other than this page/tile.  320 is the only
+                // value this feature applies, so clearing it is the safe way
+                // back.
+                return clearDensityVerified();
+            }
+            // A manual 320 on a fullscreen panel is not ours: leave it.
+            return true;
         }
-        return true;
+        // Not our density: keep the user's override and drop any stale key.
+        return stored <= 0 || clearRestoreDensity();
+    }
+
+    /** Clears the key after a verified restore, so it cannot outlive the desk. */
+    private static boolean clearRestoreDensity() {
+        if (!Props.setInt(PROP_DENSITY_RESTORE, 0)) {
+            return false;
+        }
+        return Props.getInt(PROP_DENSITY_RESTORE, UNKNOWN) == 0;
     }
 
     private static boolean setWindowingMode(int mode) {
@@ -414,16 +476,33 @@ public final class Desktop {
         return mode.equals(Props.get(PROP_PAD_MODE, ""));
     }
 
+    /**
+     * Lazily resolves the hidden WindowManager handle.
+     *
+     * <p>States: {@code NEW} attempts immediately; a failure moves to {@code
+     * RETRY_WAIT} for {@link #INIT_RETRY_MS}; an expired retry attempts again
+     * and either becomes {@code READY} or re-arms the wait.  A failed lookup
+     * is therefore never latched, which is what lets the second boot broadcast
+     * and the page/tile ticks recover (#222).
+     */
     private static synchronized boolean init() {
-        if (sInitialised) {
+        final long now = SystemClock.elapsedRealtime();
+        if (sInitState == InitState.READY) {
             return sService != null;
         }
-        sInitialised = true;
+        if (sInitState == InitState.RETRY_WAIT && now < sInitRetryAtMs) {
+            return false;
+        }
+        final boolean logFailure = sInitState != InitState.RETRY_WAIT;
         try {
             final Class<?> global = Class.forName("android.view.WindowManagerGlobal");
             final Object service = global.getMethod("getWindowManagerService").invoke(null);
             if (service == null) {
-                Log.w(TAG, "WindowManager is not running, desktop mode is unavailable");
+                if (logFailure) {
+                    Log.w(TAG, "WindowManager is not running, desktop mode is unavailable");
+                }
+                sInitState = InitState.RETRY_WAIT;
+                sInitRetryAtMs = now + INIT_RETRY_MS;
                 return false;
             }
             final Class<?> iface = Class.forName("android.view.IWindowManager");
@@ -437,9 +516,16 @@ public final class Desktop {
             sClearForcedDisplayDensityForUser = iface.getMethod(
                     "clearForcedDisplayDensityForUser", int.class, int.class);
             sService = service;
+            sQueryFailed = false;
+            sInitState = InitState.READY;
+            sInitRetryAtMs = 0;
             return true;
         } catch (Throwable t) {
-            Log.w(TAG, "WindowManager hidden API is unavailable, desktop mode is off", t);
+            if (logFailure) {
+                Log.w(TAG, "WindowManager hidden API is unavailable, desktop mode is off", t);
+            }
+            sInitState = InitState.RETRY_WAIT;
+            sInitRetryAtMs = now + INIT_RETRY_MS;
             return false;
         }
     }

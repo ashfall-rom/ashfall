@@ -360,9 +360,9 @@ daemon workers cannot drift):
 
 ### 9.5 App pages and tiles
 
-Handheld page order: Fan, Lighting, Controller, **Power**, **Memory**. One page
-per feature, no tabs. QS tiles: exactly one for Power (#124) and one for Fusion
-(#138); Memory, PlayTime and charging get none. A tile's tap opens its settings
+Handheld page order: Fan, Lighting, Display, Controller, **Power**, **Memory**.
+One page per feature, no tabs. QS tiles: Fan, Lighting, Power (#124), Fusion
+(#138) and Desktop (#131); Memory, PlayTime and charging get none. A tile's tap opens its settings
 dialog and long-press opens its page, as the Fan/Lighting tiles do. The
 structural shell (rows, manifest, tile routing, summary stubs) is on `main`
 before any worker starts, so no two workers edit the same page shell.
@@ -395,7 +395,8 @@ before any worker starts, so no two workers edit the same page shell.
   `max_pct` kick window) are fixed in the hwd worker; #132 (fan graph duplicate
   sample) in the Power app worker.
 - Desktop mode: conditional Launcher3 taskbar, 320 dpi, entry via QS tile +
-  Parts row + `L1+R1+Start`, internal display only in v1.
+  Parts row; `L1+R1+Start` switches the pointer mode only. Internal display
+  only in v1.
 - Performance tuning: Eden, Winlator and one native game; p95 frame time and
   1% low decide; MGLRU/PELT stay hidden/root-only in v1.
 
