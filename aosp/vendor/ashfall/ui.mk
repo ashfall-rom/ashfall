@@ -59,10 +59,13 @@ PRODUCT_PACKAGE_OVERLAYS += vendor/ashfall/overlay/no-rro
 # on a LineageOS config detail. PackageManager keys the feature by name, so a
 # second copy of the same XML is not a duplicate feature.
 #
-# The destination is a fixed path, so the PC build pass must confirm there is no
-# "Duplicate PRODUCT_COPY_FILES" error (two sources into one destination) and
-# that out/soong/build.ninja lists both destinations, /system and /system/product.
-# A second copy under system/product/... is expected and comes from LineageOS.
+# The destination is a fixed path, so the PC build pass must check for a silent
+# drop, not for an error: Kati keeps the first PRODUCT_COPY_FILES pair per
+# destination and appends later ones to
+# $(PRODUCT_OUT)/product_copy_files_ignored.txt (build/make/core/Makefile), so
+# that file must not mention the freeform XML and both staged copies
+# (system/... and system/product/...) must exist. A second copy under
+# system/product/... is expected and comes from LineageOS.
 PRODUCT_COPY_FILES += \
     frameworks/native/data/etc/android.software.freeform_window_management.xml:$(TARGET_COPY_OUT_SYSTEM)/etc/permissions/android.software.freeform_window_management.xml
 
@@ -96,7 +99,10 @@ PRODUCT_COPY_FILES += \
 #       #63 follow-up: enable_taskbar is a global LineageSetting, but the second
 #       display (port 130) uses its taskbar as its navigation bar. Only the
 #       primary display follows the product default 0; an external display stays
-#       enabled (docs/ui.md 2.1).
+#       enabled (docs/ui.md 2.1). #131 F1: the primary display also keeps the
+#       taskbar while that display is in desktop windowing (freeform display and
+#       desktop mode available), because desktop mode has no navigation bar or
+#       window switcher - docs/desktop-mode.md 3.3.
 #
 #   patches/packages/apps/Launcher3/0002-launcher3-drop-home-candidacy.patch
 #       #81: Launcher3QuickStep keeps providing recents/quickstep but is no
