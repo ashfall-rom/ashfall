@@ -529,3 +529,167 @@ the same two commands; the pointer checks belong to workstream B.
   `quickstep/src/com/android/launcher3/statehandlers/DesktopVisibilityController.kt`),
   `android_frameworks_native` @ `a96adf2c6e62dbb22299cd83bbb9ea4bc569e985`
   (`data/etc/android.software.freeform_window_management.xml`).
+
+## 9. F2 - Parts page and Quick Settings tile
+
+Status: implemented in AshFall Parts; **not built and not run on a device** in
+this session. The page below is the contract the build/flash pass verifies.
+
+### 9.1 Entry points
+
+| Entry point | Behaviour |
+|---|---|
+| **AshFall Parts > Handheld > Display** | a "Desktop mode" switch, the same large Settings main-switch row the Lighting page uses, plus read-only notes: internal screen only / taskbar and pointer / apps restart, and what the chord really does |
+| **Quick Settings "Desktop mode" tile** | one tap toggles; no dialog, no unlock prompt, active state = display 0 really is in desktop windowing; long-press opens the Display page through `qs/TilePreferencesActivity` |
+
+The L1+R1+Start chord is **not** a desktop-mode entry point in v1: the daemon
+only switches its pointer mode, does not write `persist.ashfall.pad.mode` and
+does not touch display 0 (`docs/rp5/input.md`).  The page and tile read the
+display, so after a chord they keep showing the real display mode; the copy on
+the page says exactly that.  A chord that enters desktop mode would need a
+workstream-B follow-up.
+
+A boot guard, `DesktopBootReceiver`, runs on `LOCKED_BOOT_COMPLETED` and
+`BOOT_COMPLETED` and is deliberately *not* an entry point: it always forces
+display 0 fullscreen, restores the saved density and writes
+`persist.ashfall.pad.mode=game`.  A boot is therefore always fullscreen, even
+after a crash between enter and exit; it never enters desktop mode by itself.
+The page and tile poll the display mode every 1.5 s / 2 s while visible so a
+change made elsewhere shows up.
+
+### 9.2 State: WindowManager, not the property
+
+`org.ashfall.parts.hw.Desktop` reads display 0's live windowing mode through
+the hidden `IWindowManager` (windowing mode **5 = freeform/desktop**, **1 =
+fullscreen**). The property is only the input daemon's instruction; reading
+`WindowManager` keeps the switch honest when the display is switched by
+Settings, by the developer option or by `wm`, and means the UI cannot claim
+desktop mode while the panel is fullscreen.
+
+The same helper also owns the density and the pad-mode write, so the page and
+the tile cannot drift apart. It is reflection-only, the same pattern as
+`ipc/Props`, so the Gradle preview still compiles against the public SDK; in
+AOSP the app is `platform_apis`, `certificate: "platform"` and privileged, so
+the two signature permissions below are granted:
+
+| Manifest permission | Needed by |
+|---|---|
+| `android.permission.INTERNAL_SYSTEM_WINDOW` | `getWindowingMode(int)`, `setWindowingMode(int,int)` |
+| `android.permission.WRITE_SECURE_SETTINGS` | `setForcedDisplayDensityForUser(...)`, `clearForcedDisplayDensityForUser(...)` |
+| `android.permission.RECEIVE_BOOT_COMPLETED` | `DesktopBootReceiver` (`LOCKED_BOOT_COMPLETED`, `BOOT_COMPLETED`) |
+
+Hidden calls used: `WindowManagerGlobal.getWindowManagerService()`;
+`IWindowManager.getWindowingMode(int)`, `setWindowingMode(int,int)`,
+`getBaseDisplayDensity(int)`, `getInitialDisplayDensity(int)`,
+`setForcedDisplayDensityForUser(int,int,int)`,
+`clearForcedDisplayDensityForUser(int,int)`.
+
+### 9.3 Enter: density, display, property
+
+The order is the §4 contract. Each step only runs when the previous one
+succeeded:
+
+1. read `wm density -d 0` equivalent (`getBaseDisplayDensity(0)`); refuse to
+   enter if it cannot be read, because the panel would be stuck at 320 dpi;
+2. store that value in `persist.ashfall.display.density_restore` and read it
+   back; if the panel is already at 320 from an interrupted exit, keep the
+   key that is still there instead of overwriting it with 320;
+3. if the value is not **320**, `setForcedDisplayDensityForUser(0, 320, user)`;
+4. `setWindowingMode(0, 5)` and read it back; it must report 5;
+5. write `persist.ashfall.pad.mode=desktop` last and read it back;
+6. ask SystemUI to rebind the tile (`TileService.requestListeningState`), so
+   the tile is active immediately even when the panel is closed.
+
+The density key is a `persist.*` property, so it survives a reboot.  So do the
+display windowing mode and the per-display density override: WindowManager
+writes them to `/data/system/display_settings.xml` and
+`Settings.Secure.DISPLAY_DENSITY_FORCED` (F1 §2.1), which is why a crash
+between enter and exit can come back in desktop mode.  The boot guard in §9.1
+forces fullscreen and applies the key on every boot; reading the key back is
+what makes a failed property write fail the whole operation instead of leaving
+the property and the display out of step.
+
+### 9.4 Exit: display, density, property
+
+1. `setWindowingMode(0, 1)` and read it back; it must report fullscreen;
+2. only when the panel is currently at **320** (or the density cannot be
+   read): re-apply `persist.ashfall.display.density_restore`, retry once, and
+   verify the read-back; if the key is missing and the call started from a
+   real desk (the desk was entered outside F2), clear the forced density and
+   verify it too.  This also repairs a reboot that left the density at 320
+   with a fullscreen display, without touching a user's own override;
+3. write `persist.ashfall.pad.mode=game`;
+4. refresh the tile.
+
+If the density restore or the property write fails after the display has
+already returned to fullscreen, the result is `PARTIAL`, not success: the page
+and tile show "Couldn't finish switching the display. Check the display
+settings." rather than claiming nothing changed.  The restore key is kept, so
+the next tap or the boot guard retries.
+
+A second "off" tap while already fullscreen writes `game` and leaves the
+density alone. Entering while already in desktop windowing only writes
+`desktop` and does not touch a density the user already had.
+
+### 9.5 Boot guard (#207)
+
+`DesktopBootReceiver` is a direct-boot receiver (the app is already
+`directBootAware`) for both `LOCKED_BOOT_COMPLETED` and `BOOT_COMPLETED`.  It
+calls `Desktop.resetForBoot()`:
+
+1. `setWindowingMode(0, 1)` - display 0 fullscreen;
+2. if `persist.ashfall.display.density_restore` exists, apply it (`wm density
+   reset` when it equals the stock density, otherwise set it);
+3. `persist.ashfall.pad.mode=game`.
+
+Both broadcasts run the same idempotent path, so a WindowManager that was not
+ready for the first call gets a second attempt, and a clean device simply
+re-applies the same values.  The receiver sends no broadcast and starts no
+worker, so it cannot loop.  A failure is logged by `Desktop` and leaves the
+real display state alone; the next boot retries.
+
+### 9.6 Failure path
+
+| Failure | What is put back |
+|---|---|
+| density cannot be read or stored | nothing changed; no display/property write |
+| density apply fails | nothing changed; display and property were not touched |
+| `setWindowingMode(0,5)` throws or the read-back is not 5 | fullscreen is set again (best effort), the pre-entry density is restored, `persist.ashfall.pad.mode=game` |
+| `persist.ashfall.pad.mode=desktop` does not read back | fullscreen is set again, the pre-entry density is restored, `persist.ashfall.pad.mode=game` |
+| exit cannot set/read back fullscreen | property stays `desktop` (the display is still a desk), the page/tile show the real state and the short error message |
+| exit cannot write `game` | the display is already fullscreen; the page/tile report `PARTIAL`; the next tap retries the property write |
+| exit: density restore/clear fails or the read-back is still 320 | the display is fullscreen and `game` is written; the page/tile report `PARTIAL` ("Couldn't finish..."); the key stays for the next tap or the boot guard |
+| enter: density rollback fails after a display failure | the display is fullscreen and `game` is written; the page/tile report `PARTIAL`; the boot guard retries the density |
+| process killed between enter and exit | the next boot's `DesktopBootReceiver` forces fullscreen, applies the saved density and writes `game` |
+
+A complete rollback (`FAILED`) shows "Couldn't switch the display mode. Nothing
+changed."; a display that changed but whose density/property did not settle
+(`PARTIAL`) shows "Couldn't finish switching the display. Check the display
+settings."  The tile shows the same message as a toast.  No failure path
+reports desktop mode while display 0 is fullscreen.
+
+### 9.7 What the build/device pass must confirm
+
+1. `wm get-display-windowing-mode -d 0` changes to
+   `display windowing mode=freeform` after the switch, and back to `fullscreen`
+   after it, matching the page and tile within one tick.
+2. `wm density -d 0` shows `Override density: 320` in desktop mode and the
+   value from `persist.ashfall.display.density_restore` after exit.  Both
+   overrides persist (F1 §2.1), so reboot **while desktop mode is still
+   active**: the boot guard must bring the device back fullscreen at the saved
+   density with `persist.ashfall.pad.mode=game`, not into a desk at 320 dpi.
+3. The taskbar appears only in desktop mode (#131 F1 Launcher3 patch) and the
+   normal fullscreen session still has none (#63/#81 unchanged).
+4. `getprop persist.ashfall.pad.mode` is `desktop` after entry and `game`
+   after exit, and `ashfall.status.pad.mode` agrees within one daemon poll
+   (250 ms).  L1+R1+Start changes only the pointer; the page keeps showing the
+   real display mode and its note says the display stays the same.
+5. No `SecurityException` for `INTERNAL_SYSTEM_WINDOW`,
+   `WRITE_SECURE_SETTINGS` or `RECEIVE_BOOT_COMPLETED` in logcat, no ANR from
+   the density restart, and the page/tile/`wm` read-back agree after a forced
+   Settings/`wm` change.
+6. Force a density restore failure (e.g. kill system_server during exit) and
+   confirm the page/tile show the `PARTIAL` message, `wm density -d 0` is
+   reported, and the next tap or boot retries from the kept restore key.
+7. The D-pad reaches the switch and the notes, and the page follows the day /
+   night theme like the other Parts pages.
