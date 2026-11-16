@@ -1,4 +1,4 @@
-From 92cd9d5cbccca0bca26e3414dfed772ea98e5d4f Mon Sep 17 00:00:00 2001
+From fe411be30d50e60422309f974668dfa9b71206f0 Mon Sep 17 00:00:00 2001
 From: AshFall UI <ui@ashfall.local>
 Date: Sun, 15 Nov 2026 16:24:36 +0000
 Subject: [PATCH] Settings: PlayTime indicator page on Battery
@@ -27,15 +27,21 @@ battery page that renders in this tree: the metadata screens
 (PowerUsageSummaryScreen / PowerUsageSummaryApiScreen) are gated behind the
 catalyst_power_usage_summary_screen and catalyst_migration_26q3 aconfig flags,
 which are disabled.
+
+Copy pass (#155): text only. The Show indicator summary no longer explains where
+the estimate comes from, Tap to cycle and Charging cycle are one plain sentence
+each, "meters" is "values" in the row and in the toast, and the estimate rows
+read "Average over" / "Update every" instead of the engine's window/sampling
+wording. Values, layout, preference keys and placeholders are unchanged.
 ---
- res/values/strings.xml                        | 159 +++++++
+ res/values/strings.xml                        | 161 +++++++
  res/xml/playtime_settings.xml                 | 145 ++++++
  res/xml/power_usage_summary.xml               |  11 +
  .../playtime/PlayTimeCapacityPreference.java  |  82 ++++
  .../playtime/PlayTimeProperties.java          | 433 ++++++++++++++++++
  .../fuelgauge/playtime/PlayTimeSettings.java  | 363 +++++++++++++++
  .../playtime/PlayTimeSummaryController.java   |  95 ++++
- 7 files changed, 1288 insertions(+)
+ 7 files changed, 1290 insertions(+)
  create mode 100644 res/xml/playtime_settings.xml
  create mode 100644 src/com/android/settings/fuelgauge/playtime/PlayTimeCapacityPreference.java
  create mode 100644 src/com/android/settings/fuelgauge/playtime/PlayTimeProperties.java
@@ -43,10 +49,10 @@ which are disabled.
  create mode 100644 src/com/android/settings/fuelgauge/playtime/PlayTimeSummaryController.java
 
 diff --git a/res/values/strings.xml b/res/values/strings.xml
-index a84186b96bc..218e1f48e7c 100644
+index a84186b..57d699d 100644
 --- a/res/values/strings.xml
 +++ b/res/values/strings.xml
-@@ -15590,4 +15590,163 @@
+@@ -15590,4 +15590,165 @@
      <!-- Search keywords for Human interface device access setting -->
      <string name="keywords_access_hid">hid, human, access, device</string>
      <!-- Access HID end -->
@@ -74,13 +80,13 @@ index a84186b96bc..218e1f48e7c 100644
 +    <string name="playtime_time_over">&gt;48h</string>
 +    <!-- Shown instead of a time when the battery is full -->
 +    <string name="playtime_full">FULL</string>
-+    <!-- Shown for a value the daemon did not publish -->
++    <!-- Shown when a value is unavailable -->
 +    <string name="playtime_unavailable">-</string>
 +
 +    <!-- Sub-screen rows -->
 +    <string name="playtime_settings_title">PlayTime indicator</string>
 +    <string name="playtime_show_title">Show indicator</string>
-+    <string name="playtime_show_summary">Estimate the remaining time from screen-on power draw and show it in the status bar</string>
++    <string name="playtime_show_summary">Show the estimated remaining time in the status bar</string>
 +    <string name="playtime_category_display">Indicator</string>
 +    <string name="playtime_category_estimate">Estimate</string>
 +    <string name="playtime_category_charging">Charging</string>
@@ -92,10 +98,12 @@ index a84186b96bc..218e1f48e7c 100644
 +    <!-- Font size summary, e.g. "12 sp" -->
 +    <string name="playtime_font_size_summary">%1$d sp</string>
 +    <string name="playtime_tap_cycle_title">Tap to cycle</string>
-+    <string name="playtime_tap_cycle_summary">Cycle the indicator through time, watts and percentage when tapped</string>
-+    <string name="playtime_window_title">Averaging window</string>
-+    <string name="playtime_interval_title">Sample interval</string>
-+    <!-- Sample interval summary, e.g. "5 s" -->
++    <string name="playtime_tap_cycle_summary">Tap the indicator to cycle time, watts and percentage</string>
++    <!-- Averaging window of the estimate, e.g. "5 min" -->
++    <string name="playtime_window_title">Average over</string>
++    <!-- How often the estimate updates; value shown in seconds, e.g. "5 s" -->
++    <string name="playtime_interval_title">Update every</string>
++    <!-- Update interval summary, e.g. "5 s" -->
 +    <string name="playtime_seconds">%1$d s</string>
 +    <!-- Charging cycle interval summary, e.g. "2.0 s" -->
 +    <string name="playtime_seconds_tenths">%1$s s</string>
@@ -105,11 +113,11 @@ index a84186b96bc..218e1f48e7c 100644
 +    <string name="playtime_capacity_summary">%1$d mAh</string>
 +    <string name="playtime_charging_symbol_title">Charging symbol</string>
 +    <string name="playtime_charging_cycle_title">Charging cycle</string>
-+    <string name="playtime_charging_cycle_summary">Rotate the selected meters while charging</string>
++    <string name="playtime_charging_cycle_summary">Cycle the selected values while charging</string>
 +    <string name="playtime_charging_cycle_ms_title">Cycle interval</string>
-+    <string name="playtime_charging_meters_title">Meters to cycle</string>
-+    <!-- Toast shown when the meter selection is outside 2-3 entries -->
-+    <string name="playtime_charging_meters_hint">Select 2 or 3 meters</string>
++    <string name="playtime_charging_meters_title">Values to cycle</string>
++    <!-- Toast shown when the value selection is outside 2-3 entries -->
++    <string name="playtime_charging_meters_hint">Select 2 or 3 values</string>
 +
 +    <!-- Non-selectable live read-out row, e.g. "4.8 W &middot; 3.85 V &middot; 5120 mAh &middot; 72 %" -->
 +    <string name="playtime_readout_title">Read-out</string>
@@ -196,7 +204,7 @@ index a84186b96bc..218e1f48e7c 100644
 +        <item>TEXT</item>
 +        <item>EMOJI</item>
 +    </string-array>
-+    <!-- Multi-select entries: charging cycle meters -->
++    <!-- Multi-select entries: charging cycle values -->
 +    <string-array name="playtime_charging_meters_entries">
 +        <item>Time to full</item>
 +        <item>Battery percentage</item>
@@ -212,7 +220,7 @@ index a84186b96bc..218e1f48e7c 100644
  </resources>
 diff --git a/res/xml/playtime_settings.xml b/res/xml/playtime_settings.xml
 new file mode 100644
-index 00000000000..4e7284ac9fb
+index 0000000..5eed9d8
 --- /dev/null
 +++ b/res/xml/playtime_settings.xml
 @@ -0,0 +1,145 @@
@@ -352,7 +360,7 @@ index 00000000000..4e7284ac9fb
 +        android:key="playtime_readout_category"
 +        android:title="@string/playtime_category_readout">
 +
-+        <!-- Live values from ashfall-hwd; never selectable. -->
++        <!-- Live values from the framework battery service; never selectable. -->
 +        <Preference
 +            android:key="playtime_readout"
 +            android:persistent="false"
@@ -362,7 +370,7 @@ index 00000000000..4e7284ac9fb
 +    </PreferenceCategory>
 +</PreferenceScreen>
 diff --git a/res/xml/power_usage_summary.xml b/res/xml/power_usage_summary.xml
-index 950ca2de9e9..957a1e87846 100644
+index 950ca2d..957a1e8 100644
 --- a/res/xml/power_usage_summary.xml
 +++ b/res/xml/power_usage_summary.xml
 @@ -101,6 +101,17 @@
@@ -385,7 +393,7 @@ index 950ca2de9e9..957a1e87846 100644
          android:title="@string/battery_info"
 diff --git a/src/com/android/settings/fuelgauge/playtime/PlayTimeCapacityPreference.java b/src/com/android/settings/fuelgauge/playtime/PlayTimeCapacityPreference.java
 new file mode 100644
-index 00000000000..6d3ed6a04d3
+index 0000000..6d3ed6a
 --- /dev/null
 +++ b/src/com/android/settings/fuelgauge/playtime/PlayTimeCapacityPreference.java
 @@ -0,0 +1,82 @@
@@ -473,7 +481,7 @@ index 00000000000..6d3ed6a04d3
 +}
 diff --git a/src/com/android/settings/fuelgauge/playtime/PlayTimeProperties.java b/src/com/android/settings/fuelgauge/playtime/PlayTimeProperties.java
 new file mode 100644
-index 00000000000..9330c7aefd2
+index 0000000..9330c7a
 --- /dev/null
 +++ b/src/com/android/settings/fuelgauge/playtime/PlayTimeProperties.java
 @@ -0,0 +1,433 @@
@@ -912,7 +920,7 @@ index 00000000000..9330c7aefd2
 +}
 diff --git a/src/com/android/settings/fuelgauge/playtime/PlayTimeSettings.java b/src/com/android/settings/fuelgauge/playtime/PlayTimeSettings.java
 new file mode 100644
-index 00000000000..c03a7976287
+index 0000000..c03a797
 --- /dev/null
 +++ b/src/com/android/settings/fuelgauge/playtime/PlayTimeSettings.java
 @@ -0,0 +1,363 @@
@@ -1281,7 +1289,7 @@ index 00000000000..c03a7976287
 +}
 diff --git a/src/com/android/settings/fuelgauge/playtime/PlayTimeSummaryController.java b/src/com/android/settings/fuelgauge/playtime/PlayTimeSummaryController.java
 new file mode 100644
-index 00000000000..6b5ea272f79
+index 0000000..6b5ea27
 --- /dev/null
 +++ b/src/com/android/settings/fuelgauge/playtime/PlayTimeSummaryController.java
 @@ -0,0 +1,95 @@
