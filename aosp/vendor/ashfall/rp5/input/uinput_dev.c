@@ -65,7 +65,10 @@ static int build(const struct uinput_dev_ops *ops,
         return -1;
 
     if (set_bit(ops, fd, UI_SET_EVBIT, EV_KEY) < 0 ||
-        set_bit(ops, fd, UI_SET_EVBIT, EV_ABS) < 0 ||
+        (spec->axis_count > 0 &&
+         set_bit(ops, fd, UI_SET_EVBIT, EV_ABS) < 0) ||
+        (spec->rel_count > 0 &&
+         set_bit(ops, fd, UI_SET_EVBIT, EV_REL) < 0) ||
         set_bit(ops, fd, UI_SET_EVBIT, EV_SYN) < 0)
         goto fail;
 
@@ -103,6 +106,18 @@ static int build(const struct uinput_dev_ops *ops,
         }
 #endif
     }
+
+    /* Relative axes and input properties are the desktop pointer's (#131):
+     * no range setup exists for EV_REL, and INPUT_PROP_POINTER is what makes
+     * Android treat the device as a mouse instead of a gamepad.  Best effort,
+     * like the key bits: a code this kernel does not know must not cost the
+     * whole device. */
+    /* REL_X is code 0, so unlike the MCU key table this list has no hole
+     * sentinel. */
+    for (int i = 0; i < spec->rel_count; i++)
+        set_bit(ops, fd, UI_SET_RELBIT, spec->rels[i]);
+    for (int i = 0; i < spec->prop_count; i++)
+        set_bit(ops, fd, UI_SET_PROPBIT, spec->props[i]);
 
 #ifdef UI_DEV_SETUP
     {

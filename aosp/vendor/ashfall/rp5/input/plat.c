@@ -76,18 +76,43 @@ int64_t ah_now_ms(void)
     return (int64_t)ts.tv_sec * 1000 + ts.tv_nsec / 1000000;
 }
 
-int prop_get_str(const char *name, char *buf, size_t len)
+#if defined(__ANDROID__)
+struct prop_snapshot {
+    char value[PROP_VALUE_MAX];
+    uint32_t serial;
+};
+
+static void prop_capture(void *cookie, const char *name, const char *value,
+                         uint32_t serial)
+{
+    struct prop_snapshot *snapshot = cookie;
+
+    (void)name;
+    snprintf(snapshot->value, sizeof(snapshot->value), "%s", value);
+    snapshot->serial = serial;
+}
+#endif
+
+int prop_get_str_serial(const char *name, char *buf, size_t len,
+                        uint32_t *serial)
 {
     if (!buf || len == 0)
         return -1;
     buf[0] = '\0';
+    if (serial)
+        *serial = 0;
 #if defined(__ANDROID__)
     {
-        char value[PROP_VALUE_MAX];
+        const prop_info *info = __system_property_find(name);
+        struct prop_snapshot snapshot;
 
-        if (__system_property_get(name, value) <= 0)
+        if (!info)
             return -1;
-        snprintf(buf, len, "%s", value);
+        memset(&snapshot, 0, sizeof(snapshot));
+        __system_property_read_callback(info, prop_capture, &snapshot);
+        snprintf(buf, len, "%s", snapshot.value);
+        if (serial)
+            *serial = snapshot.serial;
         return (int)strlen(buf);
     }
 #else
@@ -100,6 +125,11 @@ int prop_get_str(const char *name, char *buf, size_t len)
         return (int)strlen(buf);
     }
 #endif
+}
+
+int prop_get_str(const char *name, char *buf, size_t len)
+{
+    return prop_get_str_serial(name, buf, len, NULL);
 }
 
 int prop_get_int(const char *name, int fallback)
