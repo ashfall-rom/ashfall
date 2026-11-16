@@ -9,10 +9,12 @@
 #   --check   render into a temp dir and diff against the committed files
 set -euo pipefail
 
-. "$(dirname "$0")/../../scripts/lib/common.sh"
+HERE=$(cd "$(dirname "$0")" && pwd)
+# shellcheck source=SCRIPTDIR/../../scripts/lib/common.sh
+. "$HERE/../../scripts/lib/common.sh"
 load_config
 
-BRAND=$ASH_ROOT/assets/brand
+BRAND=$HERE
 SOCIAL=$BRAND/social
 AVATAR=$BRAND/png
 ICON=$BRAND/ashfall-icon.svg
