@@ -63,19 +63,41 @@ const char *pointer_mode_name(enum pointer_mode mode)
 bool pointer_mode_read(struct pointer_state *ps)
 {
     char text[16];
-    enum pointer_mode mode = POINTER_MODE_GAME;
+    uint32_t serial = 0;
 
     if (!ps)
         return false;
-    if (prop_get_str(PROP_PAD_MODE, text, sizeof(text)) < 0 || !text[0])
+    if (prop_get_str_serial(PROP_PAD_MODE, text, sizeof(text), &serial) < 0 ||
+        !text[0])
         snprintf(text, sizeof(text), "%s", "game");
-    if (!strcmp(text, ps->mode_text))
+    return pointer_mode_observe(ps, text, serial);
+}
+
+bool pointer_mode_observe(struct pointer_state *ps, const char *text,
+                          uint32_t serial)
+{
+    enum pointer_mode mode = POINTER_MODE_GAME;
+    bool text_changed;
+    bool written;
+
+    if (!ps || !text)
         return false;
-    snprintf(ps->mode_text, sizeof(ps->mode_text), "%s", text);
+    text_changed = strcmp(text, ps->mode_text) != 0;
+    written = serial != ps->mode_serial;
+    if (!text_changed && !written)
+        return false;
+
+    if (text_changed)
+        snprintf(ps->mode_text, sizeof(ps->mode_text), "%s", text);
+    ps->mode_serial = serial;
+
     if (!pointer_mode_parse(text, &mode)) {
-        ah_logf(AH_LOG_WARN,
-                "%s=%s is not game|desktop, using game", PROP_PAD_MODE, text);
-        mode = POINTER_MODE_GAME;
+        /* Never let a typo change the live mode; at boot the default is game
+         * already.  Only a text change is worth a log line. */
+        if (text_changed)
+            ah_logf(AH_LOG_WARN, "%s=%s is not game|desktop, ignored",
+                    PROP_PAD_MODE, text);
+        return false;
     }
     if (mode == ps->mode)
         return false;
@@ -311,8 +333,10 @@ int pointer_release(struct pointer_state *ps, session_emit_fn emit, void *ctx)
     ps->vy = 0.0;
     ps->frac_x = 0.0;
     ps->frac_y = 0.0;
-    ps->chord_since_ms = 0;
-    ps->chord_latched = false;
+    /* chord_since_ms / chord_latched are intentionally preserved: this runs on
+     * the mode switch the chord just caused, and clearing the latch would fire
+     * the still-held chord again after another second (#172).  pointer_chord()
+     * re-arms it when the buttons are released. */
     /* Force the next desktop tick to re-establish its dt reference instead of
      * integrating the whole time the pointer was suspended. */
     ps->last_tick_ms = 0;

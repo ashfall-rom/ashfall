@@ -1841,6 +1841,12 @@ static void test_pointer_mode(void)
     CHECK_EQ(ps.mode, POINTER_MODE_GAME);
     CHECK(!pointer_mode_read(&ps));
 
+    /* A malformed value must not force the live mode either. */
+    CHECK(pointer_set_mode(&ps, POINTER_MODE_DESKTOP));
+    setenv(PROP_PAD_MODE, "not-a-mode", 1);
+    CHECK(!pointer_mode_read(&ps));
+    CHECK_EQ(ps.mode, POINTER_MODE_DESKTOP);
+
     unsetenv(PROP_PAD_MODE);
 }
 
@@ -2079,6 +2085,93 @@ static void test_pointer_chord(void)
     CHECK_EQ(cap.count, 0); /* the chord itself injects nothing */
 }
 
+static void test_pointer_chord_survives_release(void)
+{
+    struct pointer_state ps;
+    struct pointer_capture cap;
+    bool chord = false;
+    int fires = 0;
+    int64_t t = 1000;
+
+    memset(&cap, 0, sizeof(cap));
+    pointer_defaults(&ps);
+    pointer_frame(&ps, POINTER_CHORD_MASK, 0, 0, 0, 0, t);
+    pointer_tick(&ps, t, capture_emit, &cap, &chord);
+    CHECK(!chord);
+    pointer_frame(&ps, POINTER_CHORD_MASK, 0, 0, 0, 0, t + 1000);
+    pointer_tick(&ps, t + 1000, capture_emit, &cap, &chord);
+    CHECK(chord);
+    fires++;
+
+    /* The daemon path: apply_pad_mode() calls pointer_release() on the switch
+     * while the chord is still held.  It must not re-arm the chord, or a held
+     * L1+R1+Start would flip the mode every second (#172). */
+    pointer_release(&ps, NULL, NULL);
+    for (int i = 1; i <= 8; i++) {
+        int64_t now = t + 1000 + (int64_t)i * 250;
+
+        pointer_frame(&ps, POINTER_CHORD_MASK, 0, 0, 0, 0, now);
+        chord = false;
+        pointer_tick(&ps, now, capture_emit, &cap, &chord);
+        CHECK(!chord);
+    }
+
+    /* Releasing all three re-arms it; holding again fires exactly once. */
+    pointer_frame(&ps, POINTER_KEY_L1 | POINTER_KEY_R1, 0, 0, 0, 0,
+                  t + 3100);
+    pointer_tick(&ps, t + 3100, capture_emit, &cap, &chord);
+    CHECK(!chord);
+    pointer_frame(&ps, POINTER_CHORD_MASK, 0, 0, 0, 0, t + 3108);
+    pointer_tick(&ps, t + 3108, capture_emit, &cap, &chord);
+    pointer_frame(&ps, POINTER_CHORD_MASK, 0, 0, 0, 0, t + 4108);
+    pointer_tick(&ps, t + 4108, capture_emit, &cap, &chord);
+    CHECK(chord);
+    fires++;
+    CHECK_EQ(fires, 2);
+}
+
+static void test_pointer_mode_write_detection(void)
+{
+    struct pointer_state ps;
+    uint32_t serial = 100;
+
+    /* Host prop_get_str_serial() has no property service, so the observation
+     * seam is called with the serial the service would bump on every write. */
+    pointer_defaults(&ps);
+    CHECK(!pointer_mode_observe(&ps, "game", serial));
+    CHECK_EQ(ps.mode, POINTER_MODE_GAME);
+
+    /* Chord -> desktop.  Text and serial did not move, so the 250 ms poll must
+     * not undo the chord. */
+    CHECK(pointer_set_mode(&ps, POINTER_MODE_DESKTOP));
+    CHECK(!pointer_mode_observe(&ps, "game", serial));
+    CHECK_EQ(ps.mode, POINTER_MODE_DESKTOP);
+
+    /* A two-state Parts/QS toggle writes the opposite of the live mode; here
+     * that is the text already stored ("game").  The write still bumps the
+     * serial, so it must be adopted (#173). */
+    serial++;
+    CHECK(pointer_mode_observe(&ps, "game", serial));
+    CHECK_EQ(ps.mode, POINTER_MODE_GAME);
+
+    /* Other direction: property says desktop, chord -> game, the UI writes
+     * desktop again. */
+    serial++;
+    CHECK(pointer_mode_observe(&ps, "desktop", serial));
+    CHECK_EQ(ps.mode, POINTER_MODE_DESKTOP);
+    CHECK(pointer_set_mode(&ps, POINTER_MODE_GAME));
+    CHECK(!pointer_mode_observe(&ps, "desktop", serial));
+    CHECK_EQ(ps.mode, POINTER_MODE_GAME);
+    serial++;
+    CHECK(pointer_mode_observe(&ps, "desktop", serial));
+    CHECK_EQ(ps.mode, POINTER_MODE_DESKTOP);
+
+    /* Re-writing the mode that is already live is a no-op. */
+    serial++;
+    CHECK(!pointer_mode_observe(&ps, "desktop", serial));
+    CHECK_EQ(ps.mode, POINTER_MODE_DESKTOP);
+}
+
 static void test_pointer_release(void)
 {
     struct pointer_state ps;
@@ -2241,6 +2334,8 @@ int main(void)
     test_pointer_buttons();
     test_pointer_wheel();
     test_pointer_chord();
+    test_pointer_chord_survives_release();
+    test_pointer_mode_write_detection();
     test_pointer_release();
     test_pointer_stale_frame();
     test_pointer_timeout();

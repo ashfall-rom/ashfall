@@ -98,10 +98,11 @@ enum pointer_mode {
 
 struct pointer_state {
     enum pointer_mode mode;
-    /* Last property text seen: a value is adopted only when the text changes,
-     * so the chord can switch the live mode without the 250 ms poll undoing
-     * it (the app owns persist.ashfall.pad.mode, docs/phase6.md §9.3). */
+    /* Last property text and write serial seen.  The serial is what makes a
+     * re-write of the same text visible (bionic bumps it on every set), so a
+     * two-state Parts/QS toggle still works after a chord. */
     char mode_text[16];
+    uint32_t mode_serial;
 
     /* Latest decoded frame.  rx/ry are calibrated but *before* the user
      * deadzone, so the pointer can apply its own fixed 5 %. */
@@ -141,14 +142,22 @@ void pointer_defaults(struct pointer_state *ps);
 bool pointer_mode_parse(const char *text, enum pointer_mode *out);
 const char *pointer_mode_name(enum pointer_mode mode);
 
-/* Read persist.ashfall.pad.mode.  Adopts the value only when its text changed
- * (like fusion_settings_read); a malformed value falls back to game and is
- * logged once per distinct text.  Returns true when the *effective* mode
+/* Read persist.ashfall.pad.mode.  A value is adopted when its text or its
+ * write serial changed; malformed values are ignored (logged once per distinct
+ * text) and never force a mode.  Returns true when the *effective* mode
  * changed, i.e. when the caller must release both devices and create or
  * destroy the pointer uinput device. */
 bool pointer_mode_read(struct pointer_state *ps);
 
-/* Set the live mode (chord fallback).  `mode_text` is left alone on purpose.
+/* The same decision on an explicit (text, serial) pair.  This is the daemon's
+ * read path with the property API peeled off, so the host tests can simulate a
+ * write that repeats the stored text (#173). */
+bool pointer_mode_observe(struct pointer_state *ps, const char *text,
+                          uint32_t serial);
+
+/* Set the live mode (chord fallback).  The property latch is deliberately left
+ * alone: the chord does not write the property (the app owns it), and the
+ * untouched (text, serial) pair must not be re-adopted on the next poll.
  * Returns true when the mode actually changed. */
 bool pointer_set_mode(struct pointer_state *ps, enum pointer_mode mode);
 
@@ -157,10 +166,14 @@ bool pointer_set_mode(struct pointer_state *ps, enum pointer_mode mode);
 void pointer_frame(struct pointer_state *ps, uint16_t keys, int rx, int ry,
                    int l2, int r2, int64_t now_ms);
 
-/* Release every held pointer button and clear velocity, fraction, wheel repeat
- * and chord state.  `emit` may be NULL to clear silently (GRAB ON / shutdown
- * after the buttons were already released).  Returns the number of events
- * emitted, not counting the SYN. */
+/* Release every held pointer button and clear velocity, fraction and wheel
+ * repeat state.  The chord latch is *not* cleared: the daemon calls this from
+ * apply_pad_mode() on the very switch the chord just triggered, and clearing it
+ * there would re-fire the chord every second while it is held (#172).  It
+ * clears itself when the three buttons are released or frames time out.
+ * `emit` may be NULL to clear silently (GRAB ON / shutdown after the buttons
+ * were already released).  Returns the number of events emitted, not counting
+ * the SYN. */
 int pointer_release(struct pointer_state *ps, session_emit_fn emit, void *ctx);
 
 /*

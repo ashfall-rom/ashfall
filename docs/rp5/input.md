@@ -685,19 +685,27 @@ has no hole sentinel.
 
 The daemon reads it every 250 ms and applies it live, no restart.  As with
 `persist.ashfall.pad.fusion`, the **app/QS tile is the writer**; the daemon only
-reads, and adopts a value when its text changes.  A missing or malformed value
-falls back to `game` (logged once per distinct text), never to desktop by
-accident.
+reads.  A value is adopted when its **text or its property write serial**
+changes: bionic bumps the serial on every successful set even when the text is
+identical, so a two-state toggle still works after a chord (see below).  A
+missing value means `game`; a malformed value is ignored (logged once per
+distinct text) and never forces a mode, so it cannot strand the device in
+desktop mode.
 
 The effective mode is published as `ashfall.status.pad.mode`
 (`game`/`desktop`) for Parts/QS to display.
 
 Fallback chord: **L1+R1+Start held ~1 s**.  It switches the live mode in either
-direction, works without the app, does not write the property (the daemon is
-not its writer), and re-arms only after all three buttons are released.  It is
-ignored while a tester owns GRAB.  Because the daemon adopts property *text
-changes*, re-writing the value that already sits in the property after a chord
-is a no-op; write the other value (or reboot) to make the property win again.
+direction, works without the app, and re-arms only after all three buttons are
+released - a held chord fires exactly once, and the mode switch it causes does
+not release/re-arm it.  It is ignored while a tester owns GRAB.
+
+The chord does **not** write `persist.ashfall.pad.mode`: sepolicy grants this
+daemon `get_prop` only for `ashfall_prop`, the app is the only writer.  The
+serial check is what keeps the two sides consistent: after a chord the property
+still holds the pre-chord text, but the next Parts/QS write - even one that
+repeats that text - bumps the serial and is applied immediately.  No toggle
+state is lost and no reboot is needed.
 
 Every switch - property or chord, either direction - is a hard input reset:
 
@@ -788,9 +796,10 @@ they do to the gamepad.
 * `uinput_dev.c` / `uinput_dev.h` - relative axes and `INPUT_PROP_*` support.
 * `ashfall_rp5_input.c` - pointer device lifecycle, mode switches, GRAB/MCU
   release integration, 125 Hz poll timeout.
-* `tests/test_input.c` - mode parsing/latching, game-mode silence, deadzone,
-  fraction, cap, buttons, wheel, chord, release, stale-frame timeout and the
-  pointer capability sequence.
+* `tests/test_input.c` - mode parsing/latching, same-text property writes,
+  chord latch across the mode switch, game-mode silence, deadzone, fraction,
+  cap, buttons, wheel, chord, release, stale-frame timeout and the pointer
+  capability sequence.
 
 ### Verification without a device
 
@@ -813,11 +822,14 @@ cc -std=gnu11 -DASHFALL_HOST -Wall -Wextra -Wno-unused-parameter \
    still moves (fractional accumulation), and inside 5 % does nothing.
 4. A / R3 click, B right-click, R2 middle-click, L2 drag (hold + move),
    L1/R1 scroll up/down while held (400 ms then ~12 notches/s).
-5. Hold L1+R1+Start ~1 s: mode flips (logcat `pad mode: desktop
-   (L1+R1+Start)`), both devices release, no stuck click.  Repeat returns to
-   game mode and the pointer device disappears.
-6. Toggle `persist.ashfall.pad.mode` back and forth: no stuck key in
-   `getevent` on either device, no `UI_DEV_CREATE failed`, no avc denial.
+5. Hold L1+R1+Start ~1 s: mode flips once (logcat `pad mode: desktop
+   (L1+R1+Start)`), both devices release, no stuck click.  Keep holding for
+   several more seconds: no further flips, no pointer device create/destroy
+   loop.  Release and hold again to switch back; the pointer device disappears.
+6. After the chord, toggle `persist.ashfall.pad.mode` back and forth with the
+   Parts switch/QS tile (including writing the value already stored): each
+   write takes effect within ~250 ms.  No stuck key in `getevent` on either
+   device, no `UI_DEV_CREATE failed`, no avc denial.
 7. `GRAB ON`: cursor freezes, clicks/wheel do nothing, every button still
    appears in the RAW stream; `GRAB OFF` restores the pointer.
 8. Screen off/on: cursor stops after the MCU quiet timeout and resumes with the

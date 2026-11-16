@@ -24,6 +24,14 @@ void ah_logf(int prio, const char *fmt, ...) __attribute__((format(printf, 2, 3)
 int64_t ah_now_ms(void);
 
 int prop_get_str(const char *name, char *buf, size_t len);
+/*
+ * Like prop_get_str(), but also returns the property's write serial.  bionic
+ * bumps it on every successful write, even when the text is unchanged, so a
+ * two-state toggle that re-writes the value already stored is still visible.
+ * `serial` is 0 when the property does not exist or on the host build.
+ */
+int prop_get_str_serial(const char *name, char *buf, size_t len,
+                        uint32_t *serial);
 int prop_get_int(const char *name, int fallback);
 /* An int property constrained to [lo, hi].  Missing, malformed or
  * out-of-range values use the documented default (docs/phase5.md §2). */
