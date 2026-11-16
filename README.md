@@ -1,9 +1,14 @@
-<img src="assets/icon.svg" width="64" height="64" alt="">
+<p align="center">
+  <img src="assets/brand/ashfall-icon.svg" width="104" height="104" alt="AshFall">
+</p>
 
-# AshFall
+<h1 align="center">AshFall</h1>
 
-A LineageOS 24.0 (Android 17) ROM for the **Retroid Pocket 5** (Snapdragon 865 / SM8250).
-Starts as a self-built GSI, grows into a full device ROM.
+<p align="center">
+  A LineageOS 24.0 (Android 17) ROM for the <strong>Retroid Pocket 5</strong>
+  (Snapdragon 865 / SM8250).<br>
+  Starts as a self-built GSI, grows into a full device ROM.
+</p>
 
 AshFall's built-in settings include a few advanced and diagnostic options that
 are deliberately not advertised; they stay out of the way unless you look for

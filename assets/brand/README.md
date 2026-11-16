@@ -7,6 +7,9 @@ first, promote later.
 |---|---|
 | `ashfall-icon.svg` | App icon: circular tile, 512 viewBox, self-contained (no external refs). |
 | `ashfall-mark.svg` | The same mark, one colour via `currentColor`. Use where `android:tint` applies, for the Android 13+ themed icon, or as a mask. |
+| `render.sh` | Renders the GitHub rasters: org avatar (`png/`) and repo social preview cards (`social/`). `--check` diffs against the committed files. |
+| `png/ashfall-avatar-*.png` | Org avatar, 512 px for GitHub plus a 1024 px copy. Square, Soot-filled, no transparent corners. |
+| `social/<repo>.png` | Social preview card per repository, 1280x640, mark on the bloom + repo name + tagline. |
 | `bootanimation/generate.py` | Renders the boot animation frames and packages `bootanimation.zip`. |
 | `bootanimation/preview.mp4` | 23.8 s watchable preview (1280x720): the intro once, then 1.5 ambient loops. |
 | `bootanimation/build/` | Generated output (gitignored). |
@@ -131,7 +134,7 @@ Requires numpy, Pillow and `rsvg-convert`; ffmpeg for `--preview` only.
 
 ## Where it is applied
 
-1. `assets/icon.svg` is the icon the root README shows.
+1. `assets/brand/ashfall-icon.svg` is the icon every AshFall README shows.
 2. `aosp/vendor/ashfall/apps/AshFallParts/res/drawable/ic_ashfall.xml` is the
    parts app icon, scaled to 48 dp with the bloom approximated by three
    translucent discs (no gradient inflation).
@@ -139,11 +142,15 @@ Requires numpy, Pillow and `rsvg-convert`; ffmpeg for `--preview` only.
    `system/media/bootanimation.zip` via `vendor/ashfall/rp5/brand.mk`. The zip is
    checked in on purpose: the build host has no numpy/Pillow/rsvg-convert, and
    the animation has to exist at image build time.
+4. GitHub: the `ashfall-rom` org avatar, its profile README, and every
+   repository's README header and social preview card. See
+   [`docs/branding.md`](../../docs/branding.md) for the exact files and the two
+   uploads that still need the web UI.
 
 Still to verify on hardware, in the build that carries this:
 
 * the animation comes up landscape, not sideways;
-* the parts app icon and the root README icon match what was authored;
+* the parts app icon and the README icon match what was authored;
 * no other package installs a second `system/media/bootanimation.zip`.
 
 ## Boot animation on the GSI
