@@ -69,6 +69,8 @@ public final class ScreenLedSync {
     private static final float RELEASE_MS = 350f;
     /** A frame whose brightest channel is below this (sRGB 0..1) is "black". */
     private static final float BLACK_LEVEL = 0.05f;
+    /** No first frame within this time means the capture is not working. */
+    private static final long START_TIMEOUT_MS = 2500;
     /** Rings wash out at low brightness, so lift chroma a little. */
     private static final float CHROMA_GAIN = 1.30f;
     /** Mild value lift after the chroma boost. */
@@ -85,7 +87,7 @@ public final class ScreenLedSync {
 
     private DisplayManager mDisplayManager;
     private VirtualDisplay mVirtualDisplay;
-    private ImageReader mReader;
+    private volatile ImageReader mReader;
     private HandlerThread mThread;
     private Handler mHandler;
 
@@ -95,7 +97,9 @@ public final class ScreenLedSync {
 
     private final float[] mLeft = new float[3];
     private final float[] mRight = new float[3];
-    private boolean mHasColour;
+    private volatile boolean mHasColour;
+    private long mStartedAt;
+    private boolean mFailureReported;
     private String mLastValue = "";
     private boolean mHeartbeatPosted;
 
@@ -147,6 +151,8 @@ public final class ScreenLedSync {
         mLeft[0] = mLeft[1] = mLeft[2] = 0f;
         mRight[0] = mRight[1] = mRight[2] = 0f;
         mLastValue = "";
+        mStartedAt = SystemClock.elapsedRealtime();
+        mFailureReported = false;
         mRunning = true;
         postHeartbeat();
         Log.i(TAG, "screen sync: started at " + Led.screenRate() + " Hz");
@@ -160,6 +166,7 @@ public final class ScreenLedSync {
     public void stop() {
         final boolean wasRunning = mRunning;
         mRunning = false;
+        mStartedAt = 0;
         // Serialised with publish() so a frame that was already in flight can
         // never re-latch the rings after this clear.
         synchronized (mLock) {
@@ -180,6 +187,15 @@ public final class ScreenLedSync {
             mHandler.removeCallbacksAndMessages(null);
             mHandler = null;
         }
+        // Stop the producer before closing the queue.
+        if (mVirtualDisplay != null) {
+            try {
+                mVirtualDisplay.release();
+            } catch (Throwable ignored) {
+                // Already released.
+            }
+            mVirtualDisplay = null;
+        }
         if (mReader != null) {
             try {
                 mReader.setOnImageAvailableListener(null, null);
@@ -192,14 +208,6 @@ public final class ScreenLedSync {
                 // Already closed.
             }
             mReader = null;
-        }
-        if (mVirtualDisplay != null) {
-            try {
-                mVirtualDisplay.release();
-            } catch (Throwable ignored) {
-                // Already released.
-            }
-            mVirtualDisplay = null;
         }
         if (mThread != null) {
             mThread.quitSafely();
@@ -233,12 +241,30 @@ public final class ScreenLedSync {
         if (handler != null) {
             handler.postDelayed(mHeartbeat, HEARTBEAT_MS);
         }
+        // If the virtual display exists but never delivers a frame, fail safe
+        // instead of staying silently dark.
+        if (!mHasColour && mStartedAt != 0
+                && SystemClock.elapsedRealtime() - mStartedAt > START_TIMEOUT_MS) {
+            reportFailure("no frame within " + START_TIMEOUT_MS + " ms");
+        }
+    }
+
+    private void reportFailure(String reason) {
+        if (mFailureReported) {
+            return;
+        }
+        mFailureReported = true;
+        Log.w(TAG, "screen sync: " + reason);
+        final Listener listener = mListener;
+        if (listener != null) {
+            listener.onCaptureFailed(reason);
+        }
     }
 
     private void onImageAvailable(ImageReader reader) {
-        if (!mRunning) {
-            // stop() closes the reader; a queued callback must not fail the
-            // effect on its way out.
+        if (!mRunning || reader != mReader) {
+            // stop() closes the reader and a new session gets a new one; a
+            // straggler callback must not fail the new session.
             return;
         }
         Image image = null;
@@ -261,14 +287,10 @@ public final class ScreenLedSync {
             mLastFrameAt = now;
             process(image, dt);
         } catch (Throwable t) {
-            if (!mRunning) {
+            if (!mRunning || reader != mReader) {
                 return;
             }
-            Log.w(TAG, "screen sync: frame failed", t);
-            final Listener listener = mListener;
-            if (listener != null) {
-                listener.onCaptureFailed(String.valueOf(t));
-            }
+            reportFailure(String.valueOf(t));
         } finally {
             if (image != null) {
                 image.close();
@@ -447,17 +469,17 @@ public final class ScreenLedSync {
     }
 
     private void clearOverrideLocked() {
-        // Only clear the colour if it is still ours: the gamepad tester shares
-        // ashfall.ui.led_override and may have taken the rings over already.
-        // The heartbeat is always cleared; the next publisher restores it and
-        // the daemon's 1.5 s window is far longer than that gap.
-        if (!mLastValue.isEmpty()) {
-            final String current = Props.get(OVERRIDE, "");
-            if (current.isEmpty() || current.equals(mLastValue)) {
+        // Only touch the properties while the override is still ours: the
+        // gamepad tester shares ashfall.ui.led_override and may have taken the
+        // rings over already.  Leaving its colour and token alone is what keeps
+        // the tester unharmed when this sampler stops.
+        final String current = Props.get(OVERRIDE, "");
+        final boolean ours = mLastValue.isEmpty() || current.isEmpty()
+                || current.equals(mLastValue);
+        if (ours) {
+            if (!mLastValue.isEmpty()) {
                 Props.set(OVERRIDE, "");
             }
-        }
-        if (mLastValue.isEmpty() || mHasColour) {
             Props.set(OVERRIDE_LIVE, "");
         }
         mLastValue = "";
