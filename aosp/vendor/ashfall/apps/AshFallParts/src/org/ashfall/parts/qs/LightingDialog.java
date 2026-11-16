@@ -22,10 +22,13 @@ import android.graphics.Color;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
+import android.util.TypedValue;
+import android.view.Gravity;
 import android.view.View;
 import android.view.Window;
 import android.view.WindowManager;
 import android.widget.LinearLayout;
+import android.widget.RadioButton;
 import android.widget.RadioGroup;
 import android.widget.SeekBar;
 import android.widget.Switch;
@@ -34,6 +37,7 @@ import android.widget.TextView;
 import androidx.annotation.NonNull;
 import androidx.core.content.ContextCompat;
 
+import org.ashfall.parts.LedSyncService;
 import org.ashfall.parts.Prefs;
 import org.ashfall.parts.R;
 import org.ashfall.parts.hw.Led;
@@ -69,6 +73,11 @@ public class LightingDialog extends Dialog {
     private TextView mBrightnessValue;
     private SeekBar mSpeed;
     private TextView mSpeedValue;
+    private RadioButton mEffectScreen;
+    private LinearLayout mScreenRow;
+    private TextView mScreenRateValue;
+    private TextView mScreenNote;
+    private TextView mSpeedTitle;
 
     private boolean mUpdating;
     private int mPendingColor;
@@ -102,8 +111,15 @@ public class LightingDialog extends Dialog {
         mSpeed = findViewById(R.id.qs_lighting_speed);
         mSpeedValue = findViewById(R.id.qs_lighting_speed_value);
 
+        // The sixth effect entry, its rate row and the limits note are built in
+        // code so the QS dialog stays in parity with the page without touching
+        // the shared layout (#167).
+        addScreenControls();
         buildSwatches();
         bindListeners();
+        // A QS dialog is a user surface too: resume Match screen if it is the
+        // stored effect (the service is otherwise only started from the page).
+        LedSyncService.sync(getContext());
         refresh();
         findViewById(R.id.qs_lighting_done).setOnClickListener(view -> dismiss());
 
@@ -122,6 +138,71 @@ public class LightingDialog extends Dialog {
     protected void onStop() {
         super.onStop();
         mHandler.removeCallbacks(mApplyColor);
+    }
+
+    private void addScreenControls() {
+        final Context context = getContext();
+        mEffectScreen = new RadioButton(context);
+        mEffectScreen.setId(View.generateViewId());
+        mEffectScreen.setText(R.string.lighting_effect_screen);
+        mEffectScreen.setLayoutParams(new RadioGroup.LayoutParams(
+                RadioGroup.LayoutParams.MATCH_PARENT, Ui.dp(context, 40)));
+        mEffectGroup.addView(mEffectScreen);
+
+        final LinearLayout container = (LinearLayout) mSpeed.getParent();
+        final int index = container.indexOfChild(mSpeed) + 1;
+        // The "Speed" caption above the seek bar; relabelled to "Smoothing"
+        // while Match screen is selected, like the page does (#167).
+        final View speedCaption = container.getChildAt(index - 2);
+        if (speedCaption instanceof LinearLayout) {
+            final View first = ((LinearLayout) speedCaption).getChildAt(0);
+            if (first instanceof TextView) {
+                mSpeedTitle = (TextView) first;
+            }
+        }
+
+        mScreenRow = new LinearLayout(context);
+        mScreenRow.setOrientation(LinearLayout.HORIZONTAL);
+        mScreenRow.setGravity(Gravity.CENTER_VERTICAL);
+        mScreenRow.setPadding(0, Ui.dp(context, 8), 0, Ui.dp(context, 8));
+        mScreenRow.setFocusable(true);
+        mScreenRow.setClickable(true);
+        final TypedValue background = new TypedValue();
+        if (context.getTheme().resolveAttribute(
+                android.R.attr.selectableItemBackground, background, true)
+                && background.resourceId != 0) {
+            mScreenRow.setBackgroundResource(background.resourceId);
+        }
+        final TextView rateTitle = new TextView(context);
+        rateTitle.setTextAppearance(context, R.style.AshFallSection);
+        rateTitle.setText(R.string.lighting_screen_rate_title);
+        rateTitle.setLayoutParams(new LinearLayout.LayoutParams(
+                0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
+        mScreenRateValue = new TextView(context);
+        mScreenRateValue.setTextAppearance(context, R.style.AshFallDialogPrimary);
+        mScreenRow.addView(rateTitle);
+        mScreenRow.addView(mScreenRateValue);
+        mScreenRow.setOnClickListener(view -> cycleScreenRate());
+        container.addView(mScreenRow, index);
+
+        mScreenNote = new TextView(context);
+        mScreenNote.setTextAppearance(context, R.style.AshFallDialogSecondary);
+        mScreenNote.setText(R.string.lighting_screen_note);
+        mScreenNote.setPadding(0, 0, 0, Ui.dp(context, 8));
+        container.addView(mScreenNote, index + 1);
+    }
+
+    private void cycleScreenRate() {
+        final int[] rates = Led.SCREEN_RATES;
+        int next = rates[0];
+        for (int i = 0; i < rates.length; i++) {
+            if (rates[i] == Led.screenRate()) {
+                next = rates[(i + 1) % rates.length];
+                break;
+            }
+        }
+        Led.setScreenRate(next);
+        refresh();
     }
 
     private void buildSwatches() {
@@ -159,6 +240,9 @@ public class LightingDialog extends Dialog {
                 Prefs.setLastLedMode(getContext(), Led.mode());
                 Led.setMode(Led.MODE_OFF);
             }
+            // Effect changed: the page does the same so the sampler stops in
+            // the same frame instead of at the next supervisor tick.
+            LedSyncService.sync(getContext());
             refresh();
             notifyChanged();
         });
@@ -177,11 +261,16 @@ public class LightingDialog extends Dialog {
             if (mUpdating) {
                 return;
             }
-            final String mode = checkedId == R.id.qs_effect_breathing ? Led.MODE_BREATHING
-                    : checkedId == R.id.qs_effect_rainbow ? Led.MODE_RAINBOW
-                            : checkedId == R.id.qs_effect_duo ? Led.MODE_DUO : Led.MODE_STATIC;
-            Prefs.setLastLedMode(getContext(), mode);
+            final String mode = modeForId(checkedId);
+            // "Match screen" leaves the last real effect in led.mode (#167).
+            if (!Led.MODE_SCREEN.equals(mode)) {
+                Prefs.setLastLedMode(getContext(), mode);
+            } else if (!Led.isOn()) {
+                final String last = Prefs.lastLedMode(getContext());
+                Led.setMode(Led.MODE_OFF.equals(last) ? Led.MODE_STATIC : last);
+            }
             Led.setMode(mode);
+            LedSyncService.sync(getContext());
             refresh();
             notifyChanged();
         });
@@ -273,7 +362,8 @@ public class LightingDialog extends Dialog {
         mUpdating = true;
         try {
             final boolean on = Led.isOn();
-            final String mode = on ? Led.mode() : Prefs.lastLedMode(getContext());
+            final boolean screen = Led.screenSync();
+            final String mode = on ? Led.effect() : Prefs.lastLedMode(getContext());
             mSwitch.setChecked(on);
 
             final int target = Prefs.ledTarget(getContext());
@@ -304,18 +394,50 @@ public class LightingDialog extends Dialog {
             mSpeed.setProgress(Led.speed() - 1);
             mSpeedValue.setText(getContext().getString(
                     R.string.lighting_speed_summary, Led.speed()));
-            // Duo is animated by the daemon with led.speed as well (#100).
-            final boolean animated = Led.MODE_BREATHING.equals(mode)
+            // Duo is animated by the daemon with led.speed as well (#100);
+            // Match screen reuses it for the smoothing strength (#167).
+            final boolean animated = screen
+                    || Led.MODE_BREATHING.equals(mode)
                     || Led.MODE_RAINBOW.equals(mode)
                     || Led.MODE_DUO.equals(mode);
             mSpeed.setEnabled(animated);
             mSpeed.setAlpha(animated ? 1f : 0.5f);
+            if (mScreenRow != null) {
+                mScreenRow.setVisibility(screen ? View.VISIBLE : View.GONE);
+            }
+            if (mScreenNote != null) {
+                mScreenNote.setVisibility(screen ? View.VISIBLE : View.GONE);
+            }
+            if (mScreenRateValue != null) {
+                mScreenRateValue.setText(getContext().getString(
+                        R.string.lighting_screen_rate_value, Led.screenRate()));
+            }
+            if (mSpeedTitle != null) {
+                mSpeedTitle.setText(screen ? R.string.lighting_smoothing_title
+                        : R.string.tile_speed);
+            }
         } finally {
             mUpdating = false;
         }
     }
 
-    private static int modeIdFor(String mode) {
+    private String modeForId(int checkedId) {
+        if (checkedId == R.id.qs_effect_breathing) {
+            return Led.MODE_BREATHING;
+        }
+        if (checkedId == R.id.qs_effect_rainbow) {
+            return Led.MODE_RAINBOW;
+        }
+        if (checkedId == R.id.qs_effect_duo) {
+            return Led.MODE_DUO;
+        }
+        if (mEffectScreen != null && checkedId == mEffectScreen.getId()) {
+            return Led.MODE_SCREEN;
+        }
+        return Led.MODE_STATIC;
+    }
+
+    private int modeIdFor(String mode) {
         switch (mode) {
             case Led.MODE_BREATHING:
                 return R.id.qs_effect_breathing;
@@ -323,6 +445,8 @@ public class LightingDialog extends Dialog {
                 return R.id.qs_effect_rainbow;
             case Led.MODE_DUO:
                 return R.id.qs_effect_duo;
+            case Led.MODE_SCREEN:
+                return mEffectScreen != null ? mEffectScreen.getId() : R.id.qs_effect_static;
             case Led.MODE_STATIC:
             default:
                 return R.id.qs_effect_static;

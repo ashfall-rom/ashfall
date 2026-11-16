@@ -25,6 +25,17 @@
          talks to /dev/socket/ashfall_input (see docs/phase5.md). -->
     <uses-permission android:name="android.permission.STATUS_BAR" />
 
+    <!-- "Match screen" (#167): mirror the display into a private 64x36
+         ImageReader.  The app is platform-signed system_app, so display capture
+         needs no MediaProjection consent dialog. -->
+    <uses-permission android:name="android.permission.CAPTURE_VIDEO_OUTPUT" />
+
+    <!-- The screen sampler runs in a foreground service while the effect is
+         selected, so it keeps working over a game. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
     <application
         android:allowBackup="false"
         android:defaultToDeviceProtectedStorage="true"
@@ -145,6 +156,18 @@
             android:label="@string/tester_title"
             android:screenOrientation="landscape"
             android:theme="@style/Theme.AshFall.Settings" />
+
+        <!-- Screen colour sampler for the "Match screen" effect (#167).
+             Started only while that effect is selected and the panel is on;
+             never at boot.  The notification carries a Stop action. -->
+        <service
+            android:name=".LedSyncService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="mirror the display to drive the stick ring LEDs" />
+        </service>
 
         <activity
             android:name=".CalibrationActivity"

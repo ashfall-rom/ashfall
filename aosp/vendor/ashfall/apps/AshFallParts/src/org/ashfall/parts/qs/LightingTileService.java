@@ -78,7 +78,7 @@ public class LightingTileService extends TileService {
         }
         tile.setLabel(getString(R.string.tile_lighting));
         final boolean on = Led.isOn();
-        tile.setSubtitle(on ? Ui.ledModeName(this, Led.mode()) : getString(R.string.tile_off));
+        tile.setSubtitle(on ? Ui.ledModeName(this, Led.effect()) : getString(R.string.tile_off));
         tile.setState(on ? Tile.STATE_ACTIVE : Tile.STATE_INACTIVE);
         tile.updateTile();
     }

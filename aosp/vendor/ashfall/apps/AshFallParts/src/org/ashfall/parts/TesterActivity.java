@@ -27,9 +27,11 @@ import android.view.WindowManager;
 import android.widget.Button;
 import android.widget.TextView;
 
+import org.ashfall.parts.hw.Led;
 import org.ashfall.parts.hw.PadState;
 import org.ashfall.parts.ipc.CalClient;
 import org.ashfall.parts.ipc.CalData;
+import org.ashfall.parts.ipc.Props;
 import org.ashfall.parts.ipc.RawSample;
 import org.ashfall.parts.ipc.RawStream;
 import org.ashfall.parts.ui.ControllerTesterView;
@@ -63,6 +65,8 @@ public class TesterActivity extends PartsActivity {
 
     private static final long SAMPLE_STALE_MS = 400;
     private static final long EXIT_HOLD_MS = 2000;
+    /** Screen sync pauses while this token keeps changing (#167, #193). */
+    private static final long SUSPEND_HEARTBEAT_MS = 500;
 
     private ControllerTesterView mView;
     private TextView mHint;
@@ -75,8 +79,27 @@ public class TesterActivity extends PartsActivity {
     private long mLastDrain;
     private long mLastSampleAt;
     private long mHoldStart;
+    private boolean mSuspend;
 
     private final Runnable mDrain = this::drain;
+
+    /**
+     * Publishes the screen-sync suspend token.  It changes on every write, and
+     * {@code LedSyncService} treats it as active only while it keeps changing,
+     * so a killed tester cannot pause Match screen forever (#193).  Written
+     * before {@link LedFeedback#start()} so the sampler stops before the
+     * tester's first override (#192).
+     */
+    private final Runnable mSuspendBeat = new Runnable() {
+        @Override
+        public void run() {
+            if (!mSuspend) {
+                return;
+            }
+            Props.set(Led.SUSPEND, Long.toString(SystemClock.elapsedRealtime()));
+            mHandler.postDelayed(this, SUSPEND_HEARTBEAT_MS);
+        }
+    };
 
     @Override
     protected int getPageTitle() {
@@ -107,6 +130,12 @@ public class TesterActivity extends PartsActivity {
     @Override
     protected void onResume() {
         super.onResume();
+        // While the tester is visible it owns the rings: screen sync (#167)
+        // pauses sampling and stops publishing before the first tester
+        // override is written (#192).
+        mSuspend = true;
+        mHandler.removeCallbacks(mSuspendBeat);
+        mHandler.post(mSuspendBeat);
         if (mLed != null) {
             // Keeps ashfall.ui.led_override_live fresh while the tester owns
             // the override, so a force-stop cannot latch the colours (#94).
@@ -117,6 +146,7 @@ public class TesterActivity extends PartsActivity {
 
     @Override
     protected void onPause() {
+        stopSuspend();
         stopRaw();
         if (mLed != null) {
             mLed.clear();
@@ -126,11 +156,19 @@ public class TesterActivity extends PartsActivity {
 
     @Override
     protected void onDestroy() {
+        stopSuspend();
         stopRaw();
         if (mLed != null) {
             mLed.clear();
         }
         super.onDestroy();
+    }
+
+    private void stopSuspend() {
+        mSuspend = false;
+        mHandler.removeCallbacks(mSuspendBeat);
+        // Empty = inactive; the service also times the token out on its own.
+        Props.set(Led.SUSPEND, "");
     }
 
     private void loadCalibration() {

@@ -164,7 +164,7 @@ public class HandheldActivity extends PartsActivity {
 
             final int target = Prefs.ledTarget(requireContext());
             final String colour = Led.colorFor(target);
-            final String lighting = Ui.ledModeName(requireContext(), Led.mode()) + " · "
+            final String lighting = Ui.ledModeName(requireContext(), Led.effect()) + " · "
                     + (Led.isOn() ? Ui.hex(colour) : getString(R.string.off));
             mLightingRow.setSummary(lighting);
 

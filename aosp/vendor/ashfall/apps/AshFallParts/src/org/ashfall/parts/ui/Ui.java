@@ -139,6 +139,8 @@ public final class Ui {
                 return context.getString(R.string.lighting_effect_rainbow);
             case Led.MODE_DUO:
                 return context.getString(R.string.lighting_effect_duo);
+            case Led.MODE_SCREEN:
+                return context.getString(R.string.lighting_effect_screen);
             case Led.MODE_STATIC:
             default:
                 return context.getString(R.string.lighting_effect_static);
