@@ -781,12 +781,19 @@ they do to the gamepad.
 * the pointer buttons are released when GRAB turns on, then **nothing** is
   injected into either uinput device - the cursor does not move and no click,
   wheel or drag reaches Android while a tester owns the grab;
-* the pointer tick is skipped entirely, so mode changes and the L1+R1+Start
-  chord are ignored until GRAB OFF;
+* the pointer tick (motion, buttons, wheel) and the **L1+R1+Start chord** are
+  not evaluated while GRAB is on, so the chord does nothing until GRAB OFF;
+* a **property** mode change is not suppressed: `persist.ashfall.pad.mode`
+  keeps being polled and `apply_pad_mode()` still runs while grabbed.  The
+  pointer uinput device is created or destroyed, the tracked pointer state is
+  cleared silently and `ashfall.status.pad.mode` is republished - but no event
+  is injected into either device, so the tester still sees no cursor, click,
+  wheel or drag.  (Only the chord is skipped; `setprop` is not.)
 * `RAW ON` stream and its bit layout are unchanged; the tester still sees every
   button, including A/B/R3/L1/R1/L2/R2, in the 100 Hz RAW frames;
-* `GRAB OFF` clears the pointer state and resumes from the next MCU frame (the
-  gamepad does its usual full re-report).
+* `GRAB OFF` clears the pointer state and resumes on the next 125 Hz tick from
+  the last MCU frame tracked during GRAB (frames keep updating the pointer state
+  while grabbed); the gamepad does its usual full re-report on the next frame.
 
 ### Files
 
