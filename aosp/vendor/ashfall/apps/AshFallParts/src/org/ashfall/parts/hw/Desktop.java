@@ -294,15 +294,33 @@ public final class Desktop {
         return densityOk && padOk ? Result.OK : Result.PARTIAL;
     }
 
-    /** Rolls back the display and density after a failed entry. */
+    /**
+     * Rolls back the display and density after a failed entry.
+     *
+     * <p>The restore key is only consumed together with a verified restore, so
+     * a failed entry that changed nothing density-wise cannot throw away the
+     * density a crashed desk still needs (#226).
+     */
     private static Result rollback(int previousDensity, boolean densityChanged) {
         // Put the display back first: a failed read-back can still follow a
         // partially applied transition, and pad.mode=desktop with a fullscreen
         // panel is the one state this feature must never leave.
         final boolean displayOk = returnToFullscreen();
-        final boolean densityOk = densityChanged
-                ? applyStoredDensity(previousDensity) && clearRestoreDensity()
-                : clearRestoreDensity();
+        final boolean densityOk;
+        if (densityChanged) {
+            // Entry wrote 320 and only then failed, so the panel may still be at
+            // 320.  previousDensity is never 320 in this branch; applying it is
+            // verified, and the key is cleared only after that restore lands.
+            densityOk = applyStoredDensity(previousDensity) && clearRestoreDensity();
+        } else {
+            // The panel was already at 320 on entry and was never written here,
+            // so it is still at 320.  The key is the only record of the
+            // pre-entry density when a crash left 320 behind; dropping it would
+            // make the next boot take the "320 with no key" branch and reset the
+            // panel to its default, losing the user's Display-size choice.  Keep
+            // it: the boot guard and the next exit()/tap own the restore (#216).
+            densityOk = true;
+        }
         // The write may have landed even though the read-back did not.
         final boolean padOk = setPadMode(PAD_MODE_GAME);
         return displayOk && densityOk && padOk ? Result.FAILED : Result.PARTIAL;

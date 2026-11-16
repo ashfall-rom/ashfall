@@ -2,8 +2,10 @@
 
 Status: contract, 2026-11-13. Decisions taken with the user:
 
-- **One root-level Settings entry** (working title "Handheld", subtitle "Fan, lighting,
-  controller") that opens three native pages: **Fan**, **Lighting**, **Controller**.
+- **One root-level Settings entry** (working title "Handheld", Phase-5 subtitle
+  "Fan, lighting, controller"; the shipped app has six pages and the summary
+  "Fan, lighting, display, controller, power, memory", §3) that opened three
+  native pages in this phase: **Fan**, **Lighting**, **Controller**.
   No separate-looking control app: pages use SettingsLib / the Settings theme, so they look
   like they were always part of the OS.
 - Delivered as a built-in module **AshFall Parts** (`org.ashfall.parts`) whose root

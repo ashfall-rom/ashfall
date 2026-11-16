@@ -1088,8 +1088,11 @@ plus `androidx.preference`/`appcompat`/`recyclerview`.  R8 is enabled
 resource table that linking pulls in; `preview/`, `tools/` and this
 documentation are not resource dirs and are never packaged.  The manifest declares
 `android:sharedUserId="android.uid.system"`, the homepage activity meta-data,
-the three page activities, the tester/wizard activities, the QS preferences
-trampoline and the two `TileService`s.
+`HandheldActivity`, the nine page activities (Fan, Preset, Curve, Lighting,
+Display, Controller, Power, PowerPreset, Memory), the tester/wizard activities
+(`TesterActivity`, `CalibrationActivity`), the QS preferences trampoline
+(`qs.TilePreferencesActivity`), the `LedSyncService` and the five
+`TileService`s (Fan, Lighting, Power, Fusion, Desktop).
 
 ## 8. Device test checklist
 
