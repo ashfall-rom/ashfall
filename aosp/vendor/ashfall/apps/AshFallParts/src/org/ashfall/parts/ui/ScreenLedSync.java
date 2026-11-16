@@ -90,8 +90,13 @@ public final class ScreenLedSync {
     private final Context mContext;
     private final Listener mListener;
     private final Object mLock = new Object();
-    /** Serialises acquireLatestImage() against ImageReader.close() (#198). */
+    /**
+     * Serialises the whole per-frame lifecycle (acquire, copy, image close)
+     * against {@link ImageReader#close()} (#204).  {@link #mReaderClosed} is
+     * true whenever no reader may be acquired.
+     */
     private final Object mReaderLock = new Object();
+    private volatile boolean mReaderClosed = true;
 
     private DisplayManager mDisplayManager;
     private VirtualDisplay mVirtualDisplay;
@@ -102,6 +107,11 @@ public final class ScreenLedSync {
     private volatile boolean mRunning;
     private long mLastFrameAt;
     private double mPublishBudgetMs;
+
+    /** Reusable copy of the latest frame, filled under {@link #mReaderLock}. */
+    private byte[] mPlane = new byte[0];
+    /** Set when another publisher owns the override; we then never write. */
+    private boolean mYielded;
 
     private final float[] mLeft = new float[3];
     private final float[] mRight = new float[3];
@@ -140,13 +150,17 @@ public final class ScreenLedSync {
             mThread.start();
             mHandler = new Handler(mThread.getLooper());
 
-            mReader = ImageReader.newInstance(CAPTURE_WIDTH, CAPTURE_HEIGHT,
-                    PixelFormat.RGBA_8888, 2);
-            mReader.setOnImageAvailableListener(this::onImageAvailable, mHandler);
+            final ImageReader reader = ImageReader.newInstance(CAPTURE_WIDTH,
+                    CAPTURE_HEIGHT, PixelFormat.RGBA_8888, 2);
+            reader.setOnImageAvailableListener(this::onImageAvailable, mHandler);
+            synchronized (mReaderLock) {
+                mReaderClosed = false;
+                mReader = reader;
+            }
 
             final int density = mContext.getResources().getDisplayMetrics().densityDpi;
             mVirtualDisplay = mDisplayManager.createVirtualDisplay("ashfall-led-sync",
-                    CAPTURE_WIDTH, CAPTURE_HEIGHT, density, mReader.getSurface(),
+                    CAPTURE_WIDTH, CAPTURE_HEIGHT, density, reader.getSurface(),
                     DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR);
             if (mVirtualDisplay == null) {
                 throw new IllegalStateException("createVirtualDisplay returned null");
@@ -160,6 +174,7 @@ public final class ScreenLedSync {
         mLastFrameAt = 0;
         mPublishBudgetMs = 0;
         mGotFrame = false;
+        mYielded = false;
         mLeftValid = false;
         mRightValid = false;
         mHasColour = false;
@@ -214,21 +229,25 @@ public final class ScreenLedSync {
             }
             mVirtualDisplay = null;
         }
-        final ImageReader reader;
+        // Teardown shares mReaderLock with the frame handler: mReader is
+        // nulled and closed while no callback can be copying a plane, and a
+        // callback that was waiting on the lock sees mReader == null and
+        // returns without acquiring (#204).
         synchronized (mReaderLock) {
-            reader = mReader;
+            mReaderClosed = true;
+            final ImageReader reader = mReader;
             mReader = null;
-        }
-        if (reader != null) {
-            try {
-                reader.setOnImageAvailableListener(null, null);
-            } catch (Throwable ignored) {
-                // Already closed.
-            }
-            try {
-                reader.close();
-            } catch (Throwable ignored) {
-                // Already closed.
+            if (reader != null) {
+                try {
+                    reader.setOnImageAvailableListener(null, null);
+                } catch (Throwable ignored) {
+                    // Already closed.
+                }
+                try {
+                    reader.close();
+                } catch (Throwable ignored) {
+                    // Already closed.
+                }
             }
         }
         if (mThread != null) {
@@ -284,62 +303,89 @@ public final class ScreenLedSync {
     }
 
     private void onImageAvailable(ImageReader reader) {
-        if (!mRunning || reader != mReader) {
+        if (!mRunning || mReaderClosed || reader != mReader) {
             // stop() closes the reader and a new session gets a new one; a
             // straggler callback must not fail the new session.
             return;
         }
-        Image image = null;
+
+        // The whole per-frame lifecycle happens under mReaderLock: acquire,
+        // copy the plane bytes out, close the Image and (in release()) close
+        // the reader.  Processing then runs on the copy, so ImageReader.close()
+        // can never free a buffer that is still being read (#204).
+        final byte[] frame;
+        final int rowStride;
+        final int pixelStride;
+        final int width;
+        final int height;
         try {
             synchronized (mReaderLock) {
-                if (!mRunning || reader != mReader) {
+                if (!mRunning || mReaderClosed || reader != mReader) {
                     return;
                 }
-                image = reader.acquireLatestImage();
-            }
-            if (image == null) {
-                return;
-            }
-            // A delivered frame proves the capture works, whatever it shows.
-            mGotFrame = true;
-            final long now = SystemClock.elapsedRealtime();
-            final long interval = 1000L / Math.max(1, Led.screenRate());
-            if (now - mLastFrameAt < interval) {
-                // Throttled: the virtual display mirrors at panel rate, the
-                // effect runs at 10/15/30 Hz to keep the GPU readback cheap.
-                return;
-            }
-            final long dt = mLastFrameAt == 0 ? interval : now - mLastFrameAt;
-            mLastFrameAt = now;
-            if (Led.suspendActive()) {
-                // The gamepad tester owns the rings.  Stop publishing at once
-                // and clear only our own colour, never a foreign override
-                // (#192); the service also stops the sampler on its next tick.
-                synchronized (mLock) {
-                    clearOwnOverrideLocked();
+                Image image = null;
+                try {
+                    image = reader.acquireLatestImage();
+                    if (image == null) {
+                        return;
+                    }
+                    // A delivered frame proves the capture works, whatever it
+                    // shows (#195).
+                    mGotFrame = true;
+                    final Image.Plane plane = image.getPlanes()[0];
+                    rowStride = plane.getRowStride();
+                    pixelStride = plane.getPixelStride();
+                    width = image.getWidth();
+                    height = image.getHeight();
+                    final int size = rowStride * height;
+                    if (mPlane.length < size) {
+                        mPlane = new byte[size];
+                    }
+                    final ByteBuffer buffer = plane.getBuffer();
+                    if (buffer.remaining() < size) {
+                        // Defensive: never read past the producer's buffer.
+                        return;
+                    }
+                    buffer.get(mPlane, 0, size);
+                    frame = mPlane;
+                } finally {
+                    if (image != null) {
+                        // Outstanding images never outlive teardown.
+                        image.close();
+                    }
                 }
-                return;
             }
-            process(image, dt);
         } catch (Throwable t) {
             if (!mRunning || reader != mReader) {
                 return;
             }
             reportFailure(String.valueOf(t));
-        } finally {
-            if (image != null) {
-                image.close();
-            }
+            return;
         }
+
+        final long now = SystemClock.elapsedRealtime();
+        final long interval = 1000L / Math.max(1, Led.screenRate());
+        if (now - mLastFrameAt < interval) {
+            // Throttled: the virtual display mirrors at panel rate, the effect
+            // runs at 10/15/30 Hz to keep the GPU readback cheap.
+            return;
+        }
+        final long dt = mLastFrameAt == 0 ? interval : now - mLastFrameAt;
+        mLastFrameAt = now;
+        if (Led.suspendActive()) {
+            // The gamepad tester owns the rings.  Stop publishing at once and
+            // clear only our own colour, never a foreign override (#192); the
+            // service also stops the sampler on its next tick.
+            synchronized (mLock) {
+                clearOwnOverrideLocked();
+            }
+            return;
+        }
+        process(frame, rowStride, pixelStride, width, height, dt);
     }
 
-    private void process(Image image, long dtMs) {
-        final Image.Plane plane = image.getPlanes()[0];
-        final ByteBuffer buffer = plane.getBuffer();
-        final int rowStride = plane.getRowStride();
-        final int pixelStride = plane.getPixelStride();
-        final int width = image.getWidth();
-        final int height = image.getHeight();
+    private void process(byte[] buffer, int rowStride, int pixelStride, int width,
+            int height, long dtMs) {
         final int half = width / 2;
 
         double leftR = 0, leftG = 0, leftB = 0;
@@ -354,9 +400,9 @@ public final class ScreenLedSync {
             final int row = y * rowStride;
             for (int x = 0; x < width; x++) {
                 final int index = row + x * pixelStride;
-                final double r = srgbToLinear((buffer.get(index) & 0xFF) / 255.0);
-                final double g = srgbToLinear((buffer.get(index + 1) & 0xFF) / 255.0);
-                final double b = srgbToLinear((buffer.get(index + 2) & 0xFF) / 255.0);
+                final double r = srgbToLinear((buffer[index] & 0xFF) / 255.0);
+                final double g = srgbToLinear((buffer[index + 1] & 0xFF) / 255.0);
+                final double b = srgbToLinear((buffer[index + 2] & 0xFF) / 255.0);
                 if (x < half) {
                     leftR += r;
                     leftG += g;
@@ -491,6 +537,21 @@ public final class ScreenLedSync {
             }
             if (suspended) {
                 clearOwnOverrideLocked();
+                return;
+            }
+            // A foreign publisher (the gamepad tester) may own the override.
+            // Never overwrite or clear it: stand down until it clears the
+            // property, then take over again (#192 follow-up).
+            final String current = Props.get(OVERRIDE, "");
+            if (mYielded) {
+                if (!current.isEmpty()) {
+                    return;
+                }
+                mYielded = false;
+            } else if (!mLastValue.isEmpty() && !current.isEmpty()
+                    && !current.equals(mLastValue)) {
+                mYielded = true;
+                mLastValue = "";
                 return;
             }
             // Publish pacing: a time budget, not a fixed gate, so the 30 Hz

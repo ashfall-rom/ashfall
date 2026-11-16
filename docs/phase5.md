@@ -306,7 +306,8 @@ configured lighting as soon as the override stops.
   never exceeding 29 writes per second.  While the gamepad tester is visible its
   changing `ashfall.ui.led_suspend` token pauses the sampler (checked before
   every write, 1.5 s timeout), and the sampler only ever clears its own override
-  value, never a value another publisher wrote (#192/#193).
+  value: it stands down while a foreign value is present and never writes over
+  it (#192/#204).
 * **Lifecycle**: `LedSyncService` (`specialUse` foreground service, "LED screen
   sync" notification with a Stop action) is started only while the effect is
   selected, never at boot; sampling runs only while the panel is on and the

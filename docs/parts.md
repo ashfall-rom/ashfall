@@ -357,8 +357,9 @@ contract does not change — the sampler is one more publisher of
   override and heartbeat) while the panel is off and on the Stop action.  The
   gamepad tester owns the rings while it is visible: it refreshes a changing
   `ashfall.ui.led_suspend` token every 500 ms, the sampler checks it before
-  every write, clears only its own colour, and treats a token that stops
-  changing (tester killed) as released after 1.5 s (#192/#193).  The service
+  every write, clears only its own colour (and stands down if a foreign value
+  appears), and treats a token that stops changing (tester killed) as released
+  after 1.5 s (#192/#193).  The service
   stays alive while paused so it can resume on screen-on without a new user
   action.
 * If capture cannot start, the effect switches itself off, the previous effect
