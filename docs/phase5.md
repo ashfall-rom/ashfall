@@ -211,6 +211,7 @@ Supersedes the matching parts of §2/§3. Issue numbers in the per-area issues.
 | `ashfall.ui.led_suspend` | new `ashfall_ui_prop` (non-persist) | app -> app | changing token (`elapsedRealtime()` ms) while the gamepad tester is visible, refreshed every 500 ms; screen sync pauses and clears its own override. The service treats suspend as active only while the token changes within **1.5 s** (#193) and the tester clears the property on normal exit |
 | `persist.ashfall.led.screen_sync` | UI-only flag, not read by hwd | app -> app | `0` (default) / `1`: the "Match screen" effect is selected; `led.mode` keeps the last real effect |
 | `persist.ashfall.led.screen_rate` | UI-only value, not read by hwd | app -> app | `10` (default) / `15` / `30`: screen capture rate in frames per second |
+| `persist.ashfall.led.screen_delay` | UI-only value, not read by hwd | app -> app | `0` (default, Off) / `100` / `250` / `500`: hold a changed left/right average until it has been stable for this many milliseconds before publishing it; `0` publishes every frame |
 | `ashfall.perf.throttle_override` | new `ashfall_perf_prop` (non-persist => resets on reboot) | app -> hwd | `1` = disable software clock throttling (kernel thermal mitigation / cooling devices; hardware limits stay) |
 | `persist.ashfall.perf.throttle_override_permanent` | `ashfall_perf_prop` | app -> hwd | `1` = apply the override at every boot (hidden "developer" switch, see §6.4) |
 
@@ -294,13 +295,15 @@ configured lighting as soon as the override stops.
 * **Rate**: `persist.ashfall.led.screen_rate` = 10 (default) / 15 / 30 Hz.  The
   mirror runs at panel rate, frames are dropped to the configured rate, and only
   changed colours are published (≤ 29 Hz, `docs/rp5/hw.md` §4).
-* **Mapping**: left half → left ring, right half → right ring; with target Both
-  the whole-frame dominant colour drives both rings.  sRGB decode, per-half
-  average in linear light, chroma boost, sRGB encode, asymmetric smoothing
-  (~120 ms attack / ~350 ms release, scaled by `led.speed`), then
-  `led.brightness`.  HDR/wide-gamut content is clamped to SDR by the RGBA_8888
-  readback.  Near-black frames (secure/DRM surfaces, panel off) hold the last
-  colour.
+* **Mapping**: left half → left ring, right half → right ring, always (the
+  target selector does not change Match screen).  sRGB decode, per-half average
+  in linear light, sRGB encode: the plain mean with no chroma weighting or
+  value lift, so a white UI gives white rings.  An optional
+  `persist.ashfall.led.screen_delay` (0 = Off, default) holds a changed pair
+  until it has been stable for 100/250/500 ms before publishing, then
+  `led.brightness` (read on every publish, so the slider is live) scales the
+  result.  HDR/wide-gamut content is clamped to SDR by the RGBA_8888 readback.
+  Near-black frames (secure/DRM surfaces, panel off) hold the last colour.
 * **Override contract**: publishes `ashfall.ui.led_override` and refreshes the
   changing `ashfall.ui.led_override_live` token every 400 ms; `ashfall-hwd`
   ignores the override after 1.5 s without a fresh token (#94/#171).  Publishing

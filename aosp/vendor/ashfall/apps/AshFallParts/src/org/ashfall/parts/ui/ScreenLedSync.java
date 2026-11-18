@@ -38,10 +38,13 @@ import java.util.Locale;
  * Screen colour sampler for the "Match screen" effect (#167).
  *
  * <p>Mirrors the default display into a 64x36 {@link ImageReader} with
- * {@link DisplayManager#createVirtualDisplay}, averages each half in linear
- * light, boosts the result and publishes it as
+ * {@link DisplayManager#createVirtualDisplay}, averages the left and right half
+ * independently in linear light and publishes those exact colours as
  * {@code ashfall.ui.led_override=RRGGBB:RRGGBB} through the same contract the
- * gamepad tester uses ({@code docs/phase5.md} §6.1).  A heartbeat on
+ * gamepad tester uses ({@code docs/phase5.md} §6.1).  The left half always
+ * drives the left ring and the right half the right ring (#167 follow-up).  An
+ * optional delay holds a new average until it has been stable for the selected
+ * time; Off publishes every frame.  A heartbeat on
  * {@code ashfall.ui.led_override_live} runs at 400 ms so {@code ashfall-hwd}
  * can drop the override if this process dies (#94).
  *
@@ -54,6 +57,14 @@ public final class ScreenLedSync {
     private static final String TAG = "AshFallParts";
     private static final String OVERRIDE = "ashfall.ui.led_override";
     private static final String OVERRIDE_LIVE = "ashfall.ui.led_override_live";
+    /**
+     * Match screen "Delay changes", milliseconds.  Lives here rather than in
+     * {@code hw/Led} because it tunes the sampler only; the daemon never reads
+     * it.  {@code 0} (default) publishes every frame.
+     */
+    public static final String SCREEN_DELAY = "persist.ashfall.led.screen_delay";
+    public static final int DEFAULT_SCREEN_DELAY_MS = 0;
+    public static final int[] SCREEN_DELAYS_MS = {0, 100, 250, 500};
 
     /** 64x36 keeps the readback cheap and still gives each half 32x36 pixels. */
     private static final int CAPTURE_WIDTH = 64;
@@ -70,17 +81,10 @@ public final class ScreenLedSync {
     /** Contract (#94): the daemon ignores an override without a fresh heartbeat. */
     private static final long HEARTBEAT_MS = 400;
 
-    /** Asymmetric smoothing: scene cuts fade in quickly, out slowly. */
-    private static final float ATTACK_MS = 120f;
-    private static final float RELEASE_MS = 350f;
     /** A frame whose brightest channel is below this (sRGB 0..1) is "black". */
     private static final float BLACK_LEVEL = 0.05f;
     /** No first frame within this time means the capture is not working. */
     private static final long START_TIMEOUT_MS = 2500;
-    /** Rings wash out at low brightness, so lift chroma a little. */
-    private static final float CHROMA_GAIN = 1.30f;
-    /** Mild value lift after the chroma boost. */
-    private static final float VALUE_GAMMA = 0.92f;
 
     /** Reports a capture failure so the service can fail safe. */
     public interface Listener {
@@ -115,15 +119,20 @@ public final class ScreenLedSync {
 
     private final float[] mLeft = new float[3];
     private final float[] mRight = new float[3];
-    /** Each ring holds its own last colour; one black half never leaks (#196). */
-    private volatile boolean mLeftValid;
-    private volatile boolean mRightValid;
-    private volatile boolean mGotFrame;
+    /**
+     * Both rings hold a published colour.  A near-black half keeps that ring's
+     * own last colour; it is never filled from the other half (#196).
+     */
     private volatile boolean mHasColour;
+    private volatile boolean mGotFrame;
     private long mStartedAt;
     private boolean mFailureReported;
     private String mLastValue = "";
     private boolean mHeartbeatPosted;
+    /** Delay gate: the pair waiting to become stable, and since when. */
+    private long mPendingKey;
+    private boolean mPendingValid;
+    private long mPendingSince;
 
     public ScreenLedSync(Context context, Listener listener) {
         mContext = context.getApplicationContext();
@@ -175,9 +184,9 @@ public final class ScreenLedSync {
         mPublishBudgetMs = 0;
         mGotFrame = false;
         mYielded = false;
-        mLeftValid = false;
-        mRightValid = false;
         mHasColour = false;
+        mPendingValid = false;
+        mPendingSince = 0;
         mLeft[0] = mLeft[1] = mLeft[2] = 0f;
         mRight[0] = mRight[1] = mRight[2] = 0f;
         mLastValue = "";
@@ -201,9 +210,9 @@ public final class ScreenLedSync {
         // never re-latch the rings after this clear.
         synchronized (mLock) {
             clearOwnOverrideLocked();
-            mLeftValid = false;
-            mRightValid = false;
             mHasColour = false;
+            mPendingValid = false;
+            mPendingSince = 0;
         }
         release();
         if (wasRunning) {
@@ -213,6 +222,29 @@ public final class ScreenLedSync {
 
     public boolean isRunning() {
         return mRunning;
+    }
+
+    /**
+     * "Delay changes" in milliseconds: {@code 0} (Off, default), 100, 250 or
+     * 500.  A value that is not in {@link #SCREEN_DELAYS_MS} reads as Off.
+     */
+    public static int screenDelay() {
+        final int value = Props.getInt(SCREEN_DELAY, DEFAULT_SCREEN_DELAY_MS);
+        for (int candidate : SCREEN_DELAYS_MS) {
+            if (candidate == value) {
+                return candidate;
+            }
+        }
+        return DEFAULT_SCREEN_DELAY_MS;
+    }
+
+    public static void setScreenDelay(int ms) {
+        for (int candidate : SCREEN_DELAYS_MS) {
+            if (candidate == ms) {
+                Props.setInt(SCREEN_DELAY, ms);
+                return;
+            }
+        }
     }
 
     private void release() {
@@ -386,16 +418,46 @@ public final class ScreenLedSync {
 
     private void process(byte[] buffer, int rowStride, int pixelStride, int width,
             int height, long dtMs) {
+        final float[][] halves = averages(buffer, rowStride, pixelStride, width, height);
+        if (halves == null) {
+            return;
+        }
+        final float[] left = halves[0];
+        final float[] right = halves[1];
+
+        if (adopt(left, right, SystemClock.elapsedRealtime())) {
+            mHasColour = true;
+        }
+        if (!mHasColour) {
+            // No usable colour yet (e.g. the first frame was black): the rings
+            // keep the configured effect until a half has shown something.
+            return;
+        }
+        // Published even while a delayed colour is still pending, so the
+        // brightness slider stays live on the colour that is on the rings.
+        publish(dtMs);
+    }
+
+    /**
+     * Literal split average of one RGBA_8888 frame, independent of Android
+     * services so it can be exercised on the host.
+     *
+     * <p>Each half is summed in linear light and the mean is re-encoded, so an
+     * even red/blue split yields pure red and pure blue rings and a white UI
+     * yields white rings.  No chroma weighting, no value lift: the ring shows
+     * the average of its half.
+     *
+     * @return {@code {left, right}} in sRGB 0..1, an entry is {@code null} when
+     *         that half is near-black; {@code null} for an empty frame
+     */
+    static float[][] averages(byte[] buffer, int rowStride, int pixelStride, int width,
+            int height) {
         final int half = width / 2;
 
         double leftR = 0, leftG = 0, leftB = 0;
         int leftN = 0;
         double rightR = 0, rightG = 0, rightB = 0;
         int rightN = 0;
-        // Whole-frame dominant colour: bright/saturated pixels count more, so a
-        // small vivid subject wins over a large grey background.
-        double allR = 0, allG = 0, allB = 0, allW = 0;
-
         for (int y = 0; y < height; y++) {
             final int row = y * rowStride;
             for (int x = 0; x < width; x++) {
@@ -414,64 +476,78 @@ public final class ScreenLedSync {
                     rightB += b;
                     rightN++;
                 }
-                final double luma = 0.2126 * r + 0.7152 * g + 0.0722 * b;
-                final double weight = (luma + 0.02) * (luma + 0.02);
-                allR += r * weight;
-                allG += g * weight;
-                allB += b * weight;
-                allW += weight;
             }
         }
 
-        if (leftN == 0 || rightN == 0 || allW <= 0) {
-            return;
+        if (leftN == 0 || rightN == 0) {
+            return null;
         }
-
-        final float[] left = encode(leftR / leftN, leftG / leftN, leftB / leftN);
-        final float[] right = encode(rightR / rightN, rightG / rightN, rightB / rightN);
-        final float[] dominant = encode(allR / allW, allG / allW, allB / allW);
-
-        // Target Both = whole-frame dominant colour for both rings; Left/Right
-        // keep the split (each ring follows its own half).
-        final boolean both = org.ashfall.parts.Prefs.ledTarget(mContext) == Led.TARGET_BOTH;
-        final float[] targetLeft = both ? dominant : left;
-        final float[] targetRight = both ? dominant : right;
-
-        // A fully black frame (secure surface, DRM, panel off) holds both rings.
-        if (targetLeft == null && targetRight == null) {
-            return;
-        }
-
-        // Each ring is updated only from its own half.  A black half keeps
-        // that ring's last valid colour; it is never filled from the other
-        // half (#196).  Until a half has shown a usable colour at least once,
-        // nothing is published, so the rings keep the configured effect.
-        final float scale = smoothingScale(Led.speed());
-        if (targetLeft != null) {
-            if (!mLeftValid) {
-                copy(targetLeft, mLeft);
-                mLeftValid = true;
-            } else {
-                smooth(targetLeft, mLeft, dtMs, scale);
-            }
-        }
-        if (targetRight != null) {
-            if (!mRightValid) {
-                copy(targetRight, mRight);
-                mRightValid = true;
-            } else {
-                smooth(targetRight, mRight, dtMs, scale);
-            }
-        }
-
-        if (!mLeftValid || !mRightValid) {
-            return;
-        }
-        mHasColour = true;
-        publish(dtMs);
+        return new float[][] {
+                encode(leftR / leftN, leftG / leftN, leftB / leftN),
+                encode(rightR / rightN, rightG / rightN, rightB / rightN),
+        };
     }
 
-    /** sRGB 0..1 including the ring boost; a black frame never reaches here. */
+    /**
+     * Decides which ring colours may be published now.
+     *
+     * <p>A {@code null} half is near-black (secure surface, DRM, panel off) and
+     * keeps its ring's last colour.  With a delay the candidate pair must stay
+     * unchanged for that many milliseconds before it is adopted, so brief
+     * flashes and scrolling do not repaint the rings; Off (0, the default)
+     * adopts every frame and publishes immediately.
+     *
+     * @return true when {@link #mLeft}/{@link #mRight} now hold a publishable
+     *         pair (which includes "unchanged, still valid")
+     */
+    private boolean adopt(float[] left, float[] right, long now) {
+        final float[] nextLeft = left != null ? left : (mHasColour ? mLeft : null);
+        final float[] nextRight = right != null ? right : (mHasColour ? mRight : null);
+        if (nextLeft == null || nextRight == null) {
+            return false;
+        }
+        if (!mHasColour) {
+            // The first colour of a session is not a "change": publish it now
+            // so switching Match screen on (or the panel coming back) does not
+            // show the restored effect for the whole delay window.
+            copy(nextLeft, mLeft);
+            copy(nextRight, mRight);
+            return true;
+        }
+        final int delay = screenDelay();
+        if (delay <= 0) {
+            copy(nextLeft, mLeft);
+            copy(nextRight, mRight);
+            return true;
+        }
+        // Compare 8-bit values: below that the readback noise would restart
+        // the stability window forever.
+        final long key = key(nextLeft, nextRight);
+        if (!mPendingValid || key != mPendingKey) {
+            mPendingKey = key;
+            mPendingValid = true;
+            mPendingSince = now;
+            return false;
+        }
+        if (now - mPendingSince < delay) {
+            return false;
+        }
+        copy(nextLeft, mLeft);
+        copy(nextRight, mRight);
+        return true;
+    }
+
+    private static long key(float[] left, float[] right) {
+        return ((long) to8(left[0]) << 40) | ((long) to8(left[1]) << 32)
+                | ((long) to8(left[2]) << 24) | ((long) to8(right[0]) << 16)
+                | ((long) to8(right[1]) << 8) | to8(right[2]);
+    }
+
+    private static int to8(float value) {
+        return Math.round(clamp01(value) * 255f);
+    }
+
+    /** sRGB 0..1, or null for a near-black half (hold that ring). */
     private static float[] encode(double r, double g, double b) {
         final float[] out = {
                 linearToSrgb(r), linearToSrgb(g), linearToSrgb(b)
@@ -482,41 +558,14 @@ public final class ScreenLedSync {
             // the last colour rather than latching black (or a red tint).
             return null;
         }
-        return boost(out);
-    }
-
-    private static float[] boost(float[] colour) {
-        final float luma = 0.2126f * colour[0] + 0.7152f * colour[1]
-                + 0.0722f * colour[2];
-        for (int i = 0; i < 3; i++) {
-            float value = luma + (colour[i] - luma) * CHROMA_GAIN;
-            value = clamp01(value);
-            colour[i] = (float) Math.pow(value, VALUE_GAMMA);
-        }
-        return colour;
-    }
-
-    private static void smooth(float[] target, float[] current, long dtMs, float scale) {
-        if (target == null) {
-            return;
-        }
-        final float dt = Math.max(1f, Math.min(250f, dtMs));
-        for (int i = 0; i < 3; i++) {
-            final float tau = (target[i] > current[i] ? ATTACK_MS : RELEASE_MS) * scale;
-            final float alpha = 1f - (float) Math.exp(-dt / tau);
-            current[i] += (target[i] - current[i]) * alpha;
-        }
-    }
-
-    /**
-     * Speed 1..10: higher is snappier.  Speed 5 (the default) keeps the
-     * documented 120 ms / 350 ms.
-     */
-    private static float smoothingScale(int speed) {
-        return Math.max(0.25f, 1f + (5 - speed) * 0.12f);
+        return out;
     }
 
     private void publish(long dtMs) {
+        // Read on every publish, not once per session: the brightness slider
+        // must change the rings immediately while Match screen is on.  The
+        // daemon applies the override as final intensity, so scaling here is
+        // the brightness control (docs/phase5.md §6.1).
         final int brightness = Led.brightness();
         final int rLeft = scale(mLeft[0], brightness);
         final int gLeft = scale(mLeft[1], brightness);

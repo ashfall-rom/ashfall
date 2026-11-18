@@ -223,7 +223,10 @@
     <string name="lighting_effect_screen">Match screen</string>
     <string name="lighting_screen_rate_title">Screen rate</string>
     <string name="lighting_screen_rate_value">%1$d a second</string>
-    <string name="lighting_screen_note">Left ring follows the left half, right ring the right half. With Both, both rings use the main colour.\nBlack or protected video keeps the last colour. Uses extra battery while on.</string>
+    <string name="lighting_screen_note">Left half drives the left ring, right half the right ring — the average of each half, with no colour boost. White screen areas give white rings. The colour target doesn\'t change this effect.\nBlack or protected video keeps the last colour. Uses extra battery while on.</string>
+    <string name="lighting_screen_delay_title">Delay changes</string>
+    <string name="lighting_screen_delay_off">Off</string>
+    <string name="lighting_screen_delay_value">%1$d ms</string>
     <string name="lighting_smoothing_title">Smoothing</string>
     <string name="lighting_screen_failed">Screen capture didn\'t start. Lighting kept its last effect.</string>
     <string name="led_sync_title">LED screen sync</string>
