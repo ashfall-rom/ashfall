@@ -285,12 +285,11 @@ Files in the patch:
 | `res/xml/power_usage_summary.xml` | `ashfall_charging_control` row in the PlayTime category, immediately after the PlayTime row |
 | `res/xml/charging_control_settings.xml` | new sub-screen: toggle, support row, policy row, warning footer |
 | `res/values/strings.xml` | `charging_control_*` and `keywords_charging_control` strings |
-| `AndroidManifest.xml` | best-effort `uses-library` for the factory HIDL stubs; `ChargingControlReceiver`: `LOCKED_BOOT_COMPLETED` + `BOOT_COMPLETED`, direct-boot aware, not exported (no disconnect receiver) |
-| `Android.bp` | `optional_uses_libs` for the two factory stub libraries (so the manifest entries do not fail the build when the vendor jar is absent) |
-| `src/com/android/settings/fuelgauge/chargecontrol/ChargingControlSettings.java` | sub-screen fragment: the guards (including the low-battery guard on resume), applies the HAL |
-| `src/com/android/settings/fuelgauge/chargecontrol/ChargingControlReceiver.java` | locked-boot/boot re-apply and the clear-and-restore fail-open helper |
+| `AndroidManifest.xml` | `ChargingControlReceiver`: `LOCKED_BOOT_COMPLETED` + `BOOT_COMPLETED`, direct-boot aware, not exported (no disconnect receiver). No `uses-library`: the vendor Java stubs do not exist on the RP5 (§8.4) |
+| `src/com/android/settings/fuelgauge/chargecontrol/ChargingControlSettings.java` | sub-screen fragment: the guards (including the low-battery guard on resume), applies the HAL off the main thread |
+| `src/com/android/settings/fuelgauge/chargecontrol/ChargingControlReceiver.java` | locked-boot/boot re-apply (`goAsync` + background HAL call) and the clear-and-restore fail-open helper |
 | `src/com/android/settings/fuelgauge/chargecontrol/ChargingSeparation.java` | property contract and the battery-level/plugged guards |
-| `src/com/android/settings/fuelgauge/chargecontrol/ChargingSeparationHal.java` | reflective `IFactory` bridge: probe `@1.1`, fall back to `@1.0` |
+| `src/com/android/settings/fuelgauge/chargecontrol/ChargingSeparationHal.java` | raw HwBinder client: probe `@1.1`, fall back to `@1.0`, transact 4 |
 
 `RECEIVE_BOOT_COMPLETED` is already declared in the baseline manifest (line 95),
 so the patch adds only the receiver entry. No new activity, service, APK or QS
@@ -344,7 +343,19 @@ a path to the vendor HAL; this patch only persists the property for it to read.
 
 The only writable control is the retail vendor factory HAL; the PM8150B/smb5
 power-supply nodes have no writable charge-enable node and `charge_control_limit`
-is read-only. `ChargingSeparationHal` therefore calls it by reflection.
+is read-only. `ChargingSeparationHal` is a **raw HwBinder client** for it, built
+on `android.os.HwBinder`, `android.os.HwParcel` and `android.os.IHwBinder` —
+platform APIs Settings compiles against with `platform_apis` and finds in
+`BOOTCLASSPATH` at runtime. No generated HIDL proxy and no reflection.
+
+**Why not reflection.** The vendor Java stubs are not installed on the RP5:
+`pm list libraries` reports only `android.hidl.base-V1.0-java` and
+`android.hidl.manager-V1.0-java`; there is no `*factory*` jar under
+`/system/framework`, `/system_ext/framework` or `/vendor/framework`; and no
+permissions XML declares one as a shared library. The `uses-library` entries and
+`optional_uses_libs` from PR #188 therefore changed nothing — `Class.forName`
+still threw and the page stayed at "Not supported" — so this patch removes them
+instead of keeping a dead path. `Android.bp` is no longer touched at all.
 
 **Which version answers.** The RP5 registers the factory HAL at **1.1 only**:
 `docs/stock/vintf/manifest.xml` (`<fqname>@1.1::IFactory/default</fqname>`, and
@@ -352,78 +363,71 @@ the same in `docs/stock/vendor-vintf-merged.txt`), `docs/stock/fcm-report.md`
 (`hidl | vendor.qti.hardware.factory | 1.1`) and the `.189` OTA
 (`docs/stock-189/vintf-summary-189.txt`). The init entry
 `vendor.qti.hardware.factory@1.0-service` is only the binary name; that binary
-registers 1.1. HIDL service lookup is an exact fqname match, so the bridge
-probes in this order and uses the first one that answers:
+registers 1.1. HIDL lookup is an exact fqname match, so the client probes in this
+order and uses the first one that answers:
 
 ```java
-vendor.qti.hardware.factory.V1_1.IFactory.getService();   // RP5
-vendor.qti.hardware.factory.V1_0.IFactory.getService();   // fallback for 1.0 firmware
-ifactory.chargerEnable(false);   // stop charging -> separation on
-ifactory.chargerEnable(true);    // resume charging -> separation off
+HwBinder.getService("vendor.qti.hardware.factory@1.1::IFactory", "default"); // RP5
+HwBinder.getService("vendor.qti.hardware.factory@1.0::IFactory", "default"); // 1.0 firmware
 ```
 
-1.1 extends 1.0, so `chargerEnable(boolean)` is inherited. The successful probe
-logs the exact interface, e.g.
+**Transaction.** `IFactory.chargerEnable(boolean)` is transaction code **4** on
+both versions (1.1 extends 1.0 without renumbering it). The payload is the
+interface token plus one `bool`, exactly what the disassembled
+`BpHwFactory::_hidl_chargerEnable` writes:
 
-```
-I ChargingSeparationHal: Factory HAL resolved: @1.1 (vendor.qti.hardware.factory.V1_1.IFactory)
-I ChargingSeparationHal: Factory HAL not found: tried @1.1 and @1.0
-```
-
-**Runtime classloader.** Reflection resolves through Settings' own
-`PathClassLoader`, so the vendor HIDL Java stub has to be on it. HIDL jars are
-not in `BOOTCLASSPATH`, and nothing in the baseline manifest or `Android.bp`
-adds the factory stub, so the patch adds best-effort entries:
-
-```xml
-<uses-library android:name="vendor.qti.hardware.factory-V1.1-java"
-              android:required="false" />
-<uses-library android:name="vendor.qti.hardware.factory-V1.0-java"
-              android:required="false" />
+```java
+HwParcel req = new HwParcel();
+HwParcel rep = new HwParcel();
+req.writeInterfaceToken("vendor.qti.hardware.factory@1.1::IFactory");
+req.writeBool(enable);                  // false = stop charging, true = resume
+binder.transact(4, req, rep, 0);        // 0 = synchronous
+// void method: the reply carries only the HIDL status word
 ```
 
-```bp
-optional_uses_libs: [
-    "vendor.qti.hardware.factory-V1.1-java",
-    "vendor.qti.hardware.factory-V1.0-java",
-],
-```
+The method returns nothing, so the client reads no return value. It calls
+`rep.verifySuccess()` to consume the status word when there is one; an empty
+reply (`IllegalArgumentException`) is not treated as a failure, because a void
+method has no data to lose. An error status surfaces as `RemoteException` and
+counts as a failed transaction. Both parcels are `release()`d in a `finally`.
 
-`optional_uses_libs` keeps Soong's `<uses-library>` verification green when the
-vendor module is not part of the AOSP build, and `required="false"` keeps a
-firmware without the jar installable. The HIDL Java module name is
-`<package>-V<maj>.<min>-java` (compare `android.hidl.base-V1.0-java`), so the
-dot form is the library name; the device's `pm list libraries | grep -i factory`
-is authoritative and a different string there is what the manifest must carry.
+**Lazy start.** The vendor service is `disabled` + `oneshot` in
+`/vendor/etc/init/vendor.qti.hardware.factory@1.0-service.rc` (`user system`,
+`class hal`). System `hwservicemanager` issues `ctl.interface_start` when a
+client asks for a service that is not registered
+(`system/hwservicemanager/ServiceManager.cpp`), so the **first** lookup is what
+starts the HAL and can miss while the process comes up. The client therefore
+retries each lookup **5 times, 300 ms apart** (up to ~1.2 s per interface) before
+an interface counts as absent, and logs every miss with its attempt number.
 
-**Evidence caveat (important).** The captured stock artifacts in this repo do
-not include `/system_ext/etc/permissions`, `/system/framework` or a
-`pm list libraries` dump, so there is **no proof in-repo that the factory stub is
-declared as a Java shared library on the RP5**. The #140 investigation found
-`IFactory` stubs in `system_ext`/`system`, but if they live in a boot jar or are
-bundled inside Retroid's own APKs rather than exposed through a permissions XML,
-`Class.forName` still fails on the RP5 and these entries change nothing. In that
-case the page must — and does — report `Not supported on this firmware`; making
-the control work then needs a native backend (a small privileged helper or a
-surface exposed by `ashfall-hwd`), tracked as a follow-up. Do not claim the HAL
-works until the device pass shows a resolved interface.
+**Threading.** The lookups and the transaction run on one dedicated daemon
+thread inside `ChargingSeparationHal`; the result is posted back to the main
+thread. The page shows `Checking…` and enables the switch only after a
+transaction succeeds, and the boot receiver holds `goAsync()` until the answer
+arrives (worst case ~2.4 s of lookups, well inside the 10 s broadcast budget).
+Nothing here blocks Settings' main thread or its shared background pool.
 
-Gating and failure modes:
+**Support state.** `Supported` is claimed only after a successful transaction,
+never from a lookup alone. The page's probe is a real transaction: it re-applies
+separation when the property says `1`, otherwise it asks for charging (a no-op
+while charging is already allowed). The support row is honest about the three
+outcomes:
 
 | Condition | Result |
 |---|---|
-| neither `V1_1` nor `V1_0` stub on the classpath | support row `Not supported on this firmware`, switch disabled; `ClassNotFoundException` logged with the version |
-| `getService()` returns `null` (not registered or not ready) | same as above, logged per version; the probe is retried on the next call (no negative cache) |
-| `RemoteException` from the call | same as above, logged; the cached proxy is dropped so the next call re-probes |
-| any other invocation error | `Could not stop charging`, charging restored, logged |
-| `@1.1` or `@1.0` present and reachable | support row `Supported`, switch enabled, resolved interface logged |
+| a transaction succeeds | support row `Supported`, switch enabled and bound to the property |
+| neither `@1.1` nor `@1.0` answers after 5 x 300 ms each | support row `Not supported on this device`, switch disabled; the log names each interface that missed |
+| a service answered but the transaction failed | support row `Not available right now`, switch disabled, probe repeated on the next resume (transient, not "unsupported") |
+| `RemoteException` from `transact()` (vendor process died) | cached proxy dropped so the next call re-resolves; reported as a failed transaction |
+| enable transaction fails | `Could not stop charging`, charging restored, nothing stored |
+| disable transaction cannot restore charging | `Restart your device if charging does not resume.` |
 
-The probe runs once when the page opens (main thread; `getService()` is a
-one-shot binder lookup) and never crashes: every reflective call and every
-invoke is wrapped and reported as an enum, not thrown.
-
-No daemon change and **no new SELinux rule is assumed**. The device pass must
-confirm it rather than adding policy blindly:
+**SELinux is already in place.** The vendor policy puts `system_app_33_0` in
+`vendor_hal_factory_qti_client` and allows `find` on
+`vendor_hal_factory_qti_hwservice` plus `binder call` to the server, which is
+exactly the access a `system_app` HwBinder client needs. This patch adds **no
+policy rule**; the device pass must confirm that no denial appears rather than
+guessing a domain/type pair:
 
 ```bash
 adb root
@@ -445,10 +449,12 @@ without the domain/type names from the log.
   screen. A static flag makes the second delivery a no-op in the same process;
   if the process is killed in between, the second delivery re-applies the same
   state, which is idempotent. If the property is not `1`, do nothing and make no
-  HAL call. If it is `1` and the level is at or above the floor, call
-  `chargerEnable(false)` once; if the level is below the floor, drop the state
-  and restore charging. On a firmware without the HAL the stored choice is kept
-  and no call is made (the feature is simply not applicable there). The receiver
+  HAL call. If it is `1` and the level is at or above the floor, the receiver
+  keeps the broadcast alive with `goAsync()` and asks for `chargerEnable(false)`
+  on the HAL thread, retrying the lazy-start lookup; it finishes when the
+  transaction answers. If the level is below the floor, drop the state and
+  restore charging. On a firmware without the HAL the stored choice is kept and
+  no clear is sent (the feature is simply not applicable there). The receiver
   sends no broadcast and is not re-triggered by its own work, so there is no
   boot loop, even with the HAL missing.
 - **Unplug** is not a receiver path. `ACTION_POWER_DISCONNECTED` is **not** on
@@ -465,14 +471,15 @@ without the domain/type names from the log.
   request cannot strand a low battery after an unplug the app never saw.
 - **Fail-open**: every error path clears `persist.ashfall.batt.charge_sep`,
   then asks for charging to be restored. Below the floor (boot or page open), a
-  firmware without the HAL, a failed `chargerEnable(false)`, a rejected property
-  write and a boot that cannot re-apply all end with charging enabled and, where
-  the property is ours to clear, at `0`. A rejected write is detected by reading
-  the property back, so the switch does not claim "off" while the next boot would
-  still re-apply; that case reports `Could not turn off charging separation`,
-  while a failed resume reports `Restart your device if charging does not
-  resume.` The one case software cannot fix is the HAL itself failing to resume
-  charging.
+  failed `chargerEnable(false)`, a rejected property write and a boot that cannot
+  re-apply all end with charging enabled and, where the property is ours to
+  clear, at `0`. A rejected write is detected by reading the property back, so
+  the switch does not claim "off" while the next boot would still re-apply; that
+  case reports `Could not turn off charging separation`, while a failed resume
+  reports `Restart your device if charging does not resume.` A firmware without
+  the factory HAL is the one case that keeps the stored choice: the call cannot
+  be attempted, nothing is applied, and the next boot tries again. The one case
+  software cannot fix is the HAL itself failing to resume charging.
 - **Guards**: the toggle refuses to enable while the adapter is disconnected
   (`Connect the charger to use this`) and below 20 % (`Keep the battery above 20%
   to use this`). An unknown battery level counts as below the floor, so a device
@@ -491,27 +498,30 @@ run() { "$R" run worker-140 --ttl 600 -- scripts/device/run.sh "$@"; }
 run adb devices -l
 run adb shell getprop persist.ashfall.batt.charge_sep    # empty or 0: default off
 run adb shell dumpsys package com.android.settings | grep userId   # userId=1000
-# Runtime stub + version: both must match what the class-name probe expects.
-run adb shell pm list libraries | grep -i factory
-run adb shell 'ls -l /system/framework/*factory* /system_ext/framework/*factory* /vendor/framework/*factory* 2>/dev/null'
+# Evidence that the reflective path is dead on this build (no vendor Java stub).
+run adb shell pm list libraries | grep -i factory                    # expect: no factory line
+run adb shell 'ls -l /system/framework/*factory* /system_ext/framework/*factory* /vendor/framework/*factory* 2>/dev/null'   # expect: nothing
 run adb shell logcat -c
 run adb shell am start -a android.intent.action.POWER_USAGE_SUMMARY
 ```
 
 In the UI: **Charging control** sits under **PlayTime indicator**; open it and
 the support row must read **Supported** on the `.31`/`.189` vendor (factory HAL
-present). The probe line must name the interface, not a miss:
+present). The probe must name the interface it resolved, and the transaction must
+report success:
 
 ```bash
 run adb shell logcat -d -s ChargingSeparationHal
-# expect: Factory HAL resolved: @1.1 (vendor.qti.hardware.factory.V1_1.IFactory)
-# fail:  "... not found: tried @1.1 and @1.0"        -> runtime stub/classloader (#201)
-# fail:  "... stub is not on this build's classpath" -> uses-library not linked
+# expect: Resolved vendor.qti.hardware.factory@1.1::IFactory/default on lookup 1
+# expect: chargerEnable(true) on vendor.qti.hardware.factory@1.1::IFactory: ok
+# fail:  "Lookup 5/5 ... not registered yet" x2 + "not applied: UNSUPPORTED" -> HAL absent/masked
+# fail:  "chargerEnable(...) ... failed" -> binder reached the service but transact failed
 ```
 
-If `pm list libraries` shows a different exact name, that is the string the
-manifest `uses-library` must carry; record it. With the battery above 20 % and
-the adapter connected, enable **Charging separation** and check the effect:
+The support row reads `Checking…` while the lookups run (at most ~2.4 s on a
+cold, never-started vendor service) and must never freeze the page. With the
+battery above 20 % and the adapter connected, enable **Charging separation** and
+check the effect:
 
 ```bash
 run adb shell dumpsys battery | grep -E 'level:|status:|present:'   # adapter still present
@@ -544,7 +554,9 @@ run adb wait-for-device
 # do NOT unlock; at the lock screen:
 run adb shell getprop persist.ashfall.batt.charge_sep              # 1 on a supported firmware
 run adb shell 'find /sys/class/power_supply -name current_now -exec cat {} +'   # ~0 before unlock
-run adb shell logcat -d -s ChargingSeparationHal | grep -c 'Factory HAL resolved'  # 1, not 2
+run adb shell logcat -d -s ChargingSeparationHal ChargingControlReceiver
+# expect: "Resolved ... on lookup N" once, "chargerEnable(false) ... ok", "Re-applied charging separation at boot"
+# expect: exactly one re-apply, not one per boot broadcast
 ```
 
 `current_now` ~0 before unlock is the direct-boot evidence (#202): with the old
@@ -590,8 +602,10 @@ Unsupported firmware or a missing HAL:
 ```bash
 # On a build/firmware without vendor.qti.hardware.factory (or after masking it):
 run adb shell am start -a android.intent.action.POWER_USAGE_SUMMARY
-# UI: "Not supported on this firmware", the switch is disabled, no crash/ANR.
-run adb shell logcat -d -s ChargingSeparationHal | tail   # "not found"/"classpath" probe lines
+# UI: "Not supported on this device" after the lookups, switch disabled, no crash/ANR.
+run adb shell logcat -d -s ChargingSeparationHal | tail
+# expect: "Lookup 5/5 ... not registered yet" for @1.1 and @1.0, then
+#         "chargerEnable(...) not applied: UNSUPPORTED", one per user action.
 # Boot-loop check with the HAL missing (root as above):
 run adb root
 run adb shell setprop persist.ashfall.batt.charge_sep 1
@@ -604,14 +618,18 @@ run adb wait-for-device
 Documentation / logs:
 
 ```bash
-run adb shell logcat -d -s ChargingControlSettings ChargingSeparationHal ChargingSeparation
+run adb shell logcat -d -s ChargingControlSettings ChargingControlReceiver ChargingSeparationHal ChargingSeparation
 run adb shell 'dmesg | grep avc' | grep -iE 'factory|charger|ashfall_prop'  # empty
+run adb shell 'logcat -d | grep "avc: denied"' | grep -iE 'factory|charge' # empty
 ```
 
-The device pass is the acceptance evidence for #140: `@1.1` resolves from
-Settings' classloader, the HAL actually stops charging (`current_now` ~0 with the
-adapter status, including before the first unlock), it reverts cleanly, a stale
-low-battery request is dropped, the unsupported firmware shows the message
-instead of a dead toggle, and a missing HAL does not boot-loop. If
-`pm list libraries` has no factory stub, the page correctly reports unsupported
-and the native-backend follow-up is the unblock, not a patch tweak.
+The device pass is the acceptance evidence for #140: the HwBinder client resolves
+`@1.1` for the `system_app` domain, the transaction actually stops charging
+(`current_now` ~0 with the adapter status, including before the first unlock), it
+reverts cleanly, a stale low-battery request is dropped, the unsupported firmware
+shows the message instead of a dead toggle, a missing HAL does not boot-loop, and
+no `avc: denied` appears for the hwservice or the property. If the RP5's
+`pm list libraries` and `/system*/framework` confirm the absence of the vendor
+stub (as the #201 evidence says), the direct HwBinder path is the only remaining
+way to reach the HAL; nothing in Settings' manifest or `Android.bp` should be
+changed to chase it.
