@@ -107,7 +107,7 @@ immediately to the properties from §2 of the contract; there is no Apply button
 | Fan | `FanActivity` | main switch, live graph, presets, curve, manual %, fan speed limits, kick, screen-off, throttling override, GPU max frequency |
 | Fan presets | `PresetActivity` | create / rename / duplicate / delete / change mode |
 | Curve | `CurveActivity` | drag-and-D-pad curve editor, live marker, live preview, stress test |
-| Lighting | `LightingActivity` | switch, target, live colour picker, brightness, effect (incl. Match screen), screen rate, speed |
+| Lighting | `LightingActivity` | switch, target, live colour picker, brightness, effect (incl. Match screen), screen rate/delay, speed |
 | Controller | `ControllerActivity` | tester, calibration wizard, factory reset, deadzones, fusion |
 | Power | `PowerActivity` | presets, CPU caps, governor, GPU cap, throttle override, live graph ([parts-power.md](parts-power.md)) |
 | Memory | `MemoryActivity` | swapfile ([parts-memory.md](parts-memory.md)) |
@@ -331,23 +331,38 @@ contract does not change — the sampler is one more publisher of
 | Option | Property | Values |
 |---|---|---|
 | Screen rate | `persist.ashfall.led.screen_rate` | `10` (default) / `15` / `30` frames per second |
-| Smoothing | `persist.ashfall.led.speed` | 1–10; 5 keeps 120 ms attack / 350 ms release, lower is slower |
-| Brightness | `persist.ashfall.led.brightness` | still scales the published colour |
+| Delay changes | `persist.ashfall.led.screen_delay` | `0` (Off, default) / `100` / `250` / `500` ms |
+| Brightness | `persist.ashfall.led.brightness` | scales the published colour on every publish |
 
-* **Target Both** = whole-frame dominant colour on both rings.  **Left/Right**
-  keep the split: the left half drives the left ring, the right half the right
-  ring, and each ring holds its own last colour when its half goes black — one
+* **Literal split average.**  The screen is split in two and each half is
+  averaged on its own in linear light, then re-encoded: the left half always
+  drives the left ring and the right half the right ring.  A white UI therefore
+  gives white rings, and an even red/blue split gives one red and one blue
+  ring.  There is no chroma weighting, no saturation/value lift and no
+  hold-last-colour heuristic for whites or greys.  The **target selector does
+  not change Match screen**; Both/Left/Right still apply to the static colour
+  only.  Each ring holds its own last colour when its half goes black — one
   black half is never filled from the other (#196).  Until a half has shown a
   colour at least once, nothing is published and the configured effect stays.
   One colour per ring, no per-LED zones.
+* **Delay changes** holds a *changed* average until the same pair has been
+  stable for the selected time before it is published, so brief flashes and
+  scrolling do not repaint the rings.  Off (the default) publishes every frame;
+  the first colour of a session is always published at once.  The gate is
+  evaluated on capture frames, so at 10 Hz a 100 ms delay can take up to
+  ~200 ms to publish.  It is a stability gate, not an animation, and it is
+  UI-only (`ashfall-hwd` never reads it).
 * Capture: `DisplayManager.createVirtualDisplay` with
   `VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR` into an `ImageReader` (RGBA_8888, 64×36),
   `CAPTURE_VIDEO_OUTPUT`.  No MediaProjection, no consent dialog.
-* Processing: sRGB decode → per-half average in linear light (Both: luminance-
-  weighted whole-frame average) → chroma boost → sRGB encode → asymmetric
-  smoothing → brightness.  Published output is limited to ≤ 29 Hz and written
-  only when the final colours change.  A near-black frame (secure surface, DRM,
-  panel off) holds the last colour.
+* Processing: sRGB decode → per-half average in linear light → sRGB encode →
+  optional delay gate → brightness.  No smoothing or colour boost is applied,
+  and `led.speed` no longer affects Match screen (it stays available for
+  breathing, rainbow and duo).  The brightness slider is read on every publish,
+  so moving it changes the rings on the next frame without restarting the
+  effect.  Published output is limited to ≤ 29 Hz and written only when the
+  final colours change.  A near-black frame (secure surface, DRM, panel off)
+  holds the last colour.
 * `ashfall.ui.led_override_live` carries a changing token refreshed every
   400 ms while the override is owned, so a dead sampler cannot latch the rings
   (#94/#171).  Publishing is paced by a time budget: 10 and 15 Hz write every
@@ -366,9 +381,20 @@ contract does not change — the sampler is one more publisher of
 * If capture cannot start, the effect switches itself off, the previous effect
   returns and a short message says so.  Every exit clears the override and the
   heartbeat.
-* Copy in the UI states the limits: black/protected video holds the last
-  colour, two zones (left/right) rather than per-LED, and screen capture costs
-  battery.
+* Copy in the UI states the limits: left half = left ring, right half = right
+  ring (the plain average, so white gives white), the colour target does not
+  change Match screen, the Delay changes value, black/protected video holds the
+  last colour, two zones (left/right) rather than per-LED, and screen capture
+  costs battery.
+* Device check (#167): a full-screen solid red and then blue writes
+  `ashfall.ui.led_override=FF0000:FF0000` / `0000FF:0000FF` and the rings
+  follow instantly; a white page gives `FFFFFF:FFFFFF`; a red-left/blue-right
+  split gives `FF0000:0000FF`; the brightness slider changes the rings while
+  Match screen stays on; Delay changes Off repaints every change, 500 ms only
+  repaints an average that holds still for 500 ms; a `FLAG_SECURE` page keeps
+  the previous colour via the heartbeat; `am force-stop org.ashfall.parts`
+  clears the override within 1.5 s (daemon guardian) and the configured effect
+  returns.
 
 ### 2.4 Controller
 
@@ -606,7 +632,8 @@ Read/written exactly as specified in `docs/phase5.md`:
 * `ashfall.ui.{fan_live,fan_preview_curve}`
 * `ashfall.status.fan.{temp,pct,rpm,safety}`
 * `persist.ashfall.led.{mode,color_left,color_right,sync,brightness,speed}`
-* `persist.ashfall.led.{screen_sync,screen_rate}` (UI-only; Match screen, #167)
+* `persist.ashfall.led.{screen_sync,screen_rate,screen_delay}` (UI-only; Match
+  screen, #167)
 * `ashfall.ui.{led_override,led_override_live,led_suspend}` (live colour, its
   heartbeat, and the gamepad tester's suspend flag)
 * `ashfall.perf.throttle_override`, `persist.ashfall.perf.throttle_override_permanent`
