@@ -79,6 +79,8 @@ public class LightingDialog extends Dialog {
     private TextView mScreenRateValue;
     private LinearLayout mScreenDelayRow;
     private TextView mScreenDelayValue;
+    private LinearLayout mScreenBoostRow;
+    private TextView mScreenBoostValue;
     private TextView mScreenNote;
 
     private boolean mUpdating;
@@ -161,11 +163,15 @@ public class LightingDialog extends Dialog {
                 view -> cycleScreenDelay());
         mScreenDelayValue = (TextView) mScreenDelayRow.getChildAt(1);
 
+        mScreenBoostRow = screenRow(R.string.lighting_screen_boost_title, index + 2,
+                view -> cycleScreenBoost());
+        mScreenBoostValue = (TextView) mScreenBoostRow.getChildAt(1);
+
         mScreenNote = new TextView(context);
         mScreenNote.setTextAppearance(context, R.style.AshFallDialogSecondary);
         mScreenNote.setText(R.string.lighting_screen_note);
         mScreenNote.setPadding(0, 0, 0, Ui.dp(context, 8));
-        container.addView(mScreenNote, index + 2);
+        container.addView(mScreenNote, index + 3);
     }
 
     /** One tappable "title ... value" row in the Match screen block. */
@@ -214,6 +220,32 @@ public class LightingDialog extends Dialog {
     private String delayLabel(int ms) {
         return ms <= 0 ? getContext().getString(R.string.lighting_screen_delay_off)
                 : getContext().getString(R.string.lighting_screen_delay_value, ms);
+    }
+
+    private void cycleScreenBoost() {
+        final int[] boosts = ScreenLedSync.SCREEN_BOOSTS_PCT;
+        int next = boosts[0];
+        for (int i = 0; i < boosts.length; i++) {
+            if (boosts[i] == ScreenLedSync.screenBoost()) {
+                next = boosts[(i + 1) % boosts.length];
+                break;
+            }
+        }
+        ScreenLedSync.setScreenBoost(next);
+        refresh();
+    }
+
+    private String boostLabel(int pct) {
+        if (pct <= 0) {
+            return getContext().getString(R.string.lighting_screen_boost_off);
+        }
+        if (pct <= 30) {
+            return getContext().getString(R.string.lighting_screen_boost_low);
+        }
+        if (pct <= 60) {
+            return getContext().getString(R.string.lighting_screen_boost_medium);
+        }
+        return getContext().getString(R.string.lighting_screen_boost_high);
     }
 
     private void cycleScreenRate() {
@@ -432,6 +464,9 @@ public class LightingDialog extends Dialog {
             if (mScreenDelayRow != null) {
                 mScreenDelayRow.setVisibility(screen ? View.VISIBLE : View.GONE);
             }
+            if (mScreenBoostRow != null) {
+                mScreenBoostRow.setVisibility(screen ? View.VISIBLE : View.GONE);
+            }
             if (mScreenNote != null) {
                 mScreenNote.setVisibility(screen ? View.VISIBLE : View.GONE);
             }
@@ -441,6 +476,9 @@ public class LightingDialog extends Dialog {
             }
             if (mScreenDelayValue != null) {
                 mScreenDelayValue.setText(delayLabel(ScreenLedSync.screenDelay()));
+            }
+            if (mScreenBoostValue != null) {
+                mScreenBoostValue.setText(boostLabel(ScreenLedSync.screenBoost()));
             }
         } finally {
             mUpdating = false;

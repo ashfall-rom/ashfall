@@ -61,6 +61,7 @@ public class LightingActivity extends PartsActivity {
         private SliderPreference mSpeed;
         private Preference mScreenRate;
         private Preference mScreenDelay;
+        private Preference mScreenBoost;
         private Preference mScreenNote;
 
         @Override
@@ -159,6 +160,15 @@ public class LightingActivity extends PartsActivity {
                 return true;
             });
             effectCategory.addPreference(mScreenDelay);
+
+            mScreenBoost = new Preference(requireContext());
+            mScreenBoost.setKey("lighting_screen_boost");
+            mScreenBoost.setTitle(R.string.lighting_screen_boost_title);
+            mScreenBoost.setOnPreferenceClickListener(preference -> {
+                showBoostDialog();
+                return true;
+            });
+            effectCategory.addPreference(mScreenBoost);
 
             mScreenNote = new Preference(requireContext());
             mScreenNote.setKey("lighting_screen_note");
@@ -303,6 +313,40 @@ public class LightingActivity extends PartsActivity {
                     : getString(R.string.lighting_screen_delay_value, ms);
         }
 
+        private void showBoostDialog() {
+            final int[] boosts = ScreenLedSync.SCREEN_BOOSTS_PCT;
+            final CharSequence[] labels = new CharSequence[boosts.length];
+            int checked = 0;
+            for (int i = 0; i < boosts.length; i++) {
+                labels[i] = boostLabel(boosts[i]);
+                if (boosts[i] == ScreenLedSync.screenBoost()) {
+                    checked = i;
+                }
+            }
+            new AlertDialog.Builder(requireContext())
+                    .setTitle(R.string.lighting_screen_boost_title)
+                    .setSingleChoiceItems(labels, checked, (dialog, which) -> {
+                        ScreenLedSync.setScreenBoost(boosts[which]);
+                        dialog.dismiss();
+                        refresh();
+                    })
+                    .setNegativeButton(R.string.cancel, null)
+                    .show();
+        }
+
+        private String boostLabel(int pct) {
+            if (pct <= 0) {
+                return getString(R.string.lighting_screen_boost_off);
+            }
+            if (pct <= 30) {
+                return getString(R.string.lighting_screen_boost_low);
+            }
+            if (pct <= 60) {
+                return getString(R.string.lighting_screen_boost_medium);
+            }
+            return getString(R.string.lighting_screen_boost_high);
+        }
+
         private String effectName(String effect) {
             return Led.MODE_SCREEN.equals(effect)
                     ? getString(R.string.lighting_effect_screen)
@@ -355,6 +399,8 @@ public class LightingActivity extends PartsActivity {
                     Led.screenRate()));
             mScreenDelay.setVisible(screen);
             mScreenDelay.setSummary(delayLabel(ScreenLedSync.screenDelay()));
+            mScreenBoost.setVisible(screen);
+            mScreenBoost.setSummary(boostLabel(ScreenLedSync.screenBoost()));
             mScreenNote.setVisible(screen);
         }
     }

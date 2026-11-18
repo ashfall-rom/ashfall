@@ -44,7 +44,9 @@ import java.util.Locale;
  * gamepad tester uses ({@code docs/phase5.md} §6.1).  The left half always
  * drives the left ring and the right half the right ring (#167 follow-up).  An
  * optional delay holds a new average until it has been stable for the selected
- * time; Off publishes every frame.  A heartbeat on
+ * time; Off publishes every frame.  An optional "Colour boost" multiplies HSV
+ * saturation of the published average (white and fully saturated colours are
+ * unchanged) before the brightness scale.  A heartbeat on
  * {@code ashfall.ui.led_override_live} runs at 400 ms so {@code ashfall-hwd}
  * can drop the override if this process dies (#94).
  *
@@ -65,6 +67,15 @@ public final class ScreenLedSync {
     public static final String SCREEN_DELAY = "persist.ashfall.led.screen_delay";
     public static final int DEFAULT_SCREEN_DELAY_MS = 0;
     public static final int[] SCREEN_DELAYS_MS = {0, 100, 250, 500};
+    /**
+     * Match screen "Colour boost", percent added to HSV saturation:
+     * {@code 0} (Off) keeps the literal average, 30/60/100 give a factor of
+     * 1.3/1.6/2.0.  Sampler-only, read live on every publish; the daemon never
+     * reads it.
+     */
+    public static final String SCREEN_BOOST = "persist.ashfall.led.screen_boost";
+    public static final int DEFAULT_SCREEN_BOOST_PCT = 60;
+    public static final int[] SCREEN_BOOSTS_PCT = {0, 30, 60, 100};
 
     /** 64x36 keeps the readback cheap and still gives each half 32x36 pixels. */
     private static final int CAPTURE_WIDTH = 64;
@@ -126,6 +137,9 @@ public final class ScreenLedSync {
 
     private final float[] mLeft = new float[3];
     private final float[] mRight = new float[3];
+    /** Colour-boost scratch, filled in publish() before brightness scaling. */
+    private final float[] mBoostedLeft = new float[3];
+    private final float[] mBoostedRight = new float[3];
     /**
      * Both rings hold a published colour.  A near-black half keeps that ring's
      * own last colour; it is never filled from the other half (#196).
@@ -253,6 +267,30 @@ public final class ScreenLedSync {
         for (int candidate : SCREEN_DELAYS_MS) {
             if (candidate == ms) {
                 Props.setInt(SCREEN_DELAY, ms);
+                return;
+            }
+        }
+    }
+
+    /**
+     * "Colour boost" percent: {@code 0} (Off), 30 (Low), 60 (Medium, default)
+     * or 100 (High).  A value that is not in {@link #SCREEN_BOOSTS_PCT} reads
+     * as the default.
+     */
+    public static int screenBoost() {
+        final int value = Props.getInt(SCREEN_BOOST, DEFAULT_SCREEN_BOOST_PCT);
+        for (int candidate : SCREEN_BOOSTS_PCT) {
+            if (candidate == value) {
+                return candidate;
+            }
+        }
+        return DEFAULT_SCREEN_BOOST_PCT;
+    }
+
+    public static void setScreenBoost(int pct) {
+        for (int candidate : SCREEN_BOOSTS_PCT) {
+            if (candidate == pct) {
+                Props.setInt(SCREEN_BOOST, pct);
                 return;
             }
         }
@@ -624,6 +662,83 @@ public final class ScreenLedSync {
         return delayMs <= 0 || now - since >= delayMs;
     }
 
+    /**
+     * "Colour boost": multiplies HSV saturation by {@code factor} and keeps V,
+     * applied to an sRGB colour (the literal per-half average).  White/grey
+     * (S = 0) and fully saturated colours (S = 1) are copied unchanged, so a
+     * white UI stays white and an exact red/blue split stays exact.
+     * {@code factor <= 1} is a bit-exact copy, i.e. Off reproduces the literal
+     * average.  Pure and allocation-free so the host harness can check it.
+     */
+    static void boostSaturation(float[] in, float factor, float[] out) {
+        final float r = in[0];
+        final float g = in[1];
+        final float b = in[2];
+        final float max = Math.max(r, Math.max(g, b));
+        final float min = Math.min(r, Math.min(g, b));
+        final float v = max;
+        final float delta = max - min;
+        if (factor <= 1f || v <= 0f || delta <= 0f) {
+            copy(in, out);
+            return;
+        }
+        final float s = delta / v;
+        if (s >= 1f) {
+            copy(in, out);
+            return;
+        }
+        final float boosted = Math.min(1f, s * factor);
+        float hue;
+        if (max == r) {
+            hue = (g - b) / delta;
+        } else if (max == g) {
+            hue = 2f + (b - r) / delta;
+        } else {
+            hue = 4f + (r - g) / delta;
+        }
+        if (hue < 0f) {
+            hue += 6f;
+        }
+        final int sector = (int) Math.floor(hue);
+        final float f = hue - sector;
+        final float p = v * (1f - boosted);
+        final float q = v * (1f - boosted * f);
+        final float t = v * (1f - boosted * (1f - f));
+        switch (sector % 6) {
+            case 1:
+                out[0] = q;
+                out[1] = v;
+                out[2] = p;
+                break;
+            case 2:
+                out[0] = p;
+                out[1] = v;
+                out[2] = t;
+                break;
+            case 3:
+                out[0] = p;
+                out[1] = q;
+                out[2] = v;
+                break;
+            case 4:
+                out[0] = t;
+                out[1] = p;
+                out[2] = v;
+                break;
+            case 5:
+                out[0] = v;
+                out[1] = p;
+                out[2] = q;
+                break;
+            case 0:
+            default:
+                out[0] = v;
+                out[1] = t;
+                out[2] = p;
+                break;
+        }
+    }
+
     private static long key(float[] left, float[] right) {
         return ((long) to8(left[0]) << 40) | ((long) to8(left[1]) << 32)
                 | ((long) to8(left[2]) << 24) | ((long) to8(right[0]) << 16)
@@ -654,12 +769,18 @@ public final class ScreenLedSync {
         // daemon applies the override as final intensity, so scaling here is
         // the brightness control (docs/phase5.md §6.1).
         final int brightness = Led.brightness();
-        final int rLeft = scale(mLeft[0], brightness);
-        final int gLeft = scale(mLeft[1], brightness);
-        final int bLeft = scale(mLeft[2], brightness);
-        final int rRight = scale(mRight[0], brightness);
-        final int gRight = scale(mRight[1], brightness);
-        final int bRight = scale(mRight[2], brightness);
+        // Colour boost is also read live, and runs before the brightness scale
+        // on the literal per-half average.  Off (factor 1.0) copies the
+        // average bit-exactly, so it reproduces the unboosted behaviour.
+        final float boost = 1f + screenBoost() / 100f;
+        boostSaturation(mLeft, boost, mBoostedLeft);
+        boostSaturation(mRight, boost, mBoostedRight);
+        final int rLeft = scale(mBoostedLeft[0], brightness);
+        final int gLeft = scale(mBoostedLeft[1], brightness);
+        final int bLeft = scale(mBoostedLeft[2], brightness);
+        final int rRight = scale(mBoostedRight[0], brightness);
+        final int gRight = scale(mBoostedRight[1], brightness);
+        final int bRight = scale(mBoostedRight[2], brightness);
         final String value = String.format(Locale.US, "%02X%02X%02X:%02X%02X%02X",
                 rLeft, gLeft, bLeft, rRight, gRight, bRight);
 

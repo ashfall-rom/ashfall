@@ -223,6 +223,11 @@
     <string name="lighting_screen_delay_title">Delay changes</string>
     <string name="lighting_screen_delay_off">Off</string>
     <string name="lighting_screen_delay_value">%1$d ms</string>
+    <string name="lighting_screen_boost_title">Colour boost</string>
+    <string name="lighting_screen_boost_off">Off</string>
+    <string name="lighting_screen_boost_low">Low</string>
+    <string name="lighting_screen_boost_medium">Medium</string>
+    <string name="lighting_screen_boost_high">High</string>
     <string name="lighting_smoothing_title">Smoothing</string>
     <string name="lighting_screen_failed">Screen capture didn\'t start. Lighting kept its last effect.</string>
     <string name="led_sync_title">LED screen sync</string>
