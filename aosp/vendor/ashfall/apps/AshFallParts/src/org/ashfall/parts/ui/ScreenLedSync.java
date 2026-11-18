@@ -80,6 +80,13 @@ public final class ScreenLedSync {
     private static final double MAX_PUBLISH_BUDGET_MS = 2.0 * MIN_PUBLISH_MS;
     /** Contract (#94): the daemon ignores an override without a fresh heartbeat. */
     private static final long HEARTBEAT_MS = 400;
+    /**
+     * The mirror is damage-driven: a static screen can stop delivering frames,
+     * which would stall both the delay gate and a brightness-only change.  This
+     * tick advances the gate and re-applies the current colour with the current
+     * brightness even when no frame arrives (#241).
+     */
+    private static final long TICK_MS = 100;
 
     /** A frame whose brightest channel is below this (sRGB 0..1) is "black". */
     private static final float BLACK_LEVEL = 0.05f;
@@ -133,6 +140,9 @@ public final class ScreenLedSync {
     private long mPendingKey;
     private boolean mPendingValid;
     private long mPendingSince;
+    private final float[] mPendingLeft = new float[3];
+    private final float[] mPendingRight = new float[3];
+    private boolean mTickPosted;
 
     public ScreenLedSync(Context context, Listener listener) {
         mContext = context.getApplicationContext();
@@ -194,6 +204,7 @@ public final class ScreenLedSync {
         mFailureReported = false;
         mRunning = true;
         postHeartbeat();
+        postTick();
         Log.i(TAG, "screen sync: started at " + Led.screenRate() + " Hz");
         return true;
     }
@@ -287,6 +298,7 @@ public final class ScreenLedSync {
             mThread = null;
         }
         mHeartbeatPosted = false;
+        mTickPosted = false;
     }
 
     private void postHeartbeat() {
@@ -296,6 +308,44 @@ public final class ScreenLedSync {
         }
         mHeartbeatPosted = true;
         handler.postDelayed(mHeartbeat, HEARTBEAT_MS);
+    }
+
+    private void postTick() {
+        final Handler handler = mHandler;
+        if (handler == null || mTickPosted || !mRunning) {
+            return;
+        }
+        mTickPosted = true;
+        handler.postDelayed(mTick, TICK_MS);
+    }
+
+    private final Runnable mTick = this::tick;
+
+    /**
+     * Advances the delay gate and refreshes the published colour without a
+     * captured frame (#241).  {@code VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR} is
+     * damage-driven, so a static screen (paused video, a still image, an idle
+     * app) may stop producing frames; without this tick a pending pair would
+     * never be adopted and a brightness change would never be applied.
+     *
+     * <p>{@link #publish(long)} does the {@code mRunning}/{@code mLock} check
+     * itself, so a tick that races {@link #stop()} cannot re-latch the rings.
+     */
+    private void tick() {
+        mTickPosted = false;
+        if (!mRunning) {
+            return;
+        }
+        final long now = SystemClock.elapsedRealtime();
+        if (adoptPending(now)) {
+            mHasColour = true;
+        }
+        if (mHasColour) {
+            // Re-publishes the current pair with the current brightness; the
+            // value-equality check turns an unchanged pair into a heartbeat.
+            publish(TICK_MS);
+        }
+        postTick();
     }
 
     private final Runnable mHeartbeat = this::heartbeat;
@@ -514,27 +564,64 @@ public final class ScreenLedSync {
             copy(nextRight, mRight);
             return true;
         }
+        final long key = key(nextLeft, nextRight);
+        if (key == key(mLeft, mRight)) {
+            // Already on the rings: nothing to wait for.
+            mPendingValid = false;
+            return true;
+        }
         final int delay = screenDelay();
         if (delay <= 0) {
             copy(nextLeft, mLeft);
             copy(nextRight, mRight);
+            mPendingValid = false;
             return true;
         }
         // Compare 8-bit values: below that the readback noise would restart
         // the stability window forever.
-        final long key = key(nextLeft, nextRight);
         if (!mPendingValid || key != mPendingKey) {
             mPendingKey = key;
             mPendingValid = true;
             mPendingSince = now;
+            copy(nextLeft, mPendingLeft);
+            copy(nextRight, mPendingRight);
             return false;
         }
-        if (now - mPendingSince < delay) {
+        if (!delayElapsed(mPendingSince, now, delay)) {
             return false;
         }
         copy(nextLeft, mLeft);
         copy(nextRight, mRight);
+        mPendingValid = false;
         return true;
+    }
+
+    /**
+     * Adopts the stored pending pair once its delay has elapsed, without a
+     * captured frame (#241).  The tick is the only caller; frames go through
+     * {@link #adopt} so they can also start or reset the window.
+     */
+    private boolean adoptPending(long now) {
+        if (!mPendingValid || !mHasColour) {
+            return false;
+        }
+        final int delay = screenDelay();
+        if (delay > 0 && !delayElapsed(mPendingSince, now, delay)) {
+            return false;
+        }
+        copy(mPendingLeft, mLeft);
+        copy(mPendingRight, mRight);
+        mPendingValid = false;
+        return true;
+    }
+
+    /**
+     * True when a pair first seen at {@code since} may be adopted at
+     * {@code now}: Off (0) adopts immediately, otherwise the whole delay must
+     * have passed.  Pure so the gate timing can be checked on the host.
+     */
+    static boolean delayElapsed(long since, long now, int delayMs) {
+        return delayMs <= 0 || now - since >= delayMs;
     }
 
     private static long key(float[] left, float[] right) {

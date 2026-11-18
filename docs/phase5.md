@@ -302,8 +302,10 @@ configured lighting as soon as the override stops.
   `persist.ashfall.led.screen_delay` (0 = Off, default) holds a changed pair
   until it has been stable for 100/250/500 ms before publishing, then
   `led.brightness` (read on every publish, so the slider is live) scales the
-  result.  HDR/wide-gamut content is clamped to SDR by the RGBA_8888 readback.
-  Near-black frames (secure/DRM surfaces, panel off) hold the last colour.
+  result.  A 100 ms sampler tick advances the gate and re-publishes on a static
+  screen that sends no frames (#241); it stops with the sampler.  HDR/wide-gamut
+  content is clamped to SDR by the RGBA_8888 readback.  Near-black frames
+  (secure/DRM surfaces, panel off) hold the last colour.
 * **Override contract**: publishes `ashfall.ui.led_override` and refreshes the
   changing `ashfall.ui.led_override_live` token every 400 ms; `ashfall-hwd`
   ignores the override after 1.5 s without a fresh token (#94/#171).  Publishing

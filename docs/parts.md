@@ -348,10 +348,12 @@ contract does not change — the sampler is one more publisher of
 * **Delay changes** holds a *changed* average until the same pair has been
   stable for the selected time before it is published, so brief flashes and
   scrolling do not repaint the rings.  Off (the default) publishes every frame;
-  the first colour of a session is always published at once.  The gate is
-  evaluated on capture frames, so at 10 Hz a 100 ms delay can take up to
-  ~200 ms to publish.  It is a stability gate, not an animation, and it is
-  UI-only (`ashfall-hwd` never reads it).
+  the first colour of a session is always published at once.  The gate runs on
+  capture frames **and** on a 100 ms sampler tick, because the mirrored display
+  is damage-driven and a static screen can stop sending frames; the deadline
+  therefore fires within ~100 ms of becoming due, and a brightness-only change
+  is re-applied on the same tick.  It is a stability gate, not an animation,
+  and it is UI-only (`ashfall-hwd` never reads it).
 * Capture: `DisplayManager.createVirtualDisplay` with
   `VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR` into an `ImageReader` (RGBA_8888, 64×36),
   `CAPTURE_VIDEO_OUTPUT`.  No MediaProjection, no consent dialog.
@@ -359,10 +361,13 @@ contract does not change — the sampler is one more publisher of
   optional delay gate → brightness.  No smoothing or colour boost is applied,
   and `led.speed` no longer affects Match screen (it stays available for
   breathing, rainbow and duo).  The brightness slider is read on every publish,
-  so moving it changes the rings on the next frame without restarting the
-  effect.  Published output is limited to ≤ 29 Hz and written only when the
-  final colours change.  A near-black frame (secure surface, DRM, panel off)
-  holds the last colour.
+  so moving it changes the rings on the next frame or sampler tick (≤ ~100 ms)
+  without restarting the effect.  A 100 ms tick on the sampler handler also
+  advances the delay gate, because the mirror is damage-driven and a static
+  screen may deliver no frames (#241); the tick stops with the sampler and
+  publishes through the same `mRunning`/lock guard as a frame.  Published
+  output is limited to ≤ 29 Hz and written only when the final colours change.
+  A near-black frame (secure surface, DRM, panel off) holds the last colour.
 * `ashfall.ui.led_override_live` carries a changing token refreshed every
   400 ms while the override is owned, so a dead sampler cannot latch the rings
   (#94/#171).  Publishing is paced by a time budget: 10 and 15 Hz write every
@@ -391,7 +396,10 @@ contract does not change — the sampler is one more publisher of
   follow instantly; a white page gives `FFFFFF:FFFFFF`; a red-left/blue-right
   split gives `FF0000:0000FF`; the brightness slider changes the rings while
   Match screen stays on; Delay changes Off repaints every change, 500 ms only
-  repaints an average that holds still for 500 ms; a `FLAG_SECURE` page keeps
+  repaints an average that holds still for 500 ms; on a fully static image
+  (mirror delivers no new frames) the 500 ms pair still appears and one last
+  brightness move still applies, both within ~100 ms of the deadline
+  (#241); a `FLAG_SECURE` page keeps
   the previous colour via the heartbeat; `am force-stop org.ashfall.parts`
   clears the override within 1.5 s (daemon guardian) and the configured effect
   returns.
