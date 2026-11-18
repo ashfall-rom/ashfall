@@ -664,22 +664,29 @@ What remains is this pointer, driven by **one** property and one switch.
   (`res/layout/fusion_qs_dialog.xml`, `qs/FusionDialog.java`), labelled
   *Desktop pointer*, summary *Right stick moves the mouse on an external
   display*.  The app is the writer; the daemon only reads.
-* It is **enabled only while a real presentation display is attached and
+* It is **enabled only while a physical secondary display is attached and
   awake** (`hw/Displays.java`, the single gate): `displayId != 0`,
-  `state == STATE_ON`, `FLAG_PRESENTATION` set, `FLAG_PRIVATE` clear and - when
-  the platform reports it - a type that is not `TYPE_VIRTUAL`,
-  `TYPE_OVERLAY` or `TYPE_WIFI`.  With no such display the row says *Connect an
-  external display to use the pointer* and a stored `1` is cleared, so
-  unplugging the display cannot leave the pad's sticks consumed with no cursor
-  target.
-* Why the strict test (#237): `DisplayManager.getDisplays()` also lists the
-  private virtual display this app creates for the *Match screen* LED effect
-  (`virtual:org.ashfall.parts:ashfall-led-sync`), overlay displays and cast
-  targets.  "Any display that is not display 0" therefore enabled the switch
-  with only the internal panel present.  A physical secondary display is a
-  presentation, non-private display and (on the RP5) `TYPE_EXTERNAL`; the RP5's
-  port-130 display also idles in `STATE_OFF` when nothing is plugged in, which
-  the state check rejects.
+  `state == STATE_ON`, `FLAG_PRIVATE` clear, and a platform type that is not
+  `TYPE_VIRTUAL`, `TYPE_OVERLAY` or `TYPE_WIFI` (an unknown/unreadable type is
+  accepted).  With no such display the row says *Connect an external display to
+  use the pointer* and a stored `1` is cleared, so unplugging the display cannot
+  leave the pad's sticks consumed with no cursor target.
+* Why the private/virtual exclusion (#237): `DisplayManager.getDisplays()` also
+  lists the private virtual display this app creates for the *Match screen* LED
+  effect (`virtual:org.ashfall.parts:ashfall-led-sync`), overlay displays and
+  cast targets.  "Any display that is not display 0" therefore enabled the
+  switch with only the internal panel present.  `FLAG_PRIVATE` plus the virtual/
+  overlay/wifi type exclusion rejects all three; the RP5's port-130 display also
+  idles in `STATE_OFF` when nothing is plugged in, which the state check rejects.
+* **No `FLAG_PRESENTATION` and no `TYPE_EXTERNAL` requirement** (device
+  evidence, #237): the RP5's secondary display is displayId 2, 1280x720, port
+  130, and `dumpsys display` reports `type INTERNAL` with
+  `FLAG_ALLOWED_TO_BE_DEFAULT_DISPLAY|FLAG_ROTATES_WITH_CONTENT|FLAG_SECURE|
+  FLAG_SUPPORTS_PROTECTED_BUFFERS|FLAG_TRUSTED` - no `FLAG_PRESENTATION`.  The
+  vendor display config declares the DP sink as an internal port, so an
+  AOSP-shaped "external presentation display" test would disable the pointer on
+  the only device it exists for.  Enumerating the presentation category would be
+  empty for the same reason, so the gate iterates every display.
 * A **guard service** keeps that true while the dialog is closed (#238):
   `PointerService` (foreground, `specialUse`, low-importance notification with
   a **Stop** action) is started by the switch when it turns on, registers a

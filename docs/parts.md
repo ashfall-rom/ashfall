@@ -522,11 +522,13 @@ fixes that for the whole app:
 * **Fusion dialog**: the Fusion switch, the connected pads with their layout
   picker, Rescan and More settings.  The last row is the **Desktop pointer**
   switch (#131, `docs/rp5/input.md`): it writes `persist.ashfall.pad.pointer`
-  and is enabled only while `hw/Displays.java` finds a real presentation display
-  (not display 0, `STATE_ON`, `FLAG_PRESENTATION` set, `FLAG_PRIVATE` clear,
-  and when readable not `TYPE_VIRTUAL`/`TYPE_OVERLAY`/`TYPE_WIFI`) - so the
-  app's own *Match screen* capture display and any cast/overlay surface no
-  longer enable it (#237).  With no such display the summary says to connect
+  and is enabled only while `hw/Displays.java` finds a physical secondary
+  display (not display 0, `STATE_ON`, `FLAG_PRIVATE` clear, and when readable not
+  `TYPE_VIRTUAL`/`TYPE_OVERLAY`/`TYPE_WIFI`) - so the app's own *Match screen*
+  capture display and any cast/overlay surface no longer enable it (#237).  The
+  RP5's DP sink reports `type INTERNAL` without `FLAG_PRESENTATION`, so neither
+  is required; on a real DP/HDMI display Android sets them, on the RP5 the
+  vendor port config does not.  With no such display the summary says to connect
   one, and a stored `1` is cleared rather than leaving the pad's sticks consumed
   with no cursor target.  Turning the switch on starts `PointerService`
   (`specialUse` foreground, low-importance notification with **Stop**), which
