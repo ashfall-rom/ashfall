@@ -397,7 +397,8 @@ same page shell.
   `max_pct` kick window) are fixed in the hwd worker; #132 (fan graph duplicate
   sample) in the Power app worker.
 - External-display pointer: off by default, one switch in the Fusion QS dialog,
-  only enabled while a secondary display is connected and awake. Internal
+  only enabled while a real presentation display is connected and awake, with a
+  foreground display guard so unplugging it turns the pointer off. Internal
   display only (no desktop windowing, no taskbar change).
 - Performance tuning: Eden, Winlator and one native game; p95 frame time and
   1% low decide; MGLRU/PELT stay hidden/root-only in v1.

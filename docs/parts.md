@@ -522,10 +522,16 @@ fixes that for the whole app:
 * **Fusion dialog**: the Fusion switch, the connected pads with their layout
   picker, Rescan and More settings.  The last row is the **Desktop pointer**
   switch (#131, `docs/rp5/input.md`): it writes `persist.ashfall.pad.pointer`
-  and is enabled only while `DisplayManager` reports a display with
-  `displayId != 0` that is not `STATE_OFF`.  With no such display the summary
-  says to connect one, and a stored `1` is cleared rather than leaving the pad's
-  sticks consumed with no cursor target.
+  and is enabled only while `hw/Displays.java` finds a real presentation display
+  (not display 0, `STATE_ON`, `FLAG_PRESENTATION` set, `FLAG_PRIVATE` clear,
+  and when readable not `TYPE_VIRTUAL`/`TYPE_OVERLAY`/`TYPE_WIFI`) - so the
+  app's own *Match screen* capture display and any cast/overlay surface no
+  longer enable it (#237).  With no such display the summary says to connect
+  one, and a stored `1` is cleared rather than leaving the pad's sticks consumed
+  with no cursor target.  Turning the switch on starts `PointerService`
+  (`specialUse` foreground, low-importance notification with **Stop**), which
+  keeps the same check alive after the dialog closes and clears the property
+  when the display goes away (#238).
 * Tile icons are the shared `ic_ashfall_fan`/`ic_ashfall_lighting` vectors
   (24 dp, single colour, no baked tint).  SystemUI applies its own tint for
   the active and inactive tile states, so no state-specific drawable is

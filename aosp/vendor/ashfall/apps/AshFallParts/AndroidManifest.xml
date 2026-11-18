@@ -169,6 +169,20 @@
                 android:value="mirror the display to drive the stick ring LEDs" />
         </service>
 
+        <!-- External-display pointer guard (#131, #238): started by the Fusion
+             dialog's pointer switch.  Registers a DisplayManager listener and
+             turns persist.ashfall.pad.pointer off when no presentation display
+             is left, so the pad's L1/L2/sticks are restored without anyone
+             reopening the dialog.  Never started at boot. -->
+        <service
+            android:name=".PointerService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="stop the gamepad pointer when the external display goes away" />
+        </service>
+
         <activity
             android:name=".CalibrationActivity"
             android:configChanges="orientation|screenSize|screenLayout|keyboardHidden"

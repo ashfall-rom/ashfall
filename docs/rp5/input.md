@@ -664,18 +664,38 @@ What remains is this pointer, driven by **one** property and one switch.
   (`res/layout/fusion_qs_dialog.xml`, `qs/FusionDialog.java`), labelled
   *Desktop pointer*, summary *Right stick moves the mouse on an external
   display*.  The app is the writer; the daemon only reads.
-* It is **enabled only while a secondary display is present and awake**:
-  `DisplayManager` has a display with `displayId != 0` and
-  `state != Display.STATE_OFF`.  With no such display the row says *Connect an
+* It is **enabled only while a real presentation display is attached and
+  awake** (`hw/Displays.java`, the single gate): `displayId != 0`,
+  `state == STATE_ON`, `FLAG_PRESENTATION` set, `FLAG_PRIVATE` clear and - when
+  the platform reports it - a type that is not `TYPE_VIRTUAL`,
+  `TYPE_OVERLAY` or `TYPE_WIFI`.  With no such display the row says *Connect an
   external display to use the pointer* and a stored `1` is cleared, so
   unplugging the display cannot leave the pad's sticks consumed with no cursor
   target.
+* Why the strict test (#237): `DisplayManager.getDisplays()` also lists the
+  private virtual display this app creates for the *Match screen* LED effect
+  (`virtual:org.ashfall.parts:ashfall-led-sync`), overlay displays and cast
+  targets.  "Any display that is not display 0" therefore enabled the switch
+  with only the internal panel present.  A physical secondary display is a
+  presentation, non-private display and (on the RP5) `TYPE_EXTERNAL`; the RP5's
+  port-130 display also idles in `STATE_OFF` when nothing is plugged in, which
+  the state check rejects.
+* A **guard service** keeps that true while the dialog is closed (#238):
+  `PointerService` (foreground, `specialUse`, low-importance notification with
+  a **Stop** action) is started by the switch when it turns on, registers a
+  `DisplayManager.DisplayListener` and clears `persist.ashfall.pad.pointer`
+  when no qualifying display remains - unplugged, powered off or changed type.
+  It stops itself right after, so nothing runs while the pointer is off.  Stop
+  in the notification turns the switch off; a refused foreground start clears
+  the property instead of leaving it latched; repeated starts are idempotent
+  and the service is `START_STICKY`, so a process kill does not drop the guard.
 * The daemon reads the property every 250 ms and applies it live, no restart.
   A missing value means off; a malformed value is ignored (logged once per
   distinct text) and never flips the switch, so it cannot strand the device in
   pointer mode.
 * There is no status property and no daemon-side display check: the daemon does
   exactly what the property says, which also makes it testable with `setprop`.
+  The display policy lives in the app: the dialog gate plus `PointerService`.
 * There is **no chord**.  The old `L1+R1+Start` fallback is gone: L1 is now a
   mouse button, and the combination fired in games while they used L1/R1/Start.
 
@@ -808,6 +828,8 @@ device pass; nothing below runs on the internal panel.
 1. `getprop persist.ashfall.pad.pointer` unset and no external display:
    `getevent -pl` shows **no** `AshFall RP5 Pointer`, and the Fusion QS dialog
    shows the row disabled with *Connect an external display to use the pointer*.
+   Repeat with Lighting -> *Match screen* on (the app creates its
+   `ashfall-led-sync` virtual display): the row must stay disabled (#237).
 2. Connect the display, open the Fusion QS dialog, enable **Desktop pointer**:
    `getprop persist.ashfall.pad.pointer` is `1`, `getevent -pl` shows
    `AshFall RP5 Pointer` with `REL_X REL_Y REL_WHEEL REL_HWHEEL`,
@@ -827,9 +849,13 @@ device pass; nothing below runs on the internal panel.
    the game, no L1 click, no stick input from the internal pad; the other
    buttons still work.  Turn the pointer off and confirm the full pad returns
    without a reboot and with no stuck key.
-7. Unplug the external display (or turn it off) and reopen the Fusion dialog:
-   the switch is disabled and `persist.ashfall.pad.pointer` is `0`; no
-   `AshFall RP5 Pointer` in `getevent -pl`.
+7. Unplug the external display (or turn it off) **with the dialog closed**: the
+   `PointerService` notification appears while the pointer is on, disappears,
+   `persist.ashfall.pad.pointer` becomes `0` and `getevent -pl` stops listing
+   `AshFall RP5 Pointer` without reopening the dialog (#238).  Reopen the
+   dialog: the switch is disabled.  The notification's **Stop** action also
+   clears the property; no notification is left behind and
+   `dumpsys activity services org.ashfall.parts` shows no `PointerService`.
 8. `GRAB ON`: cursor freezes, clicks/scroll do nothing, every button still
    appears in the RAW stream; `GRAB OFF` restores the pointer.
 9. Screen off/on: cursor stops after the MCU quiet timeout and resumes with the

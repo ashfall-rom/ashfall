@@ -18,11 +18,9 @@ package org.ashfall.parts.qs;
 
 import android.app.Dialog;
 import android.content.Context;
-import android.hardware.display.DisplayManager;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
-import android.view.Display;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
@@ -37,7 +35,9 @@ import android.widget.Toast;
 
 import androidx.annotation.NonNull;
 
+import org.ashfall.parts.PointerService;
 import org.ashfall.parts.R;
+import org.ashfall.parts.hw.Displays;
 import org.ashfall.parts.hw.Pad;
 import org.ashfall.parts.ipc.FusionClient;
 import org.ashfall.parts.ui.Ui;
@@ -57,10 +57,14 @@ import java.util.List;
  * <p>The last row is the external-display **desktop pointer** switch (#131): it
  * is not a Fusion setting, it writes {@code persist.ashfall.pad.pointer}, the
  * only switch the input daemon reads for the second uinput pointer device.  It
- * has no target on the internal panel, so it is only enabled while a secondary
- * display is present and awake ({@link #hasExternalDisplay()}); a stale "on"
- * value is cleared instead of turning the pad into a mouse with nothing to
- * point at.
+ * has no target on the internal panel, so it is only enabled while a real
+ * presentation display is attached and awake ({@link Displays#hasExternal},
+ * which excludes this app's own virtual capture display, overlays and casts,
+ * #237); a stale "on" value is cleared instead of turning the pad into a mouse
+ * with nothing to point at.
+ *
+ * <p>While the switch is on, {@link PointerService} keeps enforcing that: the
+ * dialog is not the only guard any more (#238).
  */
 public class FusionDialog extends Dialog {
 
@@ -134,13 +138,21 @@ public class FusionDialog extends Dialog {
             if (mUpdating) {
                 return;
             }
-            if (checked && !hasExternalDisplay()) {
+            if (checked && !Displays.hasExternal(getContext())) {
                 /* No target: refuse the switch instead of consuming the pad's
                  * sticks with nothing to point at. */
                 updatePointer();
                 return;
             }
             Pad.setPointer(checked);
+            if (checked) {
+                /* Keep guarding after the dialog closes: the service clears the
+                 * switch if the display goes away (#238).  A refused start
+                 * clears it here. */
+                PointerService.start(getContext());
+            } else {
+                PointerService.stop(getContext());
+            }
             if (mListener != null) {
                 mListener.onChanged();
             }
@@ -276,28 +288,8 @@ public class FusionDialog extends Dialog {
     }
 
     /**
-     * A secondary display is connected and awake: any display that is not the
-     * default one and is not {@link Display#STATE_OFF}.  Doze and a pending
-     * power-off therefore count as "no display".
-     */
-    private boolean hasExternalDisplay() {
-        final DisplayManager manager =
-                (DisplayManager) getContext().getSystemService(Context.DISPLAY_SERVICE);
-        if (manager == null) {
-            return false;
-        }
-        for (Display display : manager.getDisplays()) {
-            if (display.getDisplayId() != Display.DEFAULT_DISPLAY
-                    && display.getState() != Display.STATE_OFF) {
-                return true;
-            }
-        }
-        return false;
-    }
-
-    /**
      * Mirrors {@code persist.ashfall.pad.pointer} and the display state into the
-     * row.  Without a secondary display the switch is disabled and a stored
+     * row.  Without a presentation display the switch is disabled and a stored
      * "on" is cleared, so unplugging the display cannot leave the pad's sticks
      * consumed with no cursor target.
      */
@@ -305,9 +297,10 @@ public class FusionDialog extends Dialog {
         if (mPointerSwitch == null) {
             return;
         }
-        final boolean external = hasExternalDisplay();
+        final boolean external = Displays.hasExternal(getContext());
         if (!external && Pad.pointer()) {
             Pad.setPointer(false);
+            PointerService.stop(getContext());
             if (mListener != null) {
                 mListener.onChanged();
             }
