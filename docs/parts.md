@@ -332,16 +332,18 @@ contract does not change — the sampler is one more publisher of
 |---|---|---|
 | Screen rate | `persist.ashfall.led.screen_rate` | `10` (default) / `15` / `30` frames per second |
 | Delay changes | `persist.ashfall.led.screen_delay` | `0` (Off, default) / `100` / `250` / `500` ms |
+| Colour boost | `persist.ashfall.led.screen_boost` | `0` (Off) / `30` (Low) / `60` (Medium, default) / `100` (High) percent added to HSV saturation |
 | Brightness | `persist.ashfall.led.brightness` | scales the published colour on every publish |
 
 * **Literal split average.**  The screen is split in two and each half is
   averaged on its own in linear light, then re-encoded: the left half always
   drives the left ring and the right half the right ring.  A white UI therefore
   gives white rings, and an even red/blue split gives one red and one blue
-  ring.  There is no chroma weighting, no saturation/value lift and no
-  hold-last-colour heuristic for whites or greys.  The **target selector does
-  not change Match screen**; Both/Left/Right still apply to the static colour
-  only.  Each ring holds its own last colour when its half goes black — one
+  ring.  There is no chroma weighting in the average itself and no value
+  lift; the optional **Colour boost** below is the only saturation change.  No
+  hold-last-colour heuristic applies to whites or greys.  The
+  **target selector does not change Match screen**; Both/Left/Right still apply
+  to the static colour only.  Each ring holds its own last colour when its half goes black — one
   black half is never filled from the other (#196).  Until a half has shown a
   colour at least once, nothing is published and the configured effect stays.
   One colour per ring, no per-LED zones.
@@ -354,14 +356,23 @@ contract does not change — the sampler is one more publisher of
   therefore fires within ~100 ms of becoming due, and a brightness-only change
   is re-applied on the same tick.  It is a stability gate, not an animation,
   and it is UI-only (`ashfall-hwd` never reads it).
+* **Colour boost** multiplies HSV saturation of the published average by
+  `1 + pct/100` (Low 1.3, Medium 1.6, High 2.0) and keeps the value, so the
+  ring keeps its brightness but gains chroma — low-saturation video, which the
+  literal average turns near-white, reads as colour on the LEDs.  White/grey
+  (S = 0) and fully saturated colours (S = 1, e.g. an exact red/blue split) are
+  unchanged, and Off is a bit-exact copy of the literal average.  It is read
+  live on every publish like brightness, after the average and delay gate and
+  before the brightness scale.  UI-only; the daemon never reads it.
 * Capture: `DisplayManager.createVirtualDisplay` with
   `VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR` into an `ImageReader` (RGBA_8888, 64×36),
   `CAPTURE_VIDEO_OUTPUT`.  No MediaProjection, no consent dialog.
 * Processing: sRGB decode → per-half average in linear light → sRGB encode →
-  optional delay gate → brightness.  No smoothing or colour boost is applied,
-  and `led.speed` no longer affects Match screen (it stays available for
-  breathing, rainbow and duo).  The brightness slider is read on every publish,
-  so moving it changes the rings on the next frame or sampler tick (≤ ~100 ms)
+  optional delay gate → colour boost → brightness.  No smoothing or colour
+  lift is applied to the average itself, and `led.speed` no longer affects
+  Match screen (it stays available for breathing, rainbow and duo).  Both the
+  brightness slider and Colour boost are read on every publish, so moving
+  either changes the rings on the next frame or sampler tick (≤ ~100 ms)
   without restarting the effect.  A 100 ms tick on the sampler handler also
   advances the delay gate, because the mirror is damage-driven and a static
   screen may deliver no frames (#241); the tick stops with the sampler and
@@ -399,7 +410,10 @@ contract does not change — the sampler is one more publisher of
   repaints an average that holds still for 500 ms; on a fully static image
   (mirror delivers no new frames) the 500 ms pair still appears and one last
   brightness move still applies, both within ~100 ms of the deadline
-  (#241); a `FLAG_SECURE` page keeps
+  (#241); Colour boost changes the rings live — Off reproduces the literal
+  average exactly, Medium adds chroma to the muted video samples
+  (`736A69:666260`-style frames gain tint) while a red/blue split stays exact
+  and a white page stays white; a `FLAG_SECURE` page keeps
   the previous colour via the heartbeat; `am force-stop org.ashfall.parts`
   clears the override within 1.5 s (daemon guardian) and the configured effect
   returns.
@@ -640,8 +654,8 @@ Read/written exactly as specified in `docs/phase5.md`:
 * `ashfall.ui.{fan_live,fan_preview_curve}`
 * `ashfall.status.fan.{temp,pct,rpm,safety}`
 * `persist.ashfall.led.{mode,color_left,color_right,sync,brightness,speed}`
-* `persist.ashfall.led.{screen_sync,screen_rate,screen_delay}` (UI-only; Match
-  screen, #167)
+* `persist.ashfall.led.{screen_sync,screen_rate,screen_delay,screen_boost}`
+  (UI-only; Match screen, #167)
 * `ashfall.ui.{led_override,led_override_live,led_suspend}` (live colour, its
   heartbeat, and the gamepad tester's suspend flag)
 * `ashfall.perf.throttle_override`, `persist.ashfall.perf.throttle_override_permanent`
