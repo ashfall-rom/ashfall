@@ -4,9 +4,10 @@
  * The daemon's gamepad device identity follows fusion (docs/phase6.md §9.8):
  * fusion off is the phase-5 "AshFall RP5 Gamepad" with the MCU keymap, fusion
  * on is the Xbox-layout pad with the merged key/axis capability set plus force
- * feedback, so rumble can be relayed to the physical pads.  Desktop mode adds
- * a second, separate "AshFall RP5 Pointer" device (#131) built from the same
- * spec, so the gamepad capabilities never gain relative axes.
+ * feedback, so rumble can be relayed to the physical pads.  The
+ * external-display pointer adds a second, separate "AshFall RP5 Pointer" device
+ * (#131) built from the same spec, so the gamepad capabilities never gain
+ * relative axes.
  *
  * The ioctl sequence lives behind struct uinput_dev_ops instead of in the
  * hardware loop because the kernel reports every mistake at the same place:
@@ -53,7 +54,7 @@ struct uinput_dev_spec {
     int key_count;
     const uint16_t *axes; /* EV_ABS codes, advertised in this order */
     int axis_count;
-    const uint16_t *rels; /* EV_REL codes (desktop pointer, #131) */
+    const uint16_t *rels; /* EV_REL codes (external-display pointer, #131) */
     int rel_count;
     const uint16_t *props; /* INPUT_PROP_* bits (UI_SET_PROPBIT) */
     int prop_count;

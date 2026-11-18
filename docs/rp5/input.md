@@ -642,27 +642,79 @@ unaffected (issue #120).  `/dev/uinput` and `serial_device` stay as they were.
 The settings properties need no new rule - the app writes them and
 `get_prop(ashfall_rp5_input, ashfall_prop)` already exists.
 
-## Desktop mode: gamepad pointer (#131)
+## External-display gamepad pointer (#131)
 
-Desktop windowing on the internal display has no trackpad and no touch cursor,
-so desktop mode turns the built-in pad into a mouse.  The pointer is a
-**second uinput device**, never a change to the gamepad: games keep seeing the
-exact `AshFall RP5 Gamepad` / `AshFall Fusion Controller` they always saw, with
-no relative axes and no mouse buttons.
+A screen connected over USB-C DP/HDMI has no trackpad and no touch cursor, so
+the built-in pad can act as a mouse there.  The pointer is a **second uinput
+device**, never a change to the gamepad, and it exists only while the switch is
+on.
 
-Contract: issue #131, orchestrator decision comment (2026-11-16), workstream B.
-The AshFall Parts switch and the QS tile are **workstream F2** and land
-separately; the daemon side (property + chord) is complete without them.
+On-screen desktop windowing on the internal panel is **not planned** (the
+`no-rro` framework config overlay, the freeform feature copy, the Launcher3
+desktop hunk and the AshFall Parts Display page/tile were removed in #131).
+What remains is this pointer, driven by **one** property and one switch.
+
+### Switch
+
+| property | values | default |
+|---|---|---|
+| `persist.ashfall.pad.pointer` | `1` / `0` | `0` |
+
+* The switch is the last row of the **Fusion Quick Settings dialog**
+  (`res/layout/fusion_qs_dialog.xml`, `qs/FusionDialog.java`), labelled
+  *Desktop pointer*, summary *Right stick moves the mouse on an external
+  display*.  The app is the writer; the daemon only reads.
+* It is **enabled only while a physical secondary display is attached and
+  awake** (`hw/Displays.java`, the single gate): `displayId != 0`,
+  `state == STATE_ON`, `FLAG_PRIVATE` clear, and a platform type that is not
+  `TYPE_VIRTUAL`, `TYPE_OVERLAY` or `TYPE_WIFI` (an unknown/unreadable type is
+  accepted).  With no such display the row says *Connect an external display to
+  use the pointer* and a stored `1` is cleared, so unplugging the display cannot
+  leave the pad's sticks consumed with no cursor target.
+* Why the private/virtual exclusion (#237): `DisplayManager.getDisplays()` also
+  lists the private virtual display this app creates for the *Match screen* LED
+  effect (`virtual:org.ashfall.parts:ashfall-led-sync`), overlay displays and
+  cast targets.  "Any display that is not display 0" therefore enabled the
+  switch with only the internal panel present.  `FLAG_PRIVATE` plus the virtual/
+  overlay/wifi type exclusion rejects all three; the RP5's port-130 display also
+  idles in `STATE_OFF` when nothing is plugged in, which the state check rejects.
+* **No `FLAG_PRESENTATION` and no `TYPE_EXTERNAL` requirement** (device
+  evidence, #237): the RP5's secondary display is displayId 2, 1280x720, port
+  130, and `dumpsys display` reports `type INTERNAL` with
+  `FLAG_ALLOWED_TO_BE_DEFAULT_DISPLAY|FLAG_ROTATES_WITH_CONTENT|FLAG_SECURE|
+  FLAG_SUPPORTS_PROTECTED_BUFFERS|FLAG_TRUSTED` - no `FLAG_PRESENTATION`.  The
+  vendor display config declares the DP sink as an internal port, so an
+  AOSP-shaped "external presentation display" test would disable the pointer on
+  the only device it exists for.  Enumerating the presentation category would be
+  empty for the same reason, so the gate iterates every display.
+* A **guard service** keeps that true while the dialog is closed (#238):
+  `PointerService` (foreground, `specialUse`, low-importance notification with
+  a **Stop** action) is started by the switch when it turns on, registers a
+  `DisplayManager.DisplayListener` and clears `persist.ashfall.pad.pointer`
+  when no qualifying display remains - unplugged, powered off or changed type.
+  It stops itself right after, so nothing runs while the pointer is off.  Stop
+  in the notification turns the switch off; a refused foreground start clears
+  the property instead of leaving it latched; repeated starts are idempotent
+  and the service is `START_STICKY`, so a process kill does not drop the guard.
+* The daemon reads the property every 250 ms and applies it live, no restart.
+  A missing value means off; a malformed value is ignored (logged once per
+  distinct text) and never flips the switch, so it cannot strand the device in
+  pointer mode.
+* There is no status property and no daemon-side display check: the daemon does
+  exactly what the property says, which also makes it testable with `setprop`.
+  The display policy lives in the app: the dialog gate plus `PointerService`.
+* There is **no chord**.  The old `L1+R1+Start` fallback is gone: L1 is now a
+  mouse button, and the combination fired in games while they used L1/R1/Start.
 
 ### Devices
 
-| mode | uinput devices |
+| state | uinput devices |
 |---|---|
-| `game` (default) | gamepad only (`AshFall RP5 Gamepad` 2020:3001, or `AshFall Fusion Controller` 045e:028e with fusion on) |
-| `desktop` | the same gamepad **plus** `AshFall RP5 Pointer`, 2020:3002 |
+| off (default) | gamepad only (`AshFall RP5 Gamepad` 2020:3001, or `AshFall Fusion Controller` 045e:028e with fusion on) |
+| on | the same gamepad **plus** `AshFall RP5 Pointer`, 2020:3002 |
 
-`AshFall RP5 Pointer` is created when desktop mode becomes active and destroyed
-on the way back to game mode, so no mouse device exists at all in game mode.
+`AshFall RP5 Pointer` is created when the switch turns on and destroyed on the
+way off, so with the pointer off no mouse device exists at all.
 
 ```
 AshFall RP5 Pointer
@@ -671,95 +723,57 @@ AshFall RP5 Pointer
   INPUT_PROP_POINTER
 ```
 
-`uinput_dev.c` gained `rels`/`props` in `struct uinput_dev_spec` for this
-(`UI_SET_RELBIT`, `UI_SET_PROPBIT`).  Both devices still come from the same
-construction code and ioctl order, so the #156 `ff_effects_max` rule is
+`BTN_MIDDLE` is advertised for pointer identity only; the mapping below never
+presses it.  `uinput_dev.c` gained `rels`/`props` in `struct uinput_dev_spec`
+for this (`UI_SET_RELBIT`, `UI_SET_PROPBIT`).  Both devices still come from the
+same construction code and ioctl order, so the #156 `ff_effects_max` rule is
 untouched.  `REL_X` is code 0, so unlike the MCU keymap the relative-axis list
 has no hole sentinel.
 
-### Mode property and chord
+### Mapping (pointer mode only)
 
-| property | values | default |
+| input | action | gamepad device |
 |---|---|---|
-| `persist.ashfall.pad.mode` | `game` / `desktop` | `game` |
+| Right stick | pointer movement (`REL_X`/`REL_Y`) | **consumed** (zeroed) |
+| L1 | left button (`BTN_LEFT`); hold + move = drag | **consumed** |
+| L2 (analog) | right button (`BTN_RIGHT`), 50 %/37.5 % hysteresis | **consumed** (axis zeroed) |
+| Left stick vertical | scroll up/down (`REL_WHEEL`, stick up = +1) | **consumed** (zeroed) |
+| Left stick horizontal | scroll left/right (`REL_HWHEEL`, stick right = +1) | **consumed** (zeroed) |
+| R1, R2 | `BTN_TR` / `ABS_GAS` | unchanged |
+| A, B, X, Y, R3, L3 | face/thumb buttons | unchanged |
+| D-pad | focus navigation (`ABS_HAT0X/Y`) | unchanged |
+| Start / Select | `BTN_START` / `BTN_SELECT` | unchanged |
+| Home / Back | `KEY_HOMEPAGE` / `KEY_BACK` | unchanged |
 
-The daemon reads it every 250 ms and applies it live, no restart.  As with
-`persist.ashfall.pad.fusion`, the **app/QS tile is the writer**; the daemon only
-reads.  A value is adopted when its **text or its property write serial**
-changes: bionic bumps the serial on every successful set even when the text is
-identical, so a two-state toggle still works after a chord (see below).  A
-missing value means `game`; a malformed value is ignored (logged once per
-distinct text) and never forces a mode, so it cannot strand the device in
-desktop mode.
+Consumption is a routing step, not a capability change: the MCU frame is
+reshaped before it reaches the gamepad device (`pointer_route()` in
+`ashfall_rp5_input.c`), so a game sees no L1 click, no trigger pull and no
+stick deflection that the pointer already used, while every other button keeps
+working.  Only the **internal pad** is masked: pads merged by Gamepad Fusion
+keep their full mapping, and `RAW` still streams every physical value.  The mask
+follows the live pointer device: if `/dev/uinput` is missing so the pointer
+device could not be created, the pad keeps its full mapping rather than losing
+inputs to a pointer that is not there.
 
-The effective mode is published as `ashfall.status.pad.mode`
-(`game`/`desktop`) for Parts/QS to display.
+Implementation choices:
 
-Fallback chord: **L1+R1+Start held ~1 s**.  It switches the live mode in either
-direction, works without the app, and re-arms only after all three buttons are
-released - a held chord fires exactly once, and the mode switch it causes does
-not release/re-arm it.  It is ignored while a tester owns GRAB.
-
-The chord does **not** write `persist.ashfall.pad.mode`: sepolicy grants this
-daemon `get_prop` only for `ashfall_prop`, the app is the only writer.  The
-serial check is what keeps the two sides consistent: after a chord the property
-still holds the pre-chord text, but the next Parts/QS write - even one that
-repeats that text - bumps the serial and is applied immediately.  No toggle
-state is lost and no reboot is needed.
-
-Every switch - property or chord, either direction - is a hard input reset:
-
-* every button held on the **gamepad** is released (`session.c` rules: one
-  key-up per held key, `0` for every non-resting axis, one `SYN_REPORT`; the
-  next MCU frame re-reports the physical state);
-* every button held on the **pointer** is released and drag/wheel-repeat state
-  is cleared;
-* velocity, the fractional-pixel remainder and all repeat timers are zeroed, so
-  the new mode starts from rest instead of jumping.
-
-### Mapping (desktop mode only)
-
-| input | action |
-|---|---|
-| Right stick | pointer movement (`REL_X`/`REL_Y`) |
-| R3 and A | left click (`BTN_LEFT`) |
-| B | right click (`BTN_RIGHT`) |
-| R2 | middle click (`BTN_MIDDLE`) - the "alternate click" choice |
-| L2 | drag: holds `BTN_LEFT` while pulled (the "drag" choice) |
-| L1 / R1 | scroll up (`REL_WHEEL +1`) / scroll down (`-1`), repeated while held |
-| D-pad | focus navigation, unchanged |
-| Start / Select | Enter / Escape, unchanged |
-
-Implementation choices and their reasons:
-
-* **A and R3 share BTN_LEFT** with the L2 drag.  It goes up only when no source
-  is active, so releasing A while L2 is still pulled keeps a drag alive instead
-  of dropping it (and vice versa).
-* **Analog triggers have hysteresis**: press at >= 50 % (128/255), release at
-  <= 37.5 % (96/255), so a trigger resting on the threshold cannot chatter.
-* **Wheel repeat**: one notch immediately, then a 400 ms initial delay and
-  80 ms repeat while the shoulder button is held.  A long stall is clamped to
-  one notch, never a burst.
-* **Left stick -> synthesized D-pad is not implemented in v1.**  The pointer
-  device advertises only mouse buttons and relative axes, and the gamepad's
-  capability set must not change, so there is no device that could carry
-  `KEY_UP`/`DOWN`/`LEFT`/`RIGHT`.  Emitting `ABS_HAT0X/Y` instead would fight
-  the physical D-pad's focus behaviour, exactly the instability the issue asks
-  to avoid.  The physical D-pad already navigates focus.  Adding it later needs
-  a deliberate capability decision, not a hidden extra bit.
-* The **gamepad keeps reporting every axis in desktop mode**, including the
-  right stick.  Android desktop uses the pointer for the cursor and the pad
-  only for gamepad consumers, so suppressing an axis would only diverge from
-  game mode for no benefit.
+* **L2 hysteresis**: press at >= 50 % (128/255), release at <= 37.5 %
+  (96/255), so a trigger resting on the threshold cannot chatter.
+* **Scroll repeat**: one notch immediately when an axis leaves the deadzone
+  (and immediately again when it reverses), then a repeat that accelerates with
+  deflection - ~250 ms just outside the deadzone, 60 ms at full push (4 -> 16
+  notches/s).  A long stall is clamped to one notch, never a burst.
+* **Per-axis scroll deadzone**: 5 % of travel on each axis independently, so a
+  diagonal push does not need both axes past the threshold to scroll.
+* Left stick never moves the cursor and right stick never scrolls.
 
 ### Curve and rate
 
-While desktop mode is active the daemon wakes on a **fixed 125 Hz tick**
-(8 ms), not on MCU frame changes: a held stick keeps moving even when the MCU
-sends no changed status frame.  An idle stick emits nothing; a held one emits
-every tick.  The poll timeout is shortened to the next tick only while desktop
-mode is active and the pointer device exists, so game mode keeps its 250 ms /
-500 ms idle wakeup.
+While the pointer is on the daemon wakes on a **fixed 125 Hz tick** (8 ms), not
+on MCU frame changes: a held stick keeps moving even when the MCU sends no
+changed status frame.  An idle stick emits nothing.  The poll timeout is
+shortened to the next tick only while the pointer device exists, so the normal
+mode keeps its 250 ms / 500 ms idle wakeup.
 
 | parameter | value |
 |---|---|
@@ -770,9 +784,9 @@ mode is active and the pointer device exists, so game mode keeps its 250 ms /
 | fractional pixels | the sub-pixel remainder is accumulated across ticks, so a slow stick still moves the exact distance instead of rounding to a standstill |
 | longest step | 50 ms: a stalled loop must not teleport the cursor |
 
-Right-stick values reach the pointer after calibration (`stick_map`), so the
-ADC inversion, stick centring and factory/user calibration all apply exactly as
-they do to the gamepad.
+Right- and left-stick values reach the pointer after calibration (`stick_map`),
+so the ADC inversion, stick centring and factory/user calibration all apply
+exactly as they do to the gamepad.
 
 ### GRAB and RAW
 
@@ -781,32 +795,29 @@ they do to the gamepad.
 * the pointer buttons are released when GRAB turns on, then **nothing** is
   injected into either uinput device - the cursor does not move and no click,
   wheel or drag reaches Android while a tester owns the grab;
-* the pointer tick (motion, buttons, wheel) and the **L1+R1+Start chord** are
-  not evaluated while GRAB is on, so the chord does nothing until GRAB OFF;
-* a **property** mode change is not suppressed: `persist.ashfall.pad.mode`
-  keeps being polled and `apply_pad_mode()` still runs while grabbed.  The
-  pointer uinput device is created or destroyed, the tracked pointer state is
-  cleared silently and `ashfall.status.pad.mode` is republished - but no event
-  is injected into either device, so the tester still sees no cursor, click,
-  wheel or drag.  (Only the chord is skipped; `setprop` is not.)
-* `RAW ON` stream and its bit layout are unchanged; the tester still sees every
+* the pointer tick (motion, buttons, scroll) is not evaluated while GRAB is on;
+* a **property** change is not suppressed: `persist.ashfall.pad.pointer` keeps
+  being polled and the switch still applies while grabbed.  The pointer uinput
+  device is created or destroyed and the tracked pointer state is cleared
+  silently - but no event is injected into either device, so the tester still
+  sees no cursor, click, wheel or drag;
+* `RAW ON` and its bit layout are unchanged; the tester still sees every
   button, including A/B/R3/L1/R1/L2/R2, in the 100 Hz RAW frames;
 * `GRAB OFF` clears the pointer state and resumes on the next 125 Hz tick from
-  the last MCU frame tracked during GRAB (frames keep updating the pointer state
-  while grabbed); the gamepad does its usual full re-report on the next frame.
+  the last MCU frame tracked during GRAB; the gamepad does its usual full
+  re-report on the next frame.
 
 ### Files
 
-* `pointer.c` / `pointer.h` - mode property, chord, curve, 125 Hz tick, button
-  OR/hysteresis, wheel repeat, release/clear.  Free of evdev/uinput, so the host
-  tests cover it.
+* `pointer.c` / `pointer.h` - switch parsing, curve, 125 Hz tick, the two
+  buttons, left-stick scroll repeat, release/clear.  Free of evdev/uinput, so
+  the host tests cover it.
 * `uinput_dev.c` / `uinput_dev.h` - relative axes and `INPUT_PROP_*` support.
-* `ashfall_rp5_input.c` - pointer device lifecycle, mode switches, GRAB/MCU
-  release integration, 125 Hz poll timeout.
-* `tests/test_input.c` - mode parsing/latching, same-text property writes,
-  chord latch across the mode switch, game-mode silence, deadzone, fraction,
-  cap, buttons, wheel, chord, release, stale-frame timeout and the pointer
-  capability sequence.
+* `ashfall_rp5_input.c` - pointer device lifecycle, input routing (the consumed
+  keys/axes), GRAB/MCU release integration, 125 Hz poll timeout.
+* `tests/test_input.c` - switch parsing/latching, off-mode silence, deadzone,
+  fraction, cap, buttons, scroll repeat, no chord, release, stale-frame timeout
+  and the pointer capability sequence.
 
 ### Verification without a device
 
@@ -818,32 +829,49 @@ cc -std=gnu11 -DASHFALL_HOST -Wall -Wextra -Wno-unused-parameter \
 
 ### What to measure on the RP5
 
-1. `getprop persist.ashfall.pad.mode` unset -> normal boot is fullscreen and
-   `getevent -pl` shows **no** `AshFall RP5 Pointer`.
-2. `setprop persist.ashfall.pad.mode desktop` ->
-   `getevent -pl` shows `AshFall RP5 Pointer` with `REL_X REL_Y REL_WHEEL
-   REL_HWHEEL`, `BTN_LEFT BTN_RIGHT BTN_MIDDLE` and `INPUT_PROP_POINTER`, and a
-   system cursor appears.  `getprop ashfall.status.pad.mode` -> `desktop`.
+Needs an external display connected (USB-C DP or HDMI) and the orchestrator's
+device pass; nothing below runs on the internal panel.
+
+1. `getprop persist.ashfall.pad.pointer` unset and no external display:
+   `getevent -pl` shows **no** `AshFall RP5 Pointer`, and the Fusion QS dialog
+   shows the row disabled with *Connect an external display to use the pointer*.
+   Repeat with Lighting -> *Match screen* on (the app creates its
+   `ashfall-led-sync` virtual display): the row must stay disabled (#237).
+2. Connect the display, open the Fusion QS dialog, enable **Desktop pointer**:
+   `getprop persist.ashfall.pad.pointer` is `1`, `getevent -pl` shows
+   `AshFall RP5 Pointer` with `REL_X REL_Y REL_WHEEL REL_HWHEEL`,
+   `BTN_LEFT BTN_RIGHT BTN_MIDDLE` and `INPUT_PROP_POINTER`, and the system
+   cursor appears on the external display.
 3. Right stick: cursor moves smoothly at 125 Hz; a held stick keeps moving; a
    diagonal move does not exceed ~1200 px/s; a tiny deflection just outside 5 %
    still moves (fractional accumulation), and inside 5 % does nothing.
-4. A / R3 click, B right-click, R2 middle-click, L2 drag (hold + move),
-   L1/R1 scroll up/down while held (400 ms then ~12 notches/s).
-5. Hold L1+R1+Start ~1 s: mode flips once (logcat `pad mode: desktop
-   (L1+R1+Start)`), both devices release, no stuck click.  Keep holding for
-   several more seconds: no further flips, no pointer device create/destroy
-   loop.  Release and hold again to switch back; the pointer device disappears.
-6. After the chord, toggle `persist.ashfall.pad.mode` back and forth with the
-   Parts switch/QS tile (including writing the value already stored): each
-   write takes effect within ~250 ms.  No stuck key in `getevent` on either
-   device, no `UI_DEV_CREATE failed`, no avc denial.
-7. `GRAB ON`: cursor freezes, clicks/wheel do nothing, every button still
+4. L1 click, L1 held + right stick = drag, L2 right click, left stick vertical
+   scroll (one notch at once, then faster with deflection), left stick
+   horizontal scroll.
+5. Pass-through: R1/R2/A/B/X/Y/R3/L3, D-pad, Start/Select and Home/Back still
+   reach the gamepad device (`getevent -l` on both nodes) and **L1/L2/sticks do
+   not** appear on the gamepad node while the pointer is on.  With the pointer
+   off the same buttons and both sticks are back on the gamepad node.
+6. Start a game with the pointer on: no cursor movement from the right stick in
+   the game, no L1 click, no stick input from the internal pad; the other
+   buttons still work.  Turn the pointer off and confirm the full pad returns
+   without a reboot and with no stuck key.
+7. Unplug the external display (or turn it off) **with the dialog closed**: the
+   `PointerService` notification appears while the pointer is on, disappears,
+   `persist.ashfall.pad.pointer` becomes `0` and `getevent -pl` stops listing
+   `AshFall RP5 Pointer` without reopening the dialog (#238).  Reopen the
+   dialog: the switch is disabled.  The notification's **Stop** action also
+   clears the property; no notification is left behind and
+   `dumpsys activity services org.ashfall.parts` shows no `PointerService`.
+8. `GRAB ON`: cursor freezes, clicks/scroll do nothing, every button still
    appears in the RAW stream; `GRAB OFF` restores the pointer.
-8. Screen off/on: cursor stops after the MCU quiet timeout and resumes with the
+9. Screen off/on: cursor stops after the MCU quiet timeout and resumes with the
    next frame; no button stays pressed.
-9. Fusion on + desktop mode: the merged pad still appears, the pointer is a
-   separate device and is never merged (it has no `EV_ABS`, so fusion's
-   classification skips it).
+10. Fusion on + pointer on: the merged pad still appears, the pointer is a
+    separate device and is never merged (it has no `EV_ABS`, so fusion's
+    classification skips it), and an external pad merged into the fusion pad
+    keeps all of its buttons and sticks.
+11. Enforcing build: `dmesg | grep avc` is clean after all of the above.
 
 ## Phase 5 test checklist (in addition to the one below)
 

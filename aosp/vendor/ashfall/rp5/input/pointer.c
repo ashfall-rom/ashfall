@@ -1,5 +1,5 @@
 /*
- * AshFall RP5 input: desktop-mode gamepad pointer (#131, workstream B).
+ * AshFall RP5 input: external-display gamepad pointer (#131).
  *
  * SPDX-License-Identifier: Apache-2.0
  */
@@ -30,99 +30,89 @@ static double clampd(double value, double lo, double hi)
     return value < lo ? lo : value > hi ? hi : value;
 }
 
+static int absi(int value)
+{
+    return value < 0 ? -value : value;
+}
+
 void pointer_defaults(struct pointer_state *ps)
 {
     if (!ps)
         return;
     memset(ps, 0, sizeof(*ps));
-    ps->mode = POINTER_MODE_GAME;
+    ps->on = false;
 }
 
-bool pointer_mode_parse(const char *text, enum pointer_mode *out)
+bool pointer_switch_parse(const char *text, bool *on)
 {
     if (!text)
         return false;
-    if (!strcmp(text, "game")) {
-        if (out)
-            *out = POINTER_MODE_GAME;
+    if (!strcmp(text, "1")) {
+        if (on)
+            *on = true;
         return true;
     }
-    if (!strcmp(text, "desktop")) {
-        if (out)
-            *out = POINTER_MODE_DESKTOP;
+    if (!strcmp(text, "0")) {
+        if (on)
+            *on = false;
         return true;
     }
     return false;
 }
 
-const char *pointer_mode_name(enum pointer_mode mode)
+bool pointer_switch_read(struct pointer_state *ps)
 {
-    return mode == POINTER_MODE_DESKTOP ? "desktop" : "game";
-}
-
-bool pointer_mode_read(struct pointer_state *ps)
-{
-    char text[16];
-    uint32_t serial = 0;
+    char text[8];
 
     if (!ps)
         return false;
-    if (prop_get_str_serial(PROP_PAD_MODE, text, sizeof(text), &serial) < 0 ||
-        !text[0])
-        snprintf(text, sizeof(text), "%s", "game");
-    return pointer_mode_observe(ps, text, serial);
+    if (prop_get_str(PROP_PAD_POINTER, text, sizeof(text)) < 0 || !text[0])
+        snprintf(text, sizeof(text), "%s", "0");
+    return pointer_switch_observe(ps, text);
 }
 
-bool pointer_mode_observe(struct pointer_state *ps, const char *text,
-                          uint32_t serial)
+bool pointer_switch_observe(struct pointer_state *ps, const char *text)
 {
-    enum pointer_mode mode = POINTER_MODE_GAME;
-    bool text_changed;
-    bool written;
+    bool on = false;
 
     if (!ps || !text)
         return false;
-    text_changed = strcmp(text, ps->mode_text) != 0;
-    written = serial != ps->mode_serial;
-    if (!text_changed && !written)
+    if (!strcmp(text, ps->prop_text))
         return false;
+    snprintf(ps->prop_text, sizeof(ps->prop_text), "%s", text);
 
-    if (text_changed)
-        snprintf(ps->mode_text, sizeof(ps->mode_text), "%s", text);
-    ps->mode_serial = serial;
-
-    if (!pointer_mode_parse(text, &mode)) {
-        /* Never let a typo change the live mode; at boot the default is game
-         * already.  Only a text change is worth a log line. */
-        if (text_changed)
-            ah_logf(AH_LOG_WARN, "%s=%s is not game|desktop, ignored",
-                    PROP_PAD_MODE, text);
+    if (!pointer_switch_parse(text, &on)) {
+        /* Never let a typo flip the switch; off is the boot default and the
+         * state the switch leaves behind when it is not set. */
+        ah_logf(AH_LOG_WARN, "%s=%s is not 0|1, ignored",
+                PROP_PAD_POINTER, text);
         return false;
     }
-    if (mode == ps->mode)
+    if (on == ps->on)
         return false;
-    ps->mode = mode;
+    ps->on = on;
     return true;
 }
 
-bool pointer_set_mode(struct pointer_state *ps, enum pointer_mode mode)
+bool pointer_set_enabled(struct pointer_state *ps, bool on)
 {
-    if (!ps || ps->mode == mode)
+    if (!ps || ps->on == on)
         return false;
-    ps->mode = mode;
+    ps->on = on;
     return true;
 }
 
-void pointer_frame(struct pointer_state *ps, uint16_t keys, int rx, int ry,
-                   int l2, int r2, int64_t now_ms)
+void pointer_frame(struct pointer_state *ps, uint16_t keys, int lx, int ly,
+                   int rx, int ry, int l2, int64_t now_ms)
 {
     if (!ps)
         return;
     ps->keys = keys;
+    ps->lx = lx;
+    ps->ly = ly;
     ps->rx = rx;
     ps->ry = ry;
     ps->l2 = l2;
-    ps->r2 = r2;
     ps->last_frame_ms = now_ms;
     ps->have_frame = true;
 }
@@ -135,33 +125,12 @@ static void pointer_age(struct pointer_state *ps, int64_t now_ms)
         now_ms - ps->last_frame_ms <= POINTER_FRAME_TIMEOUT_MS)
         return;
     ps->keys = 0;
+    ps->lx = 0;
+    ps->ly = 0;
     ps->rx = 0;
     ps->ry = 0;
     ps->l2 = 0;
-    ps->r2 = 0;
     ps->have_frame = false;
-}
-
-static void pointer_chord(struct pointer_state *ps, int64_t now_ms, bool *chord)
-{
-    bool held = (ps->keys & POINTER_CHORD_MASK) == POINTER_CHORD_MASK;
-
-    if (!held) {
-        ps->chord_since_ms = 0;
-        ps->chord_latched = false;
-        return;
-    }
-    if (ps->chord_latched)
-        return;
-    if (ps->chord_since_ms == 0) {
-        ps->chord_since_ms = now_ms;
-        return;
-    }
-    if (now_ms - ps->chord_since_ms >= POINTER_CHORD_MS) {
-        ps->chord_latched = true;
-        if (chord)
-            *chord = true;
-    }
 }
 
 static bool trigger_down(int value, bool was_down)
@@ -176,19 +145,14 @@ static bool trigger_down(int value, bool was_down)
 static void pointer_buttons(struct pointer_state *ps, session_emit_fn emit,
                             void *ctx, int *emitted)
 {
-    bool left;
+    /* L1 is the left button: holding it while the right stick moves is a drag.
+     * L2 is the right button, with the same 50 %/37.5 % trigger hysteresis the
+     * rest of the daemon uses. */
+    bool left = (ps->keys & POINTER_KEY_L1) != 0;
     bool right;
-    bool middle;
 
     ps->l2_down = trigger_down(ps->l2, ps->l2_down);
-    ps->r2_down = trigger_down(ps->r2, ps->r2_down);
-
-    /* Two buttons and the drag trigger share BTN_LEFT: it is up only when no
-     * source is active, so releasing one while the other is held cannot drop
-     * a drag (or a click) early. */
-    left = ((ps->keys & (POINTER_KEY_A | POINTER_KEY_R3)) != 0) || ps->l2_down;
-    right = (ps->keys & POINTER_KEY_B) != 0;
-    middle = ps->r2_down;
+    right = ps->l2_down;
 
     if (left != ps->btn_left) {
         ps->btn_left = left;
@@ -200,45 +164,74 @@ static void pointer_buttons(struct pointer_state *ps, session_emit_fn emit,
         emit(ctx, EV_KEY, BTN_RIGHT, right);
         (*emitted)++;
     }
-    if (middle != ps->btn_middle) {
-        ps->btn_middle = middle;
-        emit(ctx, EV_KEY, BTN_MIDDLE, middle);
-        (*emitted)++;
-    }
 }
 
-static void wheel_repeat(struct pointer_state *ps, bool held, bool *was_held,
-                         int64_t *next_ms, int64_t now_ms, int32_t direction,
-                         session_emit_fn emit, void *ctx, int *emitted)
+/* Direction of one stick axis outside the scroll deadzone, 0 inside it. */
+static int scroll_dir(int value)
 {
-    if (!held) {
-        *was_held = false;
+    int dz = (int)(32768.0 * POINTER_SCROLL_DEADZONE_PCT / 100.0);
+
+    if (value > dz)
+        return 1;
+    if (value < -dz)
+        return -1;
+    return 0;
+}
+
+/* Repeat interval for this deflection: 4 notches/s just outside the deadzone,
+ * 16/s at full push.  Re-evaluated every tick, so pushing further accelerates
+ * immediately instead of waiting for the next repeat. */
+static int scroll_interval_ms(int value)
+{
+    double dz = 32768.0 * POINTER_SCROLL_DEADZONE_PCT / 100.0;
+    double n = ((double)absi(value) - dz) / (32768.0 - dz);
+    double span = (double)(POINTER_SCROLL_SLOW_MS - POINTER_SCROLL_FAST_MS);
+
+    n = clampd(n, 0.0, 1.0);
+    /* Round instead of truncating: a fully pushed stick must repeat at exactly
+     * POINTER_SCROLL_FAST_MS, and the arithmetic above is one notch short. */
+    return POINTER_SCROLL_SLOW_MS - (int)(n * span + 0.5);
+}
+
+static void scroll_axis(struct pointer_repeat *repeat, int value,
+                        uint16_t code, int64_t now_ms, session_emit_fn emit,
+                        void *ctx, int *emitted)
+{
+    int dir = scroll_dir(value);
+
+    if (dir == 0) {
+        repeat->held = false;
+        repeat->dir = 0;
         return;
     }
-    if (!*was_held) {
-        *was_held = true;
-        *next_ms = now_ms + POINTER_REPEAT_DELAY_MS;
-        emit(ctx, EV_REL, REL_WHEEL, direction);
+    if (!repeat->held || dir != repeat->dir) {
+        /* Leaving the deadzone and reversing both click at once: scrolling
+         * must never feel delayed at the start. */
+        repeat->held = true;
+        repeat->dir = dir;
+        repeat->next_ms = now_ms + scroll_interval_ms(value);
+        emit(ctx, EV_REL, code, dir);
         (*emitted)++;
         return;
     }
-    if (now_ms < *next_ms)
+    if (now_ms < repeat->next_ms)
         return;
-    emit(ctx, EV_REL, REL_WHEEL, direction);
+    emit(ctx, EV_REL, code, dir);
     (*emitted)++;
-    *next_ms += POINTER_REPEAT_MS;
+    repeat->next_ms += scroll_interval_ms(value);
     /* A long stall must not turn into a burst of notches. */
-    if (*next_ms <= now_ms)
-        *next_ms = now_ms + POINTER_REPEAT_MS;
+    if (repeat->next_ms <= now_ms)
+        repeat->next_ms = now_ms + scroll_interval_ms(value);
 }
 
-static void pointer_wheel(struct pointer_state *ps, int64_t now_ms,
-                          session_emit_fn emit, void *ctx, int *emitted)
+static void pointer_scroll(struct pointer_state *ps, int64_t now_ms,
+                           session_emit_fn emit, void *ctx, int *emitted)
 {
-    wheel_repeat(ps, (ps->keys & POINTER_KEY_L1) != 0, &ps->l1_held,
-                 &ps->l1_next_ms, now_ms, 1, emit, ctx, emitted);
-    wheel_repeat(ps, (ps->keys & POINTER_KEY_R1) != 0, &ps->r1_held,
-                 &ps->r1_next_ms, now_ms, -1, emit, ctx, emitted);
+    /* ABS_Y is negative when the stick is pushed up and REL_WHEEL +1 scrolls
+     * up, so the vertical sign is inverted; ABS_X and REL_HWHEEL agree
+     * (positive = right). */
+    scroll_axis(&ps->scroll_y, -ps->ly, REL_WHEEL, now_ms, emit, ctx, emitted);
+    scroll_axis(&ps->scroll_x, ps->lx, REL_HWHEEL, now_ms, emit, ctx, emitted);
 }
 
 static void pointer_move(struct pointer_state *ps, double dt_s,
@@ -312,32 +305,20 @@ int pointer_release(struct pointer_state *ps, session_emit_fn emit, void *ctx)
             emit(ctx, EV_KEY, BTN_RIGHT, 0);
             emitted++;
         }
-        if (ps->btn_middle) {
-            emit(ctx, EV_KEY, BTN_MIDDLE, 0);
-            emitted++;
-        }
         if (emitted > 0)
             emit(ctx, EV_SYN, SYN_REPORT, 0);
     }
 
     ps->btn_left = false;
     ps->btn_right = false;
-    ps->btn_middle = false;
     ps->l2_down = false;
-    ps->r2_down = false;
-    ps->l1_held = false;
-    ps->r1_held = false;
-    ps->l1_next_ms = 0;
-    ps->r1_next_ms = 0;
+    memset(&ps->scroll_x, 0, sizeof(ps->scroll_x));
+    memset(&ps->scroll_y, 0, sizeof(ps->scroll_y));
     ps->vx = 0.0;
     ps->vy = 0.0;
     ps->frac_x = 0.0;
     ps->frac_y = 0.0;
-    /* chord_since_ms / chord_latched are intentionally preserved: this runs on
-     * the mode switch the chord just caused, and clearing the latch would fire
-     * the still-held chord again after another second (#172).  pointer_chord()
-     * re-arms it when the buttons are released. */
-    /* Force the next desktop tick to re-establish its dt reference instead of
+    /* Force the next tick to re-establish its dt reference instead of
      * integrating the whole time the pointer was suspended. */
     ps->last_tick_ms = 0;
     ps->next_tick_ms = 0;
@@ -345,25 +326,21 @@ int pointer_release(struct pointer_state *ps, session_emit_fn emit, void *ctx)
 }
 
 int pointer_tick(struct pointer_state *ps, int64_t now_ms,
-                 session_emit_fn emit, void *ctx, bool *chord)
+                 session_emit_fn emit, void *ctx)
 {
     int emitted = 0;
     double dt_s;
 
     if (!ps)
         return 0;
-    if (chord)
-        *chord = false;
 
     pointer_age(ps, now_ms);
-    pointer_chord(ps, now_ms, chord);
-
-    if (ps->mode != POINTER_MODE_DESKTOP || !emit)
+    if (!ps->on || !emit)
         return 0;
     if (ps->last_tick_ms == 0) {
-        /* First tick after mode entry / release: establish the dt reference
-         * and emit button state at once (a click must not wait a tick), but
-         * integrate no motion yet. */
+        /* First tick after the switch turned on / release: establish the dt
+         * reference and emit button state at once (a click must not wait a
+         * tick), but integrate no motion yet. */
         ps->last_tick_ms = now_ms;
         ps->next_tick_ms = now_ms + POINTER_TICK_MS;
         dt_s = 0.0;
@@ -380,7 +357,7 @@ int pointer_tick(struct pointer_state *ps, int64_t now_ms,
     }
 
     pointer_buttons(ps, emit, ctx, &emitted);
-    pointer_wheel(ps, now_ms, emit, ctx, &emitted);
+    pointer_scroll(ps, now_ms, emit, ctx, &emitted);
     pointer_move(ps, dt_s, emit, ctx, &emitted);
 
     if (emitted > 0)
@@ -392,7 +369,7 @@ int pointer_timeout_ms(const struct pointer_state *ps, int64_t now_ms)
 {
     int64_t due;
 
-    if (!ps || ps->mode != POINTER_MODE_DESKTOP)
+    if (!ps || !ps->on)
         return -1;
     if (ps->last_tick_ms == 0)
         return 1;

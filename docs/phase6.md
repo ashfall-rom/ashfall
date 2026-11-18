@@ -249,7 +249,7 @@ Boundaries:
 - Verification rules are unchanged: static + host tests, emulator for UI, RP5
   for hardware, orchestrator does the builds and the only device flash.
 
-## 9. Wave 2 contract: Power, Memory, Fusion, PlayTime, charging, desktop, tuning
+## 9. Wave 2 contract: Power, Memory, Fusion, PlayTime, charging, pointer, tuning
 
 Status: contract, 2026-11-15. The seven issues (#124, #137, #138, #140, #141,
 #131, #130) remain the systems of record for behaviour, rationale, risks and
@@ -273,9 +273,9 @@ Wave 2, gated:
 
 - **#140** charging separation: after the `Settings > Battery` page from #137
   exists. Second patch in the same series, never a concurrent edit.
-- **#131** desktop mode: after the RP5 is free and runs an AshFall build. Step 0
-  is a no-rebuild proof on the device; the pointer uinput device extends
-  `ashfall-rp5-input` only after the #138 daemon PR has merged.
+- **#131** external-display pointer: after the RP5 is free and runs an AshFall
+  build. The pointer uinput device extends `ashfall-rp5-input` only after the
+  #138 daemon PR has merged; on-screen desktop windowing is not planned.
 - **#130** performance tuning: measure-first, device-exclusive. Only measured
   wins become code; everything else is documented as rejected.
 
@@ -360,12 +360,12 @@ daemon workers cannot drift):
 
 ### 9.5 App pages and tiles
 
-Handheld page order: Fan, Lighting, Display, Controller, **Power**, **Memory**.
-One page per feature, no tabs. QS tiles: Fan, Lighting, Power (#124), Fusion
-(#138) and Desktop (#131); Memory, PlayTime and charging get none. Tiles other
-than Desktop open their settings dialog on tap and their page on long-press, as
-the Fan/Lighting tiles do; the Desktop tile is a plain toggle, and long-press
-opens the Display page. The structural shell (rows, manifest, tile routing,
+Handheld page order: Fan, Lighting, Controller, **Power**, **Memory**. One page
+per feature, no tabs. QS tiles: Fan, Lighting, Power (#124) and Fusion (#138);
+Memory, PlayTime and charging get none. Every tile opens its settings dialog on
+tap and its page on long-press, as the Fan/Lighting tiles do. The external-display
+pointer switch has no page and no tile of its own: it is the last row of the
+Fusion QS dialog (#131). The structural shell (rows, manifest, tile routing,
 summary stubs) is on `main` before any worker starts, so no two workers edit the
 same page shell.
 
@@ -396,9 +396,10 @@ same page shell.
 - #120 (vendor PERFD-SERVER denial on `ashfall_gpu_sysfs`) and #129 (fan
   `max_pct` kick window) are fixed in the hwd worker; #132 (fan graph duplicate
   sample) in the Power app worker.
-- Desktop mode: conditional Launcher3 taskbar, 320 dpi, entry via QS tile +
-  Parts row; `L1+R1+Start` switches the pointer mode only. Internal display
-  only in v1.
+- External-display pointer: off by default, one switch in the Fusion QS dialog,
+  only enabled while a real presentation display is connected and awake, with a
+  foreground display guard so unplugging it turns the pointer off. Internal
+  display only (no desktop windowing, no taskbar change).
 - Performance tuning: Eden, Winlator and one native game; p95 frame time and
   1% low decide; MGLRU/PELT stay hidden/root-only in v1.
 

@@ -1,20 +1,16 @@
 # AshFall Parts (`org.ashfall.parts`)
 
 The AshFall hardware tools as a built-in Settings module: one root entry
-**AshFall settings → Fan / Lighting / Display / Controller / Power / Memory**,
-plus the **Fan**, **Lighting**, **Power**, **Fusion** and **Desktop** Quick
-Settings tiles.  No launcher entry, no separate-looking control app.
+**AshFall settings → Fan / Lighting / Controller / Power / Memory**, plus the
+**Fan**, **Lighting**, **Power** and **Fusion** Quick Settings tiles.  No launcher entry, no separate-looking control app.
 
 - Source: `aosp/vendor/ashfall/apps/AshFallParts/`
 - Module: `AshFallParts` (`android_app`), added to `PRODUCT_PACKAGES` in
   `vendor/ashfall/apps.mk`
 - Package: `org.ashfall.parts`, platform-signed, privileged, `system_app`
 - Install path: `/system_ext/priv-app/AshFallParts`
-- Boot guard: `DesktopBootReceiver` is the app's only receiver.  It is
-  direct-boot aware, handles `LOCKED_BOOT_COMPLETED` and `BOOT_COMPLETED`,
-  idempotently resets display 0 and `persist.ashfall.pad.mode`, and
-  applies or clears the saved density, then sends no broadcast
-  (`docs/desktop-mode.md` §9.5).
+- No receivers: every setting is applied immediately and the daemon reads it
+  live, so the app registers nothing for boot.
 - Contract: `docs/phase5.md` §2 (properties, socket) and §3 (this app)
 - Clean-room: all code, drawables and strings in this directory were written
   for AshFall.  No Retroid code, assets or strings are used.
@@ -107,12 +103,11 @@ immediately to the properties from §2 of the contract; there is no Apply button
 
 | Page | Activity | Content |
 |---|---|---|
-| AshFall settings | `HandheldActivity` | Fan / Lighting / Display / Controller / Power / Memory rows with live summaries, daemon note |
+| AshFall settings | `HandheldActivity` | Fan / Lighting / Controller / Power / Memory rows with live summaries, daemon note |
 | Fan | `FanActivity` | main switch, live graph, presets, curve, manual %, fan speed limits, kick, screen-off, throttling override, GPU max frequency |
 | Fan presets | `PresetActivity` | create / rename / duplicate / delete / change mode |
 | Curve | `CurveActivity` | drag-and-D-pad curve editor, live marker, live preview, stress test |
 | Lighting | `LightingActivity` | switch, target, live colour picker, brightness, effect (incl. Match screen), screen rate, speed |
-| Display | `DisplayActivity` | desktop mode switch, internal-screen/taskbar/restart note, pointer-only chord note |
 | Controller | `ControllerActivity` | tester, calibration wizard, factory reset, deadzones, fusion |
 | Power | `PowerActivity` | presets, CPU caps, governor, GPU cap, throttle override, live graph ([parts-power.md](parts-power.md)) |
 | Memory | `MemoryActivity` | swapfile ([parts-memory.md](parts-memory.md)) |
@@ -452,12 +447,7 @@ fixes that for the whole app:
 | Lighting (`qs.LightingTileService`) | “Lighting” | effect name / “Off” | inactive when `led.mode=off` |
 | Power (`qs.PowerTileService`) | active power preset | CPU/GPU summary | inactive when no preset is active |
 | Fusion (`qs.FusionTileService`) | “Fusion” | pad count / “Off” | active when fusion is on |
-| Desktop mode (`qs.DesktopTileService`) | “Desktop mode” | “On” / “Off” | active when display 0 is in freeform/desktop windowing |
 
-* The Desktop tile is a **plain toggle**, not a dialog tile: a tap enters or
-  leaves desktop mode, there is no `showDialog()` / `unlockAndRun()` /
-  `DialogGate`, and the tile reads display 0's real windowing mode.  It is the
-  exception to the "tap opens the dialog" rule below.
 * Tap opens the dialog with `TileService.showDialog(dialog)` (window type
   `TYPE_QS_DIALOG`, so it behaves like the Internet/Bluetooth dialogs).  If the
   device is locked the action runs through `unlockAndRun`.
@@ -524,12 +514,26 @@ fixes that for the whole app:
   package and passes the tile component in `EXTRA_COMPONENT_NAME`.
   `qs/TilePreferencesActivity` (a no-UI trampoline) opens the Fan page for the
   Fan tile, the Lighting page for the Lighting tile, the Power page for the
-  Power tile, the Controller page for the Fusion tile and the Display page for
-  the Desktop tile.
+  Power tile and the Controller page for the Fusion tile.
 * Dice note: dialogs are built from the tile **service** context.  The service
   declares `android:theme="@style/Theme.AshFall.QsDialog"`; the dialog theme
   uses a literal accent (a self-referential `?android:attr/colorAccent` makes
   framework TextAppearances unresolvable in that context).
+* **Fusion dialog**: the Fusion switch, the connected pads with their layout
+  picker, Rescan and More settings.  The last row is the **Desktop pointer**
+  switch (#131, `docs/rp5/input.md`): it writes `persist.ashfall.pad.pointer`
+  and is enabled only while `hw/Displays.java` finds a physical secondary
+  display (not display 0, `STATE_ON`, `FLAG_PRIVATE` clear, and when readable not
+  `TYPE_VIRTUAL`/`TYPE_OVERLAY`/`TYPE_WIFI`) - so the app's own *Match screen*
+  capture display and any cast/overlay surface no longer enable it (#237).  The
+  RP5's DP sink reports `type INTERNAL` without `FLAG_PRESENTATION`, so neither
+  is required; on a real DP/HDMI display Android sets them, on the RP5 the
+  vendor port config does not.  With no such display the summary says to connect
+  one, and a stored `1` is cleared rather than leaving the pad's sticks consumed
+  with no cursor target.  Turning the switch on starts `PointerService`
+  (`specialUse` foreground, low-importance notification with **Stop**), which
+  keeps the same check alive after the dialog closes and clears the property
+  when the display goes away (#238).
 * Tile icons are the shared `ic_ashfall_fan`/`ic_ashfall_lighting` vectors
   (24 dp, single colour, no baked tint).  SystemUI applies its own tint for
   the active and inactive tile states, so no state-specific drawable is
@@ -610,8 +614,7 @@ Read/written exactly as specified in `docs/phase5.md`:
 * `ashfall.status.perf.{gpu_max_mhz,gpu_oc}` (read only; `ashfall-hwd` is the
   single writer; `docs/phase6.md` §3)
 * `persist.ashfall.pad.{deadzone_inner,deadzone_outer,trigger_deadzone}`
-* `persist.ashfall.pad.mode` (`game`/`desktop`; desktop mode, #131 F2)
-* `persist.ashfall.display.density_restore` (density before desktop mode, #131 F2)
+* `persist.ashfall.pad.pointer` (`1`/`0`; external-display gamepad pointer, #131)
 * `/dev/socket/ashfall_input`: `GET CAL`, `SET CAL`, `RESET CAL`, `RAW ON/OFF`
 
 `persist.ashfall.fan.safety_c` and `persist.ashfall.led.screen_off` are **no
@@ -684,7 +687,7 @@ Screenshots (all 1920×1080; light and dark):
 
 ### 6.3 Checks performed
 
-* Settings homepage shows **Handheld — Fan, lighting, display, controller, power, memory** and opens
+* Settings homepage shows **Handheld — Fan, lighting, controller, power, memory** and opens
   the page from the Settings task (`topResumedActivity` = `HandheldActivity`,
   Back returns to Settings).
 * Handheld page summaries update from the properties
@@ -774,7 +777,7 @@ except where noted.
 
 | Area | Result |
 |---|---|
-| Settings homepage | **Handheld — Fan, lighting, display, controller, power, memory** row appears at the bottom of the homepage (after Accessibility) with the tinted icon; tapping opens `HandheldActivity` in the Settings task. |
+| Settings homepage | **Handheld — Fan, lighting, controller, power, memory** row appears at the bottom of the homepage (after Accessibility) with the tinted icon; tapping opens `HandheldActivity` in the Settings task. |
 | All pages | Handheld, Fan, Lighting and Controller open on A17 without `InflateException` (the `SwitchCompat` crash is gone; the framework `Switch` renders). |
 | Fan live status | Temperature/output/RPM/safety update every 2 s (`43 °C`, `0 %`, `0 rpm` in Off). |
 | Fan presets | Built-ins render Off/Quiet/Balanced/Performance/Smart. Activating Quiet wrote `mode=quiet, preset=builtin.quiet` and the daemon wrote `state=1, duty=4920` (spin-up kick). User preset `user.33d52efd` was created, renamed, duplicated, activated, and deleted; deleting the active preset remapped `persist.ashfall.fan.preset` to `builtin.smart`. |
@@ -1088,11 +1091,11 @@ plus `androidx.preference`/`appcompat`/`recyclerview`.  R8 is enabled
 resource table that linking pulls in; `preview/`, `tools/` and this
 documentation are not resource dirs and are never packaged.  The manifest declares
 `android:sharedUserId="android.uid.system"`, the homepage activity meta-data,
-`HandheldActivity`, the nine page activities (Fan, Preset, Curve, Lighting,
-Display, Controller, Power, PowerPreset, Memory), the tester/wizard activities
+`HandheldActivity`, the eight page activities (Fan, Preset, Curve, Lighting,
+Controller, Power, PowerPreset, Memory), the tester/wizard activities
 (`TesterActivity`, `CalibrationActivity`), the QS preferences trampoline
-(`qs.TilePreferencesActivity`), the `LedSyncService` and the five
-`TileService`s (Fan, Lighting, Power, Fusion, Desktop).
+(`qs.TilePreferencesActivity`), the `LedSyncService` and the four
+`TileService`s (Fan, Lighting, Power, Fusion).
 
 ## 8. Device test checklist
 

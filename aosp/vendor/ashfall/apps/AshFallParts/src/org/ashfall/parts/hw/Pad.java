@@ -19,14 +19,19 @@ package org.ashfall.parts.hw;
 import org.ashfall.parts.ipc.Props;
 
 /**
- * Gamepad deadzone properties (docs/phase5.md §2.3).  The daemon applies them
- * after calibration, so they affect every app and the emulators.
+ * Gamepad deadzone properties (docs/phase5.md §2.3) and the external-display
+ * pointer switch (docs/rp5/input.md, #131).  The daemon applies the deadzones
+ * after calibration, so they affect every app and the emulators; the pointer
+ * switch is read live and only creates the second uinput device.
  */
 public final class Pad {
 
     public static final String DEADZONE_INNER = "persist.ashfall.pad.deadzone_inner";
     public static final String DEADZONE_OUTER = "persist.ashfall.pad.deadzone_outer";
     public static final String TRIGGER_DEADZONE = "persist.ashfall.pad.trigger_deadzone";
+
+    /** External-display gamepad pointer: 1 = on, anything else = off. */
+    public static final String POINTER = "persist.ashfall.pad.pointer";
 
     public static final int MAX_INNER = 30;
     public static final int MAX_OUTER = 20;
@@ -57,6 +62,15 @@ public final class Pad {
 
     public static void setTrigger(int value) {
         Props.setInt(TRIGGER_DEADZONE, clamp(value, 0, MAX_TRIGGER));
+    }
+
+    /** The external-display pointer switch; off unless the property says 1. */
+    public static boolean pointer() {
+        return Props.getInt(POINTER, 0) == 1;
+    }
+
+    public static void setPointer(boolean on) {
+        Props.setInt(POINTER, on ? 1 : 0);
     }
 
     private static int clamp(int value, int min, int max) {
