@@ -1,4 +1,4 @@
-From b565fb9675618717a9ea8c79a668d27019e7d83f Mon Sep 17 00:00:00 2001
+From cf007434a93c6159ebd0d79bd63a48e01f16482c Mon Sep 17 00:00:00 2001
 From: AshFall UI <ui@ashfall.local>
 Date: Mon, 16 Nov 2026 19:21:12 +0000
 Subject: [PATCH] Settings: add charging control to the battery page
@@ -43,6 +43,11 @@ right now" for a resolved service whose call failed, and "Checking..." in
 between. The method is void, so no return value is read; the reply's status
 word is verified when present and an empty reply is not an error.
 
+The boot re-apply is retryable: only a successful transaction marks it
+applied, so a LOCKED_BOOT_COMPLETED attempt that misses the lazy start
+keeps the stored choice and BOOT_COMPLETED tries once more; once applied,
+the second delivery is a no-op. Each delivery has its own broadcast budget.
+
 A missing service, a proxy that returns null, a RemoteException and a
 rejected status all fail open: the property is cleared and charging
 restored, a rejected property write is detected by reading it back, and
@@ -63,11 +68,11 @@ No QS tile, default off, no dependency on ashfall-hwd.
  res/values/strings.xml                        |  36 +++
  res/xml/charging_control_settings.xml         |  52 ++++
  res/xml/power_usage_summary.xml               |   7 +
- .../ChargingControlReceiver.java              | 126 ++++++++
+ .../ChargingControlReceiver.java              | 137 +++++++++
  .../ChargingControlSettings.java              | 232 ++++++++++++++
  .../chargecontrol/ChargingSeparation.java     | 106 +++++++
  .../chargecontrol/ChargingSeparationHal.java  | 288 ++++++++++++++++++
- 8 files changed, 860 insertions(+)
+ 8 files changed, 871 insertions(+)
  create mode 100644 res/xml/charging_control_settings.xml
  create mode 100644 src/com/android/settings/fuelgauge/chargecontrol/ChargingControlReceiver.java
  create mode 100644 src/com/android/settings/fuelgauge/chargecontrol/ChargingControlSettings.java
@@ -221,10 +226,10 @@ index 957a1e8..7232437 100644
      <Preference
 diff --git a/src/com/android/settings/fuelgauge/chargecontrol/ChargingControlReceiver.java b/src/com/android/settings/fuelgauge/chargecontrol/ChargingControlReceiver.java
 new file mode 100644
-index 0000000..1c1bf37
+index 0000000..ec3f987
 --- /dev/null
 +++ b/src/com/android/settings/fuelgauge/chargecontrol/ChargingControlReceiver.java
-@@ -0,0 +1,126 @@
+@@ -0,0 +1,137 @@
 +/*
 + * Copyright (C) 2026 The Android Open Source Project
 + *
@@ -253,8 +258,11 @@ index 0000000..1c1bf37
 + *
 + * <p>The receiver is direct-boot aware: {@code LOCKED_BOOT_COMPLETED} applies the stored state
 + * before the first unlock, {@code BOOT_COMPLETED} is the fallback for a build that does not deliver
-+ * the locked broadcast (the static flag keeps the second delivery from repeating the HAL call). It
-+ * touches only properties and the vendor HAL, never credential-encrypted storage.
++ * the locked broadcast, and also the retry for a locked-boot attempt that could not apply yet.
++ * Only a successful transaction marks the boot state applied, so a lazy-start miss at
++ * {@code LOCKED_BOOT_COMPLETED} is tried again at {@code BOOT_COMPLETED}; once applied, the second
++ * delivery is a no-op. It touches only properties and the vendor HAL, never credential-encrypted
++ * storage.
 + *
 + * <p>There is no unplug receiver: {@code ACTION_POWER_DISCONNECTED} is not an implicit-broadcast
 + * exemption, so a manifest receiver is not guaranteed it while the app is in the background. The
@@ -268,14 +276,14 @@ index 0000000..1c1bf37
 + *
 + * <p>When the stored state is off the boot path does nothing and makes no HAL call, so a missing
 + * factory HAL cannot produce a boot loop. A firmware without the HAL keeps the stored choice
-+ * instead of discarding it, and every failure path clears the property first and then restores
-+ * charging.
++ * instead of discarding it (retried once at {@code BOOT_COMPLETED}), and a failed apply clears the
++ * property and restores charging.
 + */
 +public class ChargingControlReceiver extends BroadcastReceiver {
 +
 +    private static final String TAG = "ChargingControlReceiver";
 +
-+    /** Set once the boot re-apply ran in this process; both boot broadcasts are idempotent. */
++    /** Set only once a transaction applied the stored state; a miss stays retryable. */
 +    private static boolean sBootApplied;
 +
 +    @Override
@@ -291,7 +299,6 @@ index 0000000..1c1bf37
 +                pending.finish();
 +                return;
 +            }
-+            sBootApplied = true;
 +        }
 +        reapplyAtBoot(context, pending);
 +    }
@@ -300,6 +307,11 @@ index 0000000..1c1bf37
 +     * Re-applies the stored state after boot: once, idempotently, and only when it was on. Below
 +     * the safety floor the stored state is dropped, with charging restored; a firmware without the
 +     * HAL keeps the choice and skips the call.
++     *
++     * <p>Only a successful transaction marks the boot state applied. A locked-boot attempt that
++     * found no service (or failed) leaves it unapplied, so {@code BOOT_COMPLETED} retries once with
++     * the vendor service given more time to lazy-start; each delivery stays inside its own
++     * broadcast budget.
 +     */
 +    static void reapplyAtBoot(Context context, PendingResult pending) {
 +        if (!ChargingSeparation.isEnabled()) {
@@ -316,10 +328,14 @@ index 0000000..1c1bf37
 +                    switch (result) {
 +                        case OK:
 +                            Log.i(TAG, "Re-applied charging separation at boot");
++                            synchronized (ChargingControlReceiver.class) {
++                                sBootApplied = true;
++                            }
 +                            break;
 +                        case UNSUPPORTED:
-+                            // No factory HAL on this firmware: keep the user's choice, never loop.
-+                            Log.i(TAG, "Boot: no factory HAL, keeping the stored choice");
++                            // No factory HAL yet: keep the user's choice, let BOOT_COMPLETED
++                            // retry once the vendor service has had more time to start.
++                            Log.i(TAG, "Boot: no factory HAL yet, keeping the stored choice");
 +                            break;
 +                        default:
 +                            Log.w(

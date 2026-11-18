@@ -311,7 +311,7 @@ Opening the row shows:
 | Row | Text | Behaviour |
 |---|---|---|
 | Charging separation | switch, default off | manual separation; applies immediately, only while the charger is connected |
-| Firmware support | `Supported` / `Not supported on this firmware` | non-selectable, filled by the HAL probe when the page opens |
+| Firmware support | `Checking…`, then `Supported` / `Not supported on this device` / `Not available right now` | non-selectable, filled by the HAL transaction when the page opens |
 | Battery care range | `Stay between 80% and 10%` | the 80 %/10 % policy in one short line; the automatic hysteresis is not in v1 |
 | footer | fuel-gauge drift warning | the one genuine safety note, two lines |
 
@@ -446,17 +446,20 @@ without the domain/type names from the log.
 - **Boot** (`LOCKED_BOOT_COMPLETED`, then `BOOT_COMPLETED` as a fallback): the
   receiver is `directBootAware`, so separation is applied **before the first
   unlock** — the phone does not charge at full current while it sits at the lock
-  screen. A static flag makes the second delivery a no-op in the same process;
-  if the process is killed in between, the second delivery re-applies the same
-  state, which is idempotent. If the property is not `1`, do nothing and make no
+  screen. If the property is not `1`, do nothing and make no
   HAL call. If it is `1` and the level is at or above the floor, the receiver
   keeps the broadcast alive with `goAsync()` and asks for `chargerEnable(false)`
   on the HAL thread, retrying the lazy-start lookup; it finishes when the
-  transaction answers. If the level is below the floor, drop the state and
-  restore charging. On a firmware without the HAL the stored choice is kept and
-  no clear is sent (the feature is simply not applicable there). The receiver
-  sends no broadcast and is not re-triggered by its own work, so there is no
-  boot loop, even with the HAL missing.
+  transaction answers. Only a successful transaction marks the boot apply done,
+  so a `LOCKED_BOOT_COMPLETED` that found no service keeps the stored choice and
+  `BOOT_COMPLETED` tries once more (typically after the vendor service has
+  finished its lazy start); after a success the second delivery is a no-op. Each
+  delivery has its own 10 s budget and the worst case is ~2.4 s of lookups, so
+  the retry cannot stall boot. If the level is below the floor, drop the state
+  and restore charging. On a firmware that still has no HAL at `BOOT_COMPLETED`
+  the stored choice is kept and no clear is sent (the feature is simply not
+  applicable there). The receiver sends no broadcast and is not re-triggered by
+  its own work, so there is no boot loop, even with the HAL missing.
 - **Unplug** is not a receiver path. `ACTION_POWER_DISCONNECTED` is **not** on
   the documented implicit-broadcast exemption list, so a manifest receiver is
   not guaranteed it while the app is in the background and this patch does not
@@ -556,7 +559,10 @@ run adb shell getprop persist.ashfall.batt.charge_sep              # 1 on a supp
 run adb shell 'find /sys/class/power_supply -name current_now -exec cat {} +'   # ~0 before unlock
 run adb shell logcat -d -s ChargingSeparationHal ChargingControlReceiver
 # expect: "Resolved ... on lookup N" once, "chargerEnable(false) ... ok", "Re-applied charging separation at boot"
-# expect: exactly one re-apply, not one per boot broadcast
+# expect: exactly one successful re-apply, not one per boot broadcast
+# retry path: if LOCKED_BOOT_COMPLETED logged "no factory HAL yet", BOOT_COMPLETED
+#             makes a second attempt and logs "Re-applied ... at boot"; a second
+#             UNSUPPORTED is the accepted end state (stored choice kept, no loop)
 ```
 
 `current_now` ~0 before unlock is the direct-boot evidence (#202): with the old
@@ -611,8 +617,9 @@ run adb root
 run adb shell setprop persist.ashfall.batt.charge_sep 1
 run adb shell reboot
 run adb wait-for-device
-# the device boots normally, the boot path ran once, and the stored choice is
-# kept (getprop reads 1) because this firmware cannot apply it.
+# the device boots normally; the boot path tries at locked boot and again at
+# BOOT_COMPLETED (both UNSUPPORTED), and the stored choice is kept (getprop
+# reads 1) because this firmware cannot apply it.
 ```
 
 Documentation / logs:
