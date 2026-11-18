@@ -1734,7 +1734,7 @@ static void test_deadzone_props(void)
     unsetenv("persist.ashfall.pad.trigger_deadzone");
 }
 
-/* --- #131: desktop-mode pointer ------------------------------------------ */
+/* --- #131: external-display gamepad pointer ------------------------------ */
 
 #define CAPTURE_MAX 512
 
@@ -1799,88 +1799,80 @@ static int capture_max_abs(const struct pointer_capture *cap, uint16_t type,
     return best;
 }
 
-static void test_pointer_mode(void)
+static void test_pointer_switch(void)
 {
     struct pointer_state ps;
-    enum pointer_mode mode = POINTER_MODE_DESKTOP;
+    bool on = false;
 
     pointer_defaults(&ps);
-    CHECK_EQ(ps.mode, POINTER_MODE_GAME);
-    CHECK(pointer_mode_parse("desktop", &mode));
-    CHECK_EQ(mode, POINTER_MODE_DESKTOP);
-    CHECK(pointer_mode_parse("game", &mode));
-    CHECK_EQ(mode, POINTER_MODE_GAME);
-    CHECK(!pointer_mode_parse("DESKTOP", &mode));
-    CHECK(!pointer_mode_parse("", &mode));
-    CHECK(!pointer_mode_parse(NULL, &mode));
-    CHECK(strcmp(pointer_mode_name(POINTER_MODE_DESKTOP), "desktop") == 0);
-    CHECK(strcmp(pointer_mode_name(POINTER_MODE_GAME), "game") == 0);
+    CHECK(!ps.on);
+    CHECK(pointer_switch_parse("1", &on));
+    CHECK(on);
+    CHECK(pointer_switch_parse("0", &on));
+    CHECK(!on);
+    CHECK(!pointer_switch_parse("on", &on));
+    CHECK(!pointer_switch_parse("2", &on));
+    CHECK(!pointer_switch_parse("", &on));
+    CHECK(!pointer_switch_parse(NULL, &on));
 
-    /* Missing property: game, and the first read only adopts the default. */
-    unsetenv(PROP_PAD_MODE);
+    /* Missing property: off, and the first read only adopts the default. */
+    unsetenv(PROP_PAD_POINTER);
     pointer_defaults(&ps);
-    CHECK(!pointer_mode_read(&ps));
-    CHECK_EQ(ps.mode, POINTER_MODE_GAME);
-    CHECK(!pointer_mode_read(&ps));
+    CHECK(!pointer_switch_read(&ps));
+    CHECK(!ps.on);
+    CHECK(!pointer_switch_read(&ps));
 
-    setenv(PROP_PAD_MODE, "desktop", 1);
-    CHECK(pointer_mode_read(&ps));
-    CHECK_EQ(ps.mode, POINTER_MODE_DESKTOP);
-    CHECK(!pointer_mode_read(&ps));
+    setenv(PROP_PAD_POINTER, "1", 1);
+    CHECK(pointer_switch_read(&ps));
+    CHECK(ps.on);
+    CHECK(!pointer_switch_read(&ps));
 
-    /* The chord switches the live mode; the property text did not change, so
-     * the next 250 ms poll must not undo it. */
-    CHECK(pointer_set_mode(&ps, POINTER_MODE_GAME));
-    CHECK(!pointer_mode_read(&ps));
-    CHECK_EQ(ps.mode, POINTER_MODE_GAME);
+    setenv(PROP_PAD_POINTER, "0", 1);
+    CHECK(pointer_switch_read(&ps));
+    CHECK(!ps.on);
+    CHECK(!pointer_switch_read(&ps));
 
-    /* A malformed value falls back to game; it was already game, so this is
-     * not a mode change, and the adopted text stops a per-poll log. */
-    setenv(PROP_PAD_MODE, "monitor", 1);
-    CHECK(!pointer_mode_read(&ps));
-    CHECK_EQ(ps.mode, POINTER_MODE_GAME);
-    CHECK(!pointer_mode_read(&ps));
+    /* A malformed value never flips the switch, and the adopted text stops a
+     * log line every 250 ms. */
+    CHECK(pointer_set_enabled(&ps, true));
+    setenv(PROP_PAD_POINTER, "desktop", 1);
+    CHECK(!pointer_switch_read(&ps));
+    CHECK(ps.on);
+    CHECK(!pointer_switch_read(&ps));
 
-    /* A malformed value must not force the live mode either. */
-    CHECK(pointer_set_mode(&ps, POINTER_MODE_DESKTOP));
-    setenv(PROP_PAD_MODE, "not-a-mode", 1);
-    CHECK(!pointer_mode_read(&ps));
-    CHECK_EQ(ps.mode, POINTER_MODE_DESKTOP);
+    /* The same text again is a no-op, not a re-adopt. */
+    CHECK(!pointer_switch_observe(&ps, "desktop"));
+    CHECK(ps.on);
 
-    unsetenv(PROP_PAD_MODE);
+    unsetenv(PROP_PAD_POINTER);
 }
 
 static void test_pointer_movement(void)
 {
     struct pointer_state ps;
     struct pointer_capture cap;
-    bool chord = false;
     int64_t t = 1000;
     int total;
 
-    /* Game mode emits nothing, even with the stick at full deflection. */
+    /* Off: emits nothing, even with the right stick at full deflection. */
     pointer_defaults(&ps);
     memset(&cap, 0, sizeof(cap));
-    pointer_frame(&ps, POINTER_KEY_A | POINTER_KEY_B, 32767, 32767, 255, 255,
-                  t);
+    pointer_frame(&ps, POINTER_KEY_L1, 0, 0, 32767, 32767, 255, t);
     for (int i = 0; i < 20; i++)
-        pointer_tick(&ps, t + (int64_t)i * POINTER_TICK_MS, capture_emit, &cap,
-                     &chord);
+        pointer_tick(&ps, t + (int64_t)i * POINTER_TICK_MS, capture_emit, &cap);
     CHECK_EQ(cap.count, 0);
     CHECK(!ps.btn_left);
     CHECK(!ps.btn_right);
-    CHECK(!ps.btn_middle);
 
-    /* Desktop, full right deflection: the ramp reaches ~1200 px/s and never
+    /* On, full right deflection: the ramp reaches ~1200 px/s and never
      * exceeds it.  125 ticks is one second of motion. */
-    CHECK(pointer_set_mode(&ps, POINTER_MODE_DESKTOP));
-    pointer_frame(&ps, 0, 32767, 0, 0, 0, t);
+    CHECK(pointer_set_enabled(&ps, true));
+    pointer_frame(&ps, 0, 0, 0, 32767, 0, 0, t);
     pointer_release(&ps, NULL, NULL);
     memset(&cap, 0, sizeof(cap));
-    pointer_tick(&ps, t, capture_emit, &cap, &chord); /* prime the dt */
+    pointer_tick(&ps, t, capture_emit, &cap); /* prime the dt */
     for (int i = 1; i <= 125; i++)
-        pointer_tick(&ps, t + (int64_t)i * POINTER_TICK_MS, capture_emit, &cap,
-                     &chord);
+        pointer_tick(&ps, t + (int64_t)i * POINTER_TICK_MS, capture_emit, &cap);
     total = capture_sum(&cap, EV_REL, REL_X);
     CHECK(total > 1000);
     CHECK(total <= 1200);
@@ -1889,326 +1881,245 @@ static void test_pointer_movement(void)
 
     /* Left deflection moves left. */
     pointer_release(&ps, NULL, NULL);
-    pointer_frame(&ps, 0, -32767, 0, 0, 0, t);
+    pointer_frame(&ps, 0, 0, 0, -32767, 0, 0, t);
     memset(&cap, 0, sizeof(cap));
-    pointer_tick(&ps, t, capture_emit, &cap, &chord);
+    pointer_tick(&ps, t, capture_emit, &cap);
     for (int i = 1; i <= 40; i++)
-        pointer_tick(&ps, t + (int64_t)i * POINTER_TICK_MS, capture_emit, &cap,
-                     &chord);
+        pointer_tick(&ps, t + (int64_t)i * POINTER_TICK_MS, capture_emit, &cap);
     CHECK(capture_sum(&cap, EV_REL, REL_X) < 0);
+
+    /* The left stick scrolls, it never moves the cursor. */
+    pointer_release(&ps, NULL, NULL);
+    pointer_frame(&ps, 0, 32767, 0, 0, 0, 0, t);
+    memset(&cap, 0, sizeof(cap));
+    pointer_tick(&ps, t, capture_emit, &cap);
+    for (int i = 1; i <= 40; i++)
+        pointer_tick(&ps, t + (int64_t)i * POINTER_TICK_MS, capture_emit, &cap);
+    CHECK_EQ(capture_sum(&cap, EV_REL, REL_X), 0);
+    CHECK_EQ(capture_sum(&cap, EV_REL, REL_Y), 0);
 }
 
 static void test_pointer_deadzone_and_fraction(void)
 {
     struct pointer_state ps;
     struct pointer_capture cap;
-    bool chord = false;
     int64_t t = 1000;
     int total = 0;
 
     memset(&cap, 0, sizeof(cap));
     pointer_defaults(&ps);
-    pointer_set_mode(&ps, POINTER_MODE_DESKTOP);
+    pointer_set_enabled(&ps, true);
 
     /* 4.9 % of travel: inside the fixed 5 % deadzone, no motion at all. */
-    pointer_frame(&ps, 0, 1600, 0, 0, 0, t);
-    pointer_tick(&ps, t, capture_emit, &cap, &chord);
+    pointer_frame(&ps, 0, 0, 0, 1600, 0, 0, t);
+    pointer_tick(&ps, t, capture_emit, &cap);
     for (int i = 1; i <= 50; i++)
-        pointer_tick(&ps, t + (int64_t)i * POINTER_TICK_MS, capture_emit, &cap,
-                     &chord);
+        pointer_tick(&ps, t + (int64_t)i * POINTER_TICK_MS, capture_emit, &cap);
     CHECK_EQ(capture_sum(&cap, EV_REL, REL_X), 0);
 
     /* Just above the deadzone the speed is far below 1 px/tick.  Without
      * fractional accumulation every tick would round to zero and the pointer
      * would never move. */
     pointer_release(&ps, NULL, NULL);
-    pointer_frame(&ps, 0, 4000, 0, 0, 0, t);
+    pointer_frame(&ps, 0, 0, 0, 4000, 0, 0, t);
     memset(&cap, 0, sizeof(cap));
-    pointer_tick(&ps, t, capture_emit, &cap, &chord);
+    pointer_tick(&ps, t, capture_emit, &cap);
     for (int i = 1; i <= 100; i++)
-        pointer_tick(&ps, t + (int64_t)i * POINTER_TICK_MS, capture_emit, &cap,
-                     &chord);
+        pointer_tick(&ps, t + (int64_t)i * POINTER_TICK_MS, capture_emit, &cap);
     total = capture_sum(&cap, EV_REL, REL_X);
     CHECK(total >= 4);
     CHECK(total <= 30);
     CHECK_EQ(capture_max_abs(&cap, EV_REL, REL_X), 1);
+
+    /* The scroll deadzone is per axis, not radial. */
+    pointer_release(&ps, NULL, NULL);
+    pointer_frame(&ps, 0, 1600, 1600, 0, 0, 0, t);
+    memset(&cap, 0, sizeof(cap));
+    pointer_tick(&ps, t, capture_emit, &cap);
+    for (int i = 1; i <= 50; i++)
+        pointer_tick(&ps, t + (int64_t)i * POINTER_TICK_MS, capture_emit, &cap);
+    CHECK_EQ(capture_sum(&cap, EV_REL, REL_WHEEL), 0);
+    CHECK_EQ(capture_sum(&cap, EV_REL, REL_HWHEEL), 0);
 }
 
 static void test_pointer_buttons(void)
 {
     struct pointer_state ps;
     struct pointer_capture cap;
-    bool chord = false;
     int64_t t = 1000;
 
     memset(&cap, 0, sizeof(cap));
     pointer_defaults(&ps);
-    pointer_set_mode(&ps, POINTER_MODE_DESKTOP);
+    pointer_set_enabled(&ps, true);
 
-    /* A = left click. */
-    pointer_frame(&ps, POINTER_KEY_A, 0, 0, 0, 0, t);
-    pointer_tick(&ps, t, capture_emit, &cap, &chord);
+    /* L1 = left button; holding it is the drag gesture. */
+    pointer_frame(&ps, POINTER_KEY_L1, 0, 0, 0, 0, 0, t);
+    pointer_tick(&ps, t, capture_emit, &cap);
     CHECK(ps.btn_left);
     CHECK_EQ(capture_count(&cap, EV_KEY, BTN_LEFT, 1), 1);
 
-    /* R3 keeps the same BTN_LEFT down: A -> R3 must not click twice. */
-    pointer_frame(&ps, POINTER_KEY_R3, 0, 0, 0, 0, t + 8);
-    pointer_tick(&ps, t + 8, capture_emit, &cap, &chord);
+    /* Still held: one press, no repeats. */
+    pointer_frame(&ps, POINTER_KEY_L1, 0, 0, 0, 0, 0, t + 8);
+    pointer_tick(&ps, t + 8, capture_emit, &cap);
     CHECK(ps.btn_left);
     CHECK_EQ(capture_count(&cap, EV_KEY, BTN_LEFT, 1), 1);
     CHECK_EQ(capture_count(&cap, EV_KEY, BTN_LEFT, 0), 0);
 
-    pointer_frame(&ps, 0, 0, 0, 0, 0, t + 16);
-    pointer_tick(&ps, t + 16, capture_emit, &cap, &chord);
+    /* A and R3 stay gamepad buttons: they must not click. */
+    pointer_frame(&ps, POINTER_KEY_A | POINTER_KEY_R3, 0, 0, 0, 0, 0, t + 16);
+    pointer_tick(&ps, t + 16, capture_emit, &cap);
     CHECK(!ps.btn_left);
     CHECK_EQ(capture_count(&cap, EV_KEY, BTN_LEFT, 0), 1);
 
-    /* B = right click. */
-    pointer_frame(&ps, POINTER_KEY_B, 0, 0, 0, 0, t + 24);
-    pointer_tick(&ps, t + 24, capture_emit, &cap, &chord);
+    /* L2 = right button, with 50 %/37.5 % hysteresis. */
+    pointer_frame(&ps, 0, 0, 0, 0, 0, 255, t + 24);
+    pointer_tick(&ps, t + 24, capture_emit, &cap);
     CHECK(ps.btn_right);
     CHECK_EQ(capture_count(&cap, EV_KEY, BTN_RIGHT, 1), 1);
-    pointer_frame(&ps, 0, 0, 0, 0, 0, t + 32);
-    pointer_tick(&ps, t + 32, capture_emit, &cap, &chord);
+    pointer_frame(&ps, 0, 0, 0, 0, 0, 100, t + 32);
+    pointer_tick(&ps, t + 32, capture_emit, &cap);
+    CHECK(ps.btn_right);
+    pointer_frame(&ps, 0, 0, 0, 0, 0, 90, t + 40);
+    pointer_tick(&ps, t + 40, capture_emit, &cap);
     CHECK(!ps.btn_right);
+    CHECK_EQ(capture_count(&cap, EV_KEY, BTN_RIGHT, 0), 1);
 
-    /* R2 = middle click, with 50 %/37.5 % hysteresis. */
-    pointer_frame(&ps, 0, 0, 0, 0, 255, t + 40);
-    pointer_tick(&ps, t + 40, capture_emit, &cap, &chord);
-    CHECK(ps.btn_middle);
-    CHECK_EQ(capture_count(&cap, EV_KEY, BTN_MIDDLE, 1), 1);
-    pointer_frame(&ps, 0, 0, 0, 0, 100, t + 48);
-    pointer_tick(&ps, t + 48, capture_emit, &cap, &chord);
-    CHECK(ps.btn_middle);
-    pointer_frame(&ps, 0, 0, 0, 0, 90, t + 56);
-    pointer_tick(&ps, t + 56, capture_emit, &cap, &chord);
-    CHECK(!ps.btn_middle);
-    CHECK_EQ(capture_count(&cap, EV_KEY, BTN_MIDDLE, 0), 1);
-
-    /* L2 = drag: hold BTN_LEFT for as long as the trigger is pulled. */
-    pointer_frame(&ps, 0, 0, 0, 255, 0, t + 64);
-    pointer_tick(&ps, t + 64, capture_emit, &cap, &chord);
-    CHECK(ps.btn_left);
-    CHECK_EQ(capture_count(&cap, EV_KEY, BTN_LEFT, 1), 2);
-    pointer_frame(&ps, 0, 0, 0, 100, 0, t + 72);
-    pointer_tick(&ps, t + 72, capture_emit, &cap, &chord);
-    CHECK(ps.btn_left);
-    pointer_frame(&ps, 0, 0, 0, 90, 0, t + 80);
-    pointer_tick(&ps, t + 80, capture_emit, &cap, &chord);
+    /* Right stick button / R2 stay gamepad buttons too. */
+    pointer_frame(&ps, POINTER_KEY_R1, 0, 0, 0, 0, 0, t + 48);
+    pointer_tick(&ps, t + 48, capture_emit, &cap);
     CHECK(!ps.btn_left);
-    CHECK_EQ(capture_count(&cap, EV_KEY, BTN_LEFT, 0), 2);
+    CHECK(!ps.btn_right);
 
     /* A change is followed by exactly one SYN in that tick. */
     CHECK(capture_count(&cap, EV_SYN, SYN_REPORT, 0) >= 1);
 }
 
-static void test_pointer_wheel(void)
+/* Advance the 125 Hz clock in whole ticks, so the daemon's internal tick
+ * schedule stays aligned (a tick that lands early returns without running). */
+static void advance(struct pointer_state *ps, struct pointer_capture *cap,
+                    int64_t *now_ms, int64_t until_ms)
 {
-    struct pointer_state ps;
-    struct pointer_capture cap;
-    bool chord = false;
-    int64_t t = 1000;
-
-    memset(&cap, 0, sizeof(cap));
-    pointer_defaults(&ps);
-    pointer_set_mode(&ps, POINTER_MODE_DESKTOP);
-
-    /* L1: one notch on press, then 400 ms initial / 80 ms repeat. */
-    pointer_frame(&ps, POINTER_KEY_L1, 0, 0, 0, 0, t);
-    pointer_tick(&ps, t, capture_emit, &cap, &chord);
-    CHECK_EQ(capture_count(&cap, EV_REL, REL_WHEEL, 1), 1);
-    pointer_tick(&ps, t + 80, capture_emit, &cap, &chord);
-    CHECK_EQ(capture_count(&cap, EV_REL, REL_WHEEL, 1), 1);
-    pointer_tick(&ps, t + 392, capture_emit, &cap, &chord);
-    CHECK_EQ(capture_count(&cap, EV_REL, REL_WHEEL, 1), 1);
-    pointer_tick(&ps, t + 400, capture_emit, &cap, &chord);
-    CHECK_EQ(capture_count(&cap, EV_REL, REL_WHEEL, 1), 2);
-    pointer_tick(&ps, t + 480, capture_emit, &cap, &chord);
-    CHECK_EQ(capture_count(&cap, EV_REL, REL_WHEEL, 1), 3);
-
-    pointer_frame(&ps, 0, 0, 0, 0, 0, t + 488);
-    pointer_tick(&ps, t + 488, capture_emit, &cap, &chord);
-    CHECK_EQ(capture_count(&cap, EV_REL, REL_WHEEL, 1), 3);
-
-    /* A fresh press scrolls immediately again. */
-    pointer_frame(&ps, POINTER_KEY_L1, 0, 0, 0, 0, t + 496);
-    pointer_tick(&ps, t + 496, capture_emit, &cap, &chord);
-    CHECK_EQ(capture_count(&cap, EV_REL, REL_WHEEL, 1), 4);
-
-    /* R1 scrolls the other way. */
-    pointer_frame(&ps, POINTER_KEY_R1, 0, 0, 0, 0, t + 504);
-    pointer_tick(&ps, t + 504, capture_emit, &cap, &chord);
-    CHECK_EQ(capture_count(&cap, EV_REL, REL_WHEEL, -1), 1);
-}
-
-static void test_pointer_chord(void)
-{
-    struct pointer_state ps;
-    struct pointer_capture cap;
-    bool chord = false;
-    int fires = 0;
-    int64_t t = 1000;
-
-    memset(&cap, 0, sizeof(cap));
-    pointer_defaults(&ps);
-
-    /* Two of the three buttons never fire it, however long they are held. */
-    pointer_frame(&ps, POINTER_KEY_L1 | POINTER_KEY_R1, 0, 0, 0, 0, t);
-    pointer_tick(&ps, t, capture_emit, &cap, &chord);
-    pointer_frame(&ps, POINTER_KEY_L1 | POINTER_KEY_R1, 0, 0, 0, 0, t + 1500);
-    pointer_tick(&ps, t + 1500, capture_emit, &cap, &chord);
-    CHECK(!chord);
-
-    /* All three: exactly one fire after ~1 s, not one per tick. */
-    pointer_frame(&ps, POINTER_CHORD_MASK, 0, 0, 0, 0, t + 2000);
-    pointer_tick(&ps, t + 2000, capture_emit, &cap, &chord);
-    CHECK(!chord);
-    pointer_tick(&ps, t + 2999, capture_emit, &cap, &chord);
-    CHECK(!chord);
-    pointer_tick(&ps, t + 3000, capture_emit, &cap, &chord);
-    CHECK(chord);
-    fires++;
-    chord = false;
-    pointer_tick(&ps, t + 3008, capture_emit, &cap, &chord);
-    CHECK(!chord);
-
-    /* Released and pressed again: the chord re-arms. */
-    pointer_frame(&ps, POINTER_KEY_L1 | POINTER_KEY_R1, 0, 0, 0, 0, t + 3016);
-    pointer_tick(&ps, t + 3016, capture_emit, &cap, &chord);
-    CHECK(!chord);
-    pointer_frame(&ps, POINTER_CHORD_MASK, 0, 0, 0, 0, t + 3024);
-    pointer_tick(&ps, t + 3024, capture_emit, &cap, &chord);
-    pointer_tick(&ps, t + 4024, capture_emit, &cap, &chord);
-    CHECK(chord);
-    fires++;
-    CHECK_EQ(fires, 2);
-    CHECK_EQ(cap.count, 0); /* the chord itself injects nothing */
-}
-
-static void test_pointer_chord_survives_release(void)
-{
-    struct pointer_state ps;
-    struct pointer_capture cap;
-    bool chord = false;
-    int fires = 0;
-    int64_t t = 1000;
-
-    memset(&cap, 0, sizeof(cap));
-    pointer_defaults(&ps);
-    pointer_frame(&ps, POINTER_CHORD_MASK, 0, 0, 0, 0, t);
-    pointer_tick(&ps, t, capture_emit, &cap, &chord);
-    CHECK(!chord);
-    pointer_frame(&ps, POINTER_CHORD_MASK, 0, 0, 0, 0, t + 1000);
-    pointer_tick(&ps, t + 1000, capture_emit, &cap, &chord);
-    CHECK(chord);
-    fires++;
-
-    /* The daemon path: apply_pad_mode() calls pointer_release() on the switch
-     * while the chord is still held.  It must not re-arm the chord, or a held
-     * L1+R1+Start would flip the mode every second (#172). */
-    pointer_release(&ps, NULL, NULL);
-    for (int i = 1; i <= 8; i++) {
-        int64_t now = t + 1000 + (int64_t)i * 250;
-
-        pointer_frame(&ps, POINTER_CHORD_MASK, 0, 0, 0, 0, now);
-        chord = false;
-        pointer_tick(&ps, now, capture_emit, &cap, &chord);
-        CHECK(!chord);
+    while (*now_ms + POINTER_TICK_MS <= until_ms) {
+        *now_ms += POINTER_TICK_MS;
+        pointer_tick(ps, *now_ms, capture_emit, cap);
     }
-
-    /* Releasing all three re-arms it; holding again fires exactly once. */
-    pointer_frame(&ps, POINTER_KEY_L1 | POINTER_KEY_R1, 0, 0, 0, 0,
-                  t + 3100);
-    pointer_tick(&ps, t + 3100, capture_emit, &cap, &chord);
-    CHECK(!chord);
-    pointer_frame(&ps, POINTER_CHORD_MASK, 0, 0, 0, 0, t + 3108);
-    pointer_tick(&ps, t + 3108, capture_emit, &cap, &chord);
-    pointer_frame(&ps, POINTER_CHORD_MASK, 0, 0, 0, 0, t + 4108);
-    pointer_tick(&ps, t + 4108, capture_emit, &cap, &chord);
-    CHECK(chord);
-    fires++;
-    CHECK_EQ(fires, 2);
 }
 
-static void test_pointer_mode_write_detection(void)
+static void test_pointer_scroll(void)
 {
     struct pointer_state ps;
-    uint32_t serial = 100;
+    struct pointer_capture cap;
+    int64_t t = 1000;
+    int64_t now = t;
 
-    /* Host prop_get_str_serial() has no property service, so the observation
-     * seam is called with the serial the service would bump on every write. */
     pointer_defaults(&ps);
-    CHECK(!pointer_mode_observe(&ps, "game", serial));
-    CHECK_EQ(ps.mode, POINTER_MODE_GAME);
+    pointer_set_enabled(&ps, true);
 
-    /* Chord -> desktop.  Text and serial did not move, so the 250 ms poll must
-     * not undo the chord. */
-    CHECK(pointer_set_mode(&ps, POINTER_MODE_DESKTOP));
-    CHECK(!pointer_mode_observe(&ps, "game", serial));
-    CHECK_EQ(ps.mode, POINTER_MODE_DESKTOP);
+    /* Stick up (negative ABS_Y): one wheel notch at once (+1 = scroll up),
+     * then 60 ms repeats at full deflection. */
+    memset(&cap, 0, sizeof(cap));
+    pointer_frame(&ps, 0, 0, -32767, 0, 0, 0, now);
+    pointer_tick(&ps, now, capture_emit, &cap);
+    CHECK_EQ(capture_count(&cap, EV_REL, REL_WHEEL, 1), 1);
+    advance(&ps, &cap, &now, t + 56);
+    CHECK_EQ(capture_count(&cap, EV_REL, REL_WHEEL, 1), 1);
+    advance(&ps, &cap, &now, t + 64);
+    CHECK_EQ(capture_count(&cap, EV_REL, REL_WHEEL, 1), 2);
+    advance(&ps, &cap, &now, t + 124);
+    CHECK_EQ(capture_count(&cap, EV_REL, REL_WHEEL, 1), 3);
 
-    /* A two-state Parts/QS toggle writes the opposite of the live mode; here
-     * that is the text already stored ("game").  The write still bumps the
-     * serial, so it must be adopted (#173). */
-    serial++;
-    CHECK(pointer_mode_observe(&ps, "game", serial));
-    CHECK_EQ(ps.mode, POINTER_MODE_GAME);
+    /* Release stops it; the opposite direction clicks immediately. */
+    pointer_frame(&ps, 0, 0, 0, 0, 0, 0, now);
+    advance(&ps, &cap, &now, now + POINTER_TICK_MS);
+    CHECK_EQ(capture_count(&cap, EV_REL, REL_WHEEL, -1), 0);
+    pointer_frame(&ps, 0, 0, 32767, 0, 0, 0, now);
+    advance(&ps, &cap, &now, now + POINTER_TICK_MS);
+    CHECK_EQ(capture_count(&cap, EV_REL, REL_WHEEL, -1), 1);
+    CHECK_EQ(capture_count(&cap, EV_REL, REL_WHEEL, 1), 3);
 
-    /* Other direction: property says desktop, chord -> game, the UI writes
-     * desktop again. */
-    serial++;
-    CHECK(pointer_mode_observe(&ps, "desktop", serial));
-    CHECK_EQ(ps.mode, POINTER_MODE_DESKTOP);
-    CHECK(pointer_set_mode(&ps, POINTER_MODE_GAME));
-    CHECK(!pointer_mode_observe(&ps, "desktop", serial));
-    CHECK_EQ(ps.mode, POINTER_MODE_GAME);
-    serial++;
-    CHECK(pointer_mode_observe(&ps, "desktop", serial));
-    CHECK_EQ(ps.mode, POINTER_MODE_DESKTOP);
+    /* A slight deflection repeats slowly (~250 ms), not at the 60 ms rate. */
+    pointer_frame(&ps, 0, 0, 0, 0, 0, 0, now);
+    advance(&ps, &cap, &now, now + POINTER_TICK_MS);
+    memset(&cap, 0, sizeof(cap));
+    pointer_frame(&ps, 0, 0, -1700, 0, 0, 0, now);
+    advance(&ps, &cap, &now, now + 8);
+    CHECK_EQ(capture_count(&cap, EV_REL, REL_WHEEL, 1), 1);
+    advance(&ps, &cap, &now, now + 240);
+    CHECK_EQ(capture_count(&cap, EV_REL, REL_WHEEL, 1), 1);
+    advance(&ps, &cap, &now, now + 16);
+    CHECK_EQ(capture_count(&cap, EV_REL, REL_WHEEL, 1), 2);
 
-    /* Re-writing the mode that is already live is a no-op. */
-    serial++;
-    CHECK(!pointer_mode_observe(&ps, "desktop", serial));
-    CHECK_EQ(ps.mode, POINTER_MODE_DESKTOP);
+    /* Horizontal: stick right scrolls right (REL_HWHEEL +1), left -> -1. */
+    pointer_frame(&ps, 0, 0, 0, 0, 0, 0, now);
+    advance(&ps, &cap, &now, now + POINTER_TICK_MS);
+    memset(&cap, 0, sizeof(cap));
+    pointer_frame(&ps, 0, 32767, 0, 0, 0, 0, now);
+    advance(&ps, &cap, &now, now + POINTER_TICK_MS);
+    CHECK_EQ(capture_count(&cap, EV_REL, REL_HWHEEL, 1), 1);
+    pointer_frame(&ps, 0, -32767, 0, 0, 0, 0, now);
+    advance(&ps, &cap, &now, now + POINTER_TICK_MS);
+    CHECK_EQ(capture_count(&cap, EV_REL, REL_HWHEEL, -1), 1);
+    CHECK_EQ(capture_count(&cap, EV_REL, REL_WHEEL, 1), 0);
+}
+
+static void test_pointer_no_chord(void)
+{
+    struct pointer_state ps;
+    struct pointer_capture cap;
+    int64_t t = 1000;
+
+    /* L1+R1+Start used to switch modes; now L1 is the left button and the
+     * other two stay gamepad buttons.  Holding all three for 2 s must do
+     * nothing but hold the left button. */
+    memset(&cap, 0, sizeof(cap));
+    pointer_defaults(&ps);
+    pointer_set_enabled(&ps, true);
+    pointer_frame(&ps, POINTER_KEY_L1 | POINTER_KEY_R1 | POINTER_KEY_START, 0, 0,
+                  0, 0, 0, t);
+    pointer_tick(&ps, t, capture_emit, &cap);
+    for (int i = 1; i <= 250; i++)
+        pointer_tick(&ps, t + (int64_t)i * POINTER_TICK_MS, capture_emit, &cap);
+    CHECK(ps.on);
+    CHECK(ps.btn_left);
+    CHECK_EQ(capture_count(&cap, EV_KEY, BTN_LEFT, 1), 1);
+    CHECK_EQ(capture_count(&cap, EV_KEY, BTN_LEFT, 0), 0);
 }
 
 static void test_pointer_release(void)
 {
     struct pointer_state ps;
     struct pointer_capture cap;
-    bool chord = false;
     int64_t t = 1000;
     int emitted;
 
     memset(&cap, 0, sizeof(cap));
     pointer_defaults(&ps);
-    pointer_set_mode(&ps, POINTER_MODE_DESKTOP);
+    pointer_set_enabled(&ps, true);
 
-    /* A + B + both triggers: three buttons down at once. */
-    pointer_frame(&ps, POINTER_KEY_A | POINTER_KEY_B, 0, 0, 255, 255, t);
-    pointer_tick(&ps, t, capture_emit, &cap, &chord);
+    /* L1 + L2 pulled: both buttons down, plus a scroll in flight. */
+    pointer_frame(&ps, POINTER_KEY_L1, 0, -32767, 0, 0, 255, t);
+    pointer_tick(&ps, t, capture_emit, &cap);
     CHECK(ps.btn_left);
     CHECK(ps.btn_right);
-    CHECK(ps.btn_middle);
+    CHECK_EQ(capture_count(&cap, EV_REL, REL_WHEEL, 1), 1);
 
     emitted = pointer_release(&ps, capture_emit, &cap);
-    CHECK_EQ(emitted, 3);
+    CHECK_EQ(emitted, 2);
     CHECK_EQ(capture_count(&cap, EV_KEY, BTN_LEFT, 0), 1);
     CHECK_EQ(capture_count(&cap, EV_KEY, BTN_RIGHT, 0), 1);
-    CHECK_EQ(capture_count(&cap, EV_KEY, BTN_MIDDLE, 0), 1);
     CHECK_EQ(capture_count(&cap, EV_SYN, SYN_REPORT, 0), 2);
     CHECK(!ps.btn_left);
     CHECK(!ps.btn_right);
-    CHECK(!ps.btn_middle);
     CHECK(ps.vx == 0.0);
     CHECK(ps.frac_x == 0.0);
+    CHECK(!ps.scroll_y.held);
 
     /* Nothing held: no second release. */
     CHECK_EQ(pointer_release(&ps, capture_emit, &cap), 0);
 
     /* Silent release still clears the state (GRAB ON / shutdown path). */
-    pointer_frame(&ps, POINTER_KEY_A, 0, 0, 0, 0, t + 8);
-    pointer_tick(&ps, t + 8, capture_emit, &cap, &chord);
+    pointer_frame(&ps, POINTER_KEY_L1, 0, 0, 0, 0, 0, t + 8);
+    pointer_tick(&ps, t + 8, capture_emit, &cap);
     CHECK(ps.btn_left);
     CHECK_EQ(pointer_release(&ps, NULL, NULL), 0);
     CHECK(!ps.btn_left);
@@ -2218,20 +2129,18 @@ static void test_pointer_stale_frame(void)
 {
     struct pointer_state ps;
     struct pointer_capture cap;
-    bool chord = false;
     int64_t t = 1000;
 
     memset(&cap, 0, sizeof(cap));
     pointer_defaults(&ps);
-    pointer_set_mode(&ps, POINTER_MODE_DESKTOP);
-    pointer_frame(&ps, POINTER_KEY_A, 32767, 0, 0, 0, t);
-    pointer_tick(&ps, t, capture_emit, &cap, &chord);
+    pointer_set_enabled(&ps, true);
+    pointer_frame(&ps, POINTER_KEY_L1, 0, 0, 32767, 0, 0, t);
+    pointer_tick(&ps, t, capture_emit, &cap);
     CHECK(ps.btn_left);
 
     /* The MCU went quiet for >2 s: the held click must not stay down and the
-     * stick must stop (no motion was integrated before the timeout). */
-    pointer_tick(&ps, t + POINTER_FRAME_TIMEOUT_MS + 1, capture_emit, &cap,
-                 &chord);
+     * stick must stop. */
+    pointer_tick(&ps, t + POINTER_FRAME_TIMEOUT_MS + 1, capture_emit, &cap);
     CHECK(!ps.btn_left);
     CHECK_EQ(capture_count(&cap, EV_KEY, BTN_LEFT, 0), 1);
     CHECK_EQ(capture_sum(&cap, EV_REL, REL_X), 0);
@@ -2244,11 +2153,14 @@ static void test_pointer_timeout(void)
     pointer_defaults(&ps);
     CHECK_EQ(pointer_timeout_ms(&ps, 1000), -1);
 
-    pointer_set_mode(&ps, POINTER_MODE_DESKTOP);
+    pointer_set_enabled(&ps, true);
     CHECK_EQ(pointer_timeout_ms(&ps, 1000), 1);
     pointer_release(&ps, NULL, NULL);
     /* pointer_release() resets the tick reference: the first tick primes it. */
     CHECK_EQ(pointer_timeout_ms(&ps, 1000), 1);
+
+    CHECK(pointer_set_enabled(&ps, false));
+    CHECK_EQ(pointer_timeout_ms(&ps, 1000), -1);
 }
 
 static void test_uinput_pointer_device(void)
@@ -2295,6 +2207,19 @@ static void test_uinput_pointer_device(void)
     for (int i = 0; i < pointer_rel_count; i++)
         CHECK_EQ(call_count_of(&fake, UI_SET_RELBIT, pointer_rels[i]), 1);
     CHECK_EQ(call_count_of(&fake, UI_SET_PROPBIT, INPUT_PROP_POINTER), 1);
+
+    /* The two buttons the new mapping drives are part of the capability set. */
+    {
+        bool left = false;
+        bool right = false;
+
+        for (int i = 0; i < pointer_key_count; i++) {
+            left = left || pointer_keys[i] == BTN_LEFT;
+            right = right || pointer_keys[i] == BTN_RIGHT;
+        }
+        CHECK(left);
+        CHECK(right);
+    }
 }
 
 int main(void)
@@ -2328,14 +2253,12 @@ int main(void)
     test_uinput_phase5_device();
     test_uinput_ff_refused();
     test_uinput_axis_range();
-    test_pointer_mode();
+    test_pointer_switch();
     test_pointer_movement();
     test_pointer_deadzone_and_fraction();
     test_pointer_buttons();
-    test_pointer_wheel();
-    test_pointer_chord();
-    test_pointer_chord_survives_release();
-    test_pointer_mode_write_detection();
+    test_pointer_scroll();
+    test_pointer_no_chord();
     test_pointer_release();
     test_pointer_stale_frame();
     test_pointer_timeout();

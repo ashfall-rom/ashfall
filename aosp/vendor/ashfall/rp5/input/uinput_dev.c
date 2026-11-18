@@ -107,7 +107,7 @@ static int build(const struct uinput_dev_ops *ops,
 #endif
     }
 
-    /* Relative axes and input properties are the desktop pointer's (#131):
+    /* Relative axes and input properties are the external-display pointer's (#131):
      * no range setup exists for EV_REL, and INPUT_PROP_POINTER is what makes
      * Android treat the device as a mouse instead of a gamepad.  Best effort,
      * like the key bits: a code this kernel does not know must not cost the

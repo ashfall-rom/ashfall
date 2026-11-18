@@ -60,4 +60,10 @@
     <string name="fusion_tile_pads">%1$d pads</string>
     <string name="fusion_tile_unavailable">unavailable</string>
     <string name="fusion_qs_custom_hint">Custom mapping is edited on the Controller page.</string>
+
+    <!-- External-display gamepad pointer (#131): the switch lives in this
+         dialog but drives persist.ashfall.pad.pointer, not Fusion. -->
+    <string name="fusion_pointer_title">Desktop pointer</string>
+    <string name="fusion_pointer_summary">Right stick moves the mouse on an external display</string>
+    <string name="fusion_pointer_no_display">Connect an external display to use the pointer</string>
 </resources>

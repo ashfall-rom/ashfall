@@ -24,7 +24,6 @@ import android.os.Bundle;
 import androidx.annotation.Nullable;
 
 import org.ashfall.parts.ControllerActivity;
-import org.ashfall.parts.DisplayActivity;
 import org.ashfall.parts.FanActivity;
 import org.ashfall.parts.LightingActivity;
 import org.ashfall.parts.PowerActivity;
@@ -54,9 +53,6 @@ public class TilePreferencesActivity extends Activity {
         } else if (tile != null && tile.getClassName() != null
                 && tile.getClassName().contains("Power")) {
             target = PowerActivity.class;
-        } else if (tile != null && tile.getClassName() != null
-                && tile.getClassName().contains("Desktop")) {
-            target = DisplayActivity.class;
         } else {
             target = FanActivity.class;
         }

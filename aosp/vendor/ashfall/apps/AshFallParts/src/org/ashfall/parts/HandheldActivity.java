@@ -27,14 +27,13 @@ import androidx.preference.PreferenceCategory;
 import androidx.preference.PreferenceFragmentCompat;
 import androidx.preference.PreferenceScreen;
 
-import org.ashfall.parts.hw.Desktop;
 import org.ashfall.parts.hw.Fan;
 import org.ashfall.parts.hw.Led;
 import org.ashfall.parts.hw.Preset;
 import org.ashfall.parts.hw.PresetStore;
 import org.ashfall.parts.ui.Ui;
 
-/** The injected Settings homepage entry: three rows into the three pages. */
+/** The injected Settings homepage entry: one row per page. */
 public class HandheldActivity extends PartsActivity {
 
     @Override
@@ -51,7 +50,6 @@ public class HandheldActivity extends PartsActivity {
 
         private Preference mFanRow;
         private Preference mLightingRow;
-        private Preference mDisplayRow;
         private Preference mControllerRow;
         private Preference mPowerRow;
         private Preference mMemoryRow;
@@ -95,16 +93,6 @@ public class HandheldActivity extends PartsActivity {
                 return true;
             });
             category.addPreference(mLightingRow);
-
-            mDisplayRow = new Preference(requireContext());
-            mDisplayRow.setKey("home_display");
-            mDisplayRow.setTitle(R.string.display_title);
-            mDisplayRow.setIcon(R.drawable.ic_handheld);
-            mDisplayRow.setOnPreferenceClickListener(preference -> {
-                startActivity(new Intent(requireContext(), DisplayActivity.class));
-                return true;
-            });
-            category.addPreference(mDisplayRow);
 
             mControllerRow = new Preference(requireContext());
             mControllerRow.setKey("home_controller");
@@ -180,20 +168,9 @@ public class HandheldActivity extends PartsActivity {
                     + (Led.isOn() ? Ui.hex(colour) : getString(R.string.off));
             mLightingRow.setSummary(lighting);
 
-            mDisplayRow.setSummary(displaySummary());
-
             mControllerRow.setSummary(mControllerSummary.provideSummary(mControllerRow));
             mPowerRow.setSummary(mPowerSummary.provideSummary(mPowerRow));
             mMemoryRow.setSummary(mMemorySummary.provideSummary(mMemoryRow));
-        }
-
-        private String displaySummary() {
-            final int mode = Desktop.windowingMode();
-            if (mode < 0) {
-                return getString(R.string.home_display_unknown);
-            }
-            return getString(mode == Desktop.WINDOWING_MODE_FREEFORM
-                    ? R.string.home_display_on : R.string.home_display_off);
         }
     }
 }

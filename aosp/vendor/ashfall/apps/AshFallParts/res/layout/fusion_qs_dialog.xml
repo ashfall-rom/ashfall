@@ -130,6 +130,41 @@
             android:textColor="?android:attr/colorAccent" />
     </LinearLayout>
 
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:minHeight="56dp"
+        android:gravity="center_vertical"
+        android:orientation="horizontal">
+
+        <LinearLayout
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:orientation="vertical">
+
+            <TextView
+                style="@style/AshFallDialogPrimary"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="@string/fusion_pointer_title" />
+
+            <TextView
+                android:id="@+id/fusion_qs_pointer_summary"
+                style="@style/AshFallDialogSecondary"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="@string/fusion_pointer_summary" />
+        </LinearLayout>
+
+        <Switch
+            android:id="@+id/fusion_qs_pointer_switch"
+            android:layout_width="wrap_content"
+            android:layout_height="48dp"
+            android:contentDescription="@string/fusion_pointer_title"
+            android:showText="false" />
+    </LinearLayout>
+
     <Button
         android:id="@+id/fusion_qs_done"
         style="?android:attr/borderlessButtonStyle"

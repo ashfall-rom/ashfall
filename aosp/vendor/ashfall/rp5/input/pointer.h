@@ -1,28 +1,34 @@
 /*
- * AshFall RP5 input: desktop-mode gamepad pointer (#131, workstream B).
+ * AshFall RP5 input: external-display gamepad pointer (#131).
  *
- * Desktop mode turns the internal pad into a mouse without touching the
- * gamepad device: a *second* uinput device ("AshFall RP5 Pointer") carries
+ * A secondary display (USB-C DP / HDMI) has no trackpad and no touch cursor,
+ * so the built-in pad can drive the system mouse there.  The pointer is a
+ * *second* uinput device ("AshFall RP5 Pointer") carrying
  * EV_REL/REL_X/REL_Y/REL_WHEEL/REL_HWHEEL plus BTN_LEFT/RIGHT/MIDDLE and
- * INPUT_PROP_POINTER.  Games never see relative axes, and in game mode no
- * pointer device exists at all.
+ * INPUT_PROP_POINTER.  The gamepad device never grows relative axes or mouse
+ * buttons, and with the switch off no pointer device exists at all.
+ *
+ * It is opt-in and external-only: the AshFall Parts switch in the Fusion QS
+ * dialog is disabled unless DisplayManager reports a display with
+ * displayId != 0 that is not STATE_OFF, and it is the only writer.
  *
  * The mapping logic lives here, free of evdev/uinput, so the host tests cover
- * the curve, the fixed 125 Hz tick, the button OR/hysteresis, the wheel repeat
- * and the L1+R1+Start chord with no hardware.
+ * the curve, the fixed 125 Hz tick, the two mouse buttons, the left-stick
+ * scroll repeat and the release path with no hardware.
  *
- * Contract (docs/rp5/input.md, "Desktop mode"):
- *   - persist.ashfall.pad.mode = game (default) | desktop, read live;
+ * Contract (docs/rp5/input.md, "External-display gamepad pointer"):
+ *   - persist.ashfall.pad.pointer = 1 | 0 (default 0), read live;
  *   - right stick = pointer, 5 % radial deadzone, expo 1.8, acceleration ramp,
  *     ~1200 px/s cap, fractional pixels accumulated across ticks;
- *   - A and R3 = left click, B = right click, R2 = middle click, L2 = drag,
- *     L1/R1 = wheel up/down (repeated while held);
- *   - a fixed 125 Hz emission while desktop mode is active, so a held stick
- *     keeps moving even when the MCU sends no changed frame;
- *   - switching modes (property or chord) releases every held button on both
- *     devices and clears the drag/repeat/fractional state;
- *   - GRAB ON suppresses the pointer exactly like the gamepad: the daemon
- *     skips the tick and releases the pointer buttons on the transition.
+ *   - L1 = BTN_LEFT (hold = drag), L2 = BTN_RIGHT (hold);
+ *   - left stick = scroll: vertical -> REL_WHEEL, horizontal -> REL_HWHEEL,
+ *     with a per-axis deadzone, repeat and deflection-dependent acceleration;
+ *   - a fixed 125 Hz emission while the pointer is on, so a held stick keeps
+ *     moving even when the MCU sends no changed frame;
+ *   - switching it off releases both mouse buttons and clears the
+ *     scroll/velocity/fractional state;
+ *   - GRAB ON suppresses the pointer exactly like the gamepad: the daemon skips
+ *     the tick and releases the pointer buttons on the transition.
  *
  * SPDX-License-Identifier: Apache-2.0
  */
@@ -34,16 +40,14 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-/* Property the app/QS tile writes; the daemon only reads it. */
-#define PROP_PAD_MODE "persist.ashfall.pad.mode"
-/* Effective mode, published for Parts/QS (status namespace, not persisted). */
-#define ASHFALL_PROP_PAD_MODE "ashfall.status.pad.mode"
+/* Property the app/QS dialog writes; the daemon only reads it. */
+#define PROP_PAD_POINTER "persist.ashfall.pad.pointer"
 
 #define POINTER_NAME "AshFall RP5 Pointer"
 #define POINTER_VID 0x2020
 #define POINTER_PID 0x3002
 
-/* Fixed emission rate while desktop mode is active. */
+/* Fixed emission rate while the pointer is on. */
 #define POINTER_TICK_MS 8 /* 125 Hz */
 
 /* Longest integration step: after a stalled loop the pointer must not jump. */
@@ -56,16 +60,16 @@
 /* Reaches the cap from rest in 150 ms; the same rate decelerates to a stop. */
 #define POINTER_ACCEL_PX_S2 8000.0
 
-/* Analog triggers: press at >= 50 %, release at <= 37.5 % (hysteresis). */
+/* Left stick -> scroll: one notch immediately on leaving the deadzone, then a
+ * repeat that gets faster with deflection (16 notches/s fully pushed, 4/s just
+ * outside the deadzone). */
+#define POINTER_SCROLL_DEADZONE_PCT 5
+#define POINTER_SCROLL_SLOW_MS 250
+#define POINTER_SCROLL_FAST_MS 60
+
+/* Analog L2: press at >= 50 %, release at <= 37.5 % (hysteresis). */
 #define POINTER_TRIGGER_ON 128
 #define POINTER_TRIGGER_OFF 96
-
-/* Wheel repeat while a shoulder button is held. */
-#define POINTER_REPEAT_DELAY_MS 400
-#define POINTER_REPEAT_MS 80
-
-/* Fallback mode chord: L1+R1+Start held for this long. */
-#define POINTER_CHORD_MS 1000
 
 /* MCU frames stop for this long -> the held state is no longer trusted. */
 #define POINTER_FRAME_TIMEOUT_MS 2000
@@ -88,27 +92,32 @@
 #define POINTER_KEY_A (1u << 14)
 #define POINTER_KEY_B (1u << 15)
 
-#define POINTER_CHORD_MASK \
-    (POINTER_KEY_L1 | POINTER_KEY_R1 | POINTER_KEY_START)
+/* Keys the MCU pad gives up while the pointer is on: L1 is the left mouse
+ * button, so it must not also reach the gamepad device (a game would see a
+ * click).  R1/R2/A/B/X/Y/R3/L3, D-pad, Start/Select and Home/Back pass
+ * through; L2, the left stick and the right stick are the axes consumed in
+ * ashfall_rp5_input.c. */
+#define POINTER_CONSUMED_KEYS (POINTER_KEY_L1)
 
-enum pointer_mode {
-    POINTER_MODE_GAME = 0,
-    POINTER_MODE_DESKTOP,
+/* One scroll axis' auto-repeat state. */
+struct pointer_repeat {
+    bool held;
+    int dir;      /* -1 / 0 / +1 */
+    int64_t next_ms;
 };
 
 struct pointer_state {
-    enum pointer_mode mode;
-    /* Last property text and write serial seen.  The serial is what makes a
-     * re-write of the same text visible (bionic bumps it on every set), so a
-     * two-state Parts/QS toggle still works after a chord. */
-    char mode_text[16];
-    uint32_t mode_serial;
+    /* persist.ashfall.pad.pointer, live.  The last text seen is kept so a
+     * malformed value is logged once per distinct text, not every poll. */
+    bool on;
+    char prop_text[8];
 
-    /* Latest decoded frame.  rx/ry are calibrated but *before* the user
-     * deadzone, so the pointer can apply its own fixed 5 %. */
+    /* Latest decoded frame.  lx/ly/rx/ry are calibrated but *before* the user
+     * deadzone, so pointer movement and scrolling apply their own fixed 5 %. */
     uint16_t keys;
+    int lx, ly;
     int rx, ry;
-    int l2, r2; /* calibrated 0..255, trigger deadzone applied */
+    int l2; /* calibrated 0..255, trigger hysteresis applied */
     int64_t last_frame_ms;
     bool have_frame;
 
@@ -116,19 +125,19 @@ struct pointer_state {
     double vx, vy;
     double frac_x, frac_y;
 
-    bool btn_left, btn_right, btn_middle;
-    bool l2_down, r2_down;
-    bool l1_held, r1_held;
-    int64_t l1_next_ms, r1_next_ms;
+    bool btn_left, btn_right;
+    bool l2_down;
 
-    int64_t chord_since_ms;
-    bool chord_latched;
+    struct pointer_repeat scroll_x; /* left stick horizontal -> REL_HWHEEL */
+    struct pointer_repeat scroll_y; /* left stick vertical   -> REL_WHEEL */
 
     int64_t last_tick_ms;
     int64_t next_tick_ms;
 };
 
-/* Device capabilities for uinput_dev_spec (uinput_dev.c). */
+/* Device capabilities for uinput_dev_spec (uinput_dev.c).  BTN_MIDDLE is
+ * advertised for pointer identity but no input maps to it: L1 is the left and
+ * L2 the right button. */
 extern const uint16_t pointer_keys[];
 extern const int pointer_key_count;
 extern const uint16_t pointer_rels[];
@@ -138,58 +147,47 @@ extern const int pointer_prop_count;
 
 void pointer_defaults(struct pointer_state *ps);
 
-/* "game" / "desktop"; false for anything else. */
-bool pointer_mode_parse(const char *text, enum pointer_mode *out);
-const char *pointer_mode_name(enum pointer_mode mode);
+/* "1" -> true, "0" -> false; false for anything else. */
+bool pointer_switch_parse(const char *text, bool *on);
 
-/* Read persist.ashfall.pad.mode.  A value is adopted when its text or its
- * write serial changed; malformed values are ignored (logged once per distinct
- * text) and never force a mode.  Returns true when the *effective* mode
- * changed, i.e. when the caller must release both devices and create or
- * destroy the pointer uinput device. */
-bool pointer_mode_read(struct pointer_state *ps);
+/* Read persist.ashfall.pad.pointer.  The switch follows the property text; a
+ * malformed value is ignored (logged once per distinct text) and never flips
+ * it.  Returns true when the effective state changed, i.e. when the caller must
+ * release the gamepad and the pointer and create or destroy the pointer uinput
+ * device. */
+bool pointer_switch_read(struct pointer_state *ps);
 
-/* The same decision on an explicit (text, serial) pair.  This is the daemon's
- * read path with the property API peeled off, so the host tests can simulate a
- * write that repeats the stored text (#173). */
-bool pointer_mode_observe(struct pointer_state *ps, const char *text,
-                          uint32_t serial);
+/* The same decision on an explicit text: the daemon's read path with the
+ * property API peeled off, so the host tests need no property service. */
+bool pointer_switch_observe(struct pointer_state *ps, const char *text);
 
-/* Set the live mode (chord fallback).  The property latch is deliberately left
- * alone: the chord does not write the property (the app owns it), and the
- * untouched (text, serial) pair must not be re-adopted on the next poll.
- * Returns true when the mode actually changed. */
-bool pointer_set_mode(struct pointer_state *ps, enum pointer_mode mode);
+/* Set the live state directly (host tests / boot).  Returns true when it
+ * actually changed. */
+bool pointer_set_enabled(struct pointer_state *ps, bool on);
 
 /* Record one decoded status frame.  Called for every frame, including while
  * GRAB is on, so GRAB OFF resumes from the current physical state. */
-void pointer_frame(struct pointer_state *ps, uint16_t keys, int rx, int ry,
-                   int l2, int r2, int64_t now_ms);
+void pointer_frame(struct pointer_state *ps, uint16_t keys, int lx, int ly,
+                   int rx, int ry, int l2, int64_t now_ms);
 
-/* Release every held pointer button and clear velocity, fraction and wheel
- * repeat state.  The chord latch is *not* cleared: the daemon calls this from
- * apply_pad_mode() on the very switch the chord just triggered, and clearing it
- * there would re-fire the chord every second while it is held (#172).  It
- * clears itself when the three buttons are released or frames time out.
- * `emit` may be NULL to clear silently (GRAB ON / shutdown after the buttons
- * were already released).  Returns the number of events emitted, not counting
- * the SYN. */
+/* Release every held pointer button and clear velocity, fraction and scroll
+ * repeat state.  `emit` may be NULL to clear silently (GRAB ON / shutdown
+ * after the buttons were already released).  Returns the number of events
+ * emitted, not counting the SYN. */
 int pointer_release(struct pointer_state *ps, session_emit_fn emit, void *ctx);
 
 /*
- * One fixed-rate tick.  In game mode this only runs the chord detector and
- * returns 0.  In desktop mode it emits the button changes, wheel notches and
- * REL_X/REL_Y deltas for this tick plus one SYN.  *chord (optional) is set true
- * once per completed L1+R1+Start hold; the caller switches the mode and calls
- * pointer_release()/apply.
+ * One fixed-rate tick.  With the pointer off this returns 0.  With it on it
+ * emits the button changes, wheel notches and REL_X/REL_Y deltas for this tick
+ * plus one SYN.
  *
  * Returns the number of events emitted, not counting the SYN.
  */
 int pointer_tick(struct pointer_state *ps, int64_t now_ms,
-                 session_emit_fn emit, void *ctx, bool *chord);
+                 session_emit_fn emit, void *ctx);
 
-/* Milliseconds until the next desktop tick (>= 1), or -1 when the pointer is
- * idle (game mode): the caller keeps its normal poll timeout. */
+/* Milliseconds until the next pointer tick (>= 1), or -1 when the pointer is
+ * off: the caller keeps its normal poll timeout. */
 int pointer_timeout_ms(const struct pointer_state *ps, int64_t now_ms);
 
 #endif /* ASHFALL_POINTER_H */

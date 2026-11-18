@@ -18,9 +18,11 @@ package org.ashfall.parts.qs;
 
 import android.app.Dialog;
 import android.content.Context;
+import android.hardware.display.DisplayManager;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
+import android.view.Display;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
@@ -36,6 +38,7 @@ import android.widget.Toast;
 import androidx.annotation.NonNull;
 
 import org.ashfall.parts.R;
+import org.ashfall.parts.hw.Pad;
 import org.ashfall.parts.ipc.FusionClient;
 import org.ashfall.parts.ui.Ui;
 
@@ -50,6 +53,14 @@ import java.util.List;
  * layout options expand in place: a second dialog window would be drawn behind
  * the Quick Settings window and could not be reached (the Lighting dialog keeps
  * its picker inline for the same reason).
+ *
+ * <p>The last row is the external-display **desktop pointer** switch (#131): it
+ * is not a Fusion setting, it writes {@code persist.ashfall.pad.pointer}, the
+ * only switch the input daemon reads for the second uinput pointer device.  It
+ * has no target on the internal panel, so it is only enabled while a secondary
+ * display is present and awake ({@link #hasExternalDisplay()}); a stale "on"
+ * value is cleared instead of turning the pad into a mouse with nothing to
+ * point at.
  */
 public class FusionDialog extends Dialog {
 
@@ -74,6 +85,8 @@ public class FusionDialog extends Dialog {
     };
 
     private Switch mSwitch;
+    private Switch mPointerSwitch;
+    private TextView mPointerSummary;
     private TextView mState;
     private LinearLayout mPads;
     private boolean mUpdating;
@@ -96,6 +109,8 @@ public class FusionDialog extends Dialog {
         mSwitch = findViewById(R.id.fusion_qs_switch);
         mState = findViewById(R.id.fusion_qs_state);
         mPads = findViewById(R.id.fusion_qs_pads);
+        mPointerSwitch = findViewById(R.id.fusion_qs_pointer_switch);
+        mPointerSummary = findViewById(R.id.fusion_qs_pointer_summary);
 
         mSwitch.setOnCheckedChangeListener((button, checked) -> {
             if (mUpdating) {
@@ -115,8 +130,26 @@ public class FusionDialog extends Dialog {
         });
         findViewById(R.id.fusion_qs_done).setOnClickListener(view -> dismiss());
 
+        mPointerSwitch.setOnCheckedChangeListener((button, checked) -> {
+            if (mUpdating) {
+                return;
+            }
+            if (checked && !hasExternalDisplay()) {
+                /* No target: refuse the switch instead of consuming the pad's
+                 * sticks with nothing to point at. */
+                updatePointer();
+                return;
+            }
+            Pad.setPointer(checked);
+            if (mListener != null) {
+                mListener.onChanged();
+            }
+            updatePointer();
+        });
+
         updateState(FusionClient.cache());
         rebuild(FusionClient.cache());
+        updatePointer();
         fitWindow();
         mSwitch.requestFocus();
     }
@@ -224,6 +257,7 @@ public class FusionDialog extends Dialog {
                 }
                 updateState(status);
                 rebuild(status);
+                updatePointer();
             });
         }, "ashfall-fusion-dialog").start();
     }
@@ -239,6 +273,55 @@ public class FusionDialog extends Dialog {
             mUpdating = false;
         }
         mState.setText(FusionClient.stateText(getContext(), status));
+    }
+
+    /**
+     * A secondary display is connected and awake: any display that is not the
+     * default one and is not {@link Display#STATE_OFF}.  Doze and a pending
+     * power-off therefore count as "no display".
+     */
+    private boolean hasExternalDisplay() {
+        final DisplayManager manager =
+                (DisplayManager) getContext().getSystemService(Context.DISPLAY_SERVICE);
+        if (manager == null) {
+            return false;
+        }
+        for (Display display : manager.getDisplays()) {
+            if (display.getDisplayId() != Display.DEFAULT_DISPLAY
+                    && display.getState() != Display.STATE_OFF) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Mirrors {@code persist.ashfall.pad.pointer} and the display state into the
+     * row.  Without a secondary display the switch is disabled and a stored
+     * "on" is cleared, so unplugging the display cannot leave the pad's sticks
+     * consumed with no cursor target.
+     */
+    private void updatePointer() {
+        if (mPointerSwitch == null) {
+            return;
+        }
+        final boolean external = hasExternalDisplay();
+        if (!external && Pad.pointer()) {
+            Pad.setPointer(false);
+            if (mListener != null) {
+                mListener.onChanged();
+            }
+        }
+        mUpdating = true;
+        try {
+            mPointerSwitch.setEnabled(external);
+            mPointerSwitch.setChecked(Pad.pointer());
+        } finally {
+            mUpdating = false;
+        }
+        mPointerSummary.setText(external
+                ? R.string.fusion_pointer_summary
+                : R.string.fusion_pointer_no_display);
     }
 
     /** Rebuilds the pad rows, but only when the daemon's list changed. */

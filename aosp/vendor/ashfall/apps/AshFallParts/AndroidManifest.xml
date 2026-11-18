@@ -25,16 +25,6 @@
          talks to /dev/socket/ashfall_input (see docs/phase5.md). -->
     <uses-permission android:name="android.permission.STATUS_BAR" />
 
-    <!-- Desktop mode (#131 F2): read/set display 0's windowing mode and its
-         per-display density through WindowManager.  Both are signature
-         permissions granted by the platform certificate. -->
-    <uses-permission android:name="android.permission.INTERNAL_SYSTEM_WINDOW" />
-    <uses-permission android:name="android.permission.WRITE_SECURE_SETTINGS" />
-
-    <!-- Boot guard (#207): reset display 0 and the saved density on every
-         boot, because WindowManager persists both across reboots. -->
-    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
-
     <!-- "Match screen" (#167): mirror the display into a private 64x36
          ImageReader.  The app is platform-signed system_app, so display capture
          needs no MediaProjection consent dialog. -->
@@ -54,20 +44,6 @@
         android:label="@string/app_name"
         android:supportsRtl="true"
         android:theme="@style/Theme.AshFall.Settings">
-
-        <!-- Boot guard (#131 F2, #207): WindowManager persists the display
-             windowing mode and density, so a crash between enter and exit
-             would otherwise boot into a desk at 320 dpi.  Both broadcasts run
-             the same idempotent reset; the receiver sends nothing itself. -->
-        <receiver
-            android:name=".DesktopBootReceiver"
-            android:directBootAware="true"
-            android:exported="false">
-            <intent-filter>
-                <action android:name="android.intent.action.LOCKED_BOOT_COMPLETED" />
-                <action android:name="android.intent.action.BOOT_COMPLETED" />
-            </intent-filter>
-        </receiver>
 
         <!-- Root entry on the Settings homepage.  Settings discovers it through
              TileUtils (system apps only) and renders it like a native row. -->
@@ -140,14 +116,6 @@
             android:configChanges="orientation|screenSize|screenLayout|keyboardHidden"
             android:exported="true"
             android:label="@string/lighting_title"
-            android:theme="@style/Theme.AshFall.Settings" />
-
-        <!-- Display page (#131 F2): the desktop mode switch. -->
-        <activity
-            android:name=".DisplayActivity"
-            android:configChanges="orientation|screenSize|screenLayout|keyboardHidden"
-            android:exported="true"
-            android:label="@string/display_title"
             android:theme="@style/Theme.AshFall.Settings" />
 
         <activity
@@ -273,18 +241,5 @@
             </intent-filter>
         </service>
 
-        <!-- Desktop mode Quick Settings tile (#131 F2): a plain toggle, no
-             dialog on tap; long-press opens the Display page. -->
-        <service
-            android:name=".qs.DesktopTileService"
-            android:exported="true"
-            android:icon="@drawable/ic_handheld"
-            android:label="@string/tile_desktop"
-            android:permission="android.permission.BIND_QUICK_SETTINGS_TILE"
-            android:theme="@style/Theme.AshFall.QsDialog">
-            <intent-filter>
-                <action android:name="android.service.quicksettings.action.QS_TILE" />
-            </intent-filter>
-        </service>
     </application>
 </manifest>
