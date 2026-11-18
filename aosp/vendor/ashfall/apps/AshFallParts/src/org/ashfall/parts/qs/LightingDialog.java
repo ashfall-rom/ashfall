@@ -43,6 +43,7 @@ import org.ashfall.parts.R;
 import org.ashfall.parts.hw.Led;
 import org.ashfall.parts.ui.ColorPickerView;
 import org.ashfall.parts.ui.ColorSwatchView;
+import org.ashfall.parts.ui.ScreenLedSync;
 import org.ashfall.parts.ui.Ui;
 
 import java.util.Locale;
@@ -76,8 +77,9 @@ public class LightingDialog extends Dialog {
     private RadioButton mEffectScreen;
     private LinearLayout mScreenRow;
     private TextView mScreenRateValue;
+    private LinearLayout mScreenDelayRow;
+    private TextView mScreenDelayValue;
     private TextView mScreenNote;
-    private TextView mSpeedTitle;
 
     private boolean mUpdating;
     private int mPendingColor;
@@ -151,45 +153,67 @@ public class LightingDialog extends Dialog {
 
         final LinearLayout container = (LinearLayout) mSpeed.getParent();
         final int index = container.indexOfChild(mSpeed) + 1;
-        // The "Speed" caption above the seek bar; relabelled to "Smoothing"
-        // while Match screen is selected, like the page does (#167).
-        final View speedCaption = container.getChildAt(index - 2);
-        if (speedCaption instanceof LinearLayout) {
-            final View first = ((LinearLayout) speedCaption).getChildAt(0);
-            if (first instanceof TextView) {
-                mSpeedTitle = (TextView) first;
-            }
-        }
+        mScreenRow = screenRow(R.string.lighting_screen_rate_title, index,
+                view -> cycleScreenRate());
+        mScreenRateValue = (TextView) mScreenRow.getChildAt(1);
 
-        mScreenRow = new LinearLayout(context);
-        mScreenRow.setOrientation(LinearLayout.HORIZONTAL);
-        mScreenRow.setGravity(Gravity.CENTER_VERTICAL);
-        mScreenRow.setPadding(0, Ui.dp(context, 8), 0, Ui.dp(context, 8));
-        mScreenRow.setFocusable(true);
-        mScreenRow.setClickable(true);
-        final TypedValue background = new TypedValue();
-        if (context.getTheme().resolveAttribute(
-                android.R.attr.selectableItemBackground, background, true)
-                && background.resourceId != 0) {
-            mScreenRow.setBackgroundResource(background.resourceId);
-        }
-        final TextView rateTitle = new TextView(context);
-        rateTitle.setTextAppearance(context, R.style.AshFallSection);
-        rateTitle.setText(R.string.lighting_screen_rate_title);
-        rateTitle.setLayoutParams(new LinearLayout.LayoutParams(
-                0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
-        mScreenRateValue = new TextView(context);
-        mScreenRateValue.setTextAppearance(context, R.style.AshFallDialogPrimary);
-        mScreenRow.addView(rateTitle);
-        mScreenRow.addView(mScreenRateValue);
-        mScreenRow.setOnClickListener(view -> cycleScreenRate());
-        container.addView(mScreenRow, index);
+        mScreenDelayRow = screenRow(R.string.lighting_screen_delay_title, index + 1,
+                view -> cycleScreenDelay());
+        mScreenDelayValue = (TextView) mScreenDelayRow.getChildAt(1);
 
         mScreenNote = new TextView(context);
         mScreenNote.setTextAppearance(context, R.style.AshFallDialogSecondary);
         mScreenNote.setText(R.string.lighting_screen_note);
         mScreenNote.setPadding(0, 0, 0, Ui.dp(context, 8));
-        container.addView(mScreenNote, index + 1);
+        container.addView(mScreenNote, index + 2);
+    }
+
+    /** One tappable "title ... value" row in the Match screen block. */
+    private LinearLayout screenRow(int titleRes, int index, View.OnClickListener listener) {
+        final Context context = getContext();
+        final LinearLayout row = new LinearLayout(context);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        row.setGravity(Gravity.CENTER_VERTICAL);
+        row.setPadding(0, Ui.dp(context, 8), 0, Ui.dp(context, 8));
+        row.setFocusable(true);
+        row.setClickable(true);
+        final TypedValue background = new TypedValue();
+        if (context.getTheme().resolveAttribute(
+                android.R.attr.selectableItemBackground, background, true)
+                && background.resourceId != 0) {
+            row.setBackgroundResource(background.resourceId);
+        }
+        final TextView title = new TextView(context);
+        title.setTextAppearance(context, R.style.AshFallSection);
+        title.setText(titleRes);
+        title.setLayoutParams(new LinearLayout.LayoutParams(
+                0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
+        final TextView value = new TextView(context);
+        value.setTextAppearance(context, R.style.AshFallDialogPrimary);
+        row.addView(title);
+        row.addView(value);
+        row.setOnClickListener(listener);
+        final LinearLayout container = (LinearLayout) mSpeed.getParent();
+        container.addView(row, index);
+        return row;
+    }
+
+    private void cycleScreenDelay() {
+        final int[] delays = ScreenLedSync.SCREEN_DELAYS_MS;
+        int next = delays[0];
+        for (int i = 0; i < delays.length; i++) {
+            if (delays[i] == ScreenLedSync.screenDelay()) {
+                next = delays[(i + 1) % delays.length];
+                break;
+            }
+        }
+        ScreenLedSync.setScreenDelay(next);
+        refresh();
+    }
+
+    private String delayLabel(int ms) {
+        return ms <= 0 ? getContext().getString(R.string.lighting_screen_delay_off)
+                : getContext().getString(R.string.lighting_screen_delay_value, ms);
     }
 
     private void cycleScreenRate() {
@@ -394,16 +418,19 @@ public class LightingDialog extends Dialog {
             mSpeed.setProgress(Led.speed() - 1);
             mSpeedValue.setText(getContext().getString(
                     R.string.lighting_speed_summary, Led.speed()));
-            // Duo is animated by the daemon with led.speed as well (#100);
-            // Match screen reuses it for the smoothing strength (#167).
-            final boolean animated = screen
-                    || Led.MODE_BREATHING.equals(mode)
+            // Duo is animated by the daemon with led.speed as well (#100).
+            // Match screen is a literal per-half average plus an optional
+            // delay, so led.speed no longer applies to it.
+            final boolean animated = Led.MODE_BREATHING.equals(mode)
                     || Led.MODE_RAINBOW.equals(mode)
                     || Led.MODE_DUO.equals(mode);
             mSpeed.setEnabled(animated);
             mSpeed.setAlpha(animated ? 1f : 0.5f);
             if (mScreenRow != null) {
                 mScreenRow.setVisibility(screen ? View.VISIBLE : View.GONE);
+            }
+            if (mScreenDelayRow != null) {
+                mScreenDelayRow.setVisibility(screen ? View.VISIBLE : View.GONE);
             }
             if (mScreenNote != null) {
                 mScreenNote.setVisibility(screen ? View.VISIBLE : View.GONE);
@@ -412,9 +439,8 @@ public class LightingDialog extends Dialog {
                 mScreenRateValue.setText(getContext().getString(
                         R.string.lighting_screen_rate_value, Led.screenRate()));
             }
-            if (mSpeedTitle != null) {
-                mSpeedTitle.setText(screen ? R.string.lighting_smoothing_title
-                        : R.string.tile_speed);
+            if (mScreenDelayValue != null) {
+                mScreenDelayValue.setText(delayLabel(ScreenLedSync.screenDelay()));
             }
         } finally {
             mUpdating = false;

@@ -29,6 +29,7 @@ import org.ashfall.parts.hw.Led;
 import org.ashfall.parts.ui.ColorPickerDialog;
 import org.ashfall.parts.ui.ColorPreference;
 import org.ashfall.parts.ui.MainSwitchPreference;
+import org.ashfall.parts.ui.ScreenLedSync;
 import org.ashfall.parts.ui.SliderPreference;
 import org.ashfall.parts.ui.Ui;
 
@@ -59,6 +60,7 @@ public class LightingActivity extends PartsActivity {
         private Preference mEffect;
         private SliderPreference mSpeed;
         private Preference mScreenRate;
+        private Preference mScreenDelay;
         private Preference mScreenNote;
 
         @Override
@@ -148,6 +150,15 @@ public class LightingActivity extends PartsActivity {
                 return true;
             });
             effectCategory.addPreference(mScreenRate);
+
+            mScreenDelay = new Preference(requireContext());
+            mScreenDelay.setKey("lighting_screen_delay");
+            mScreenDelay.setTitle(R.string.lighting_screen_delay_title);
+            mScreenDelay.setOnPreferenceClickListener(preference -> {
+                showDelayDialog();
+                return true;
+            });
+            effectCategory.addPreference(mScreenDelay);
 
             mScreenNote = new Preference(requireContext());
             mScreenNote.setKey("lighting_screen_note");
@@ -266,6 +277,32 @@ public class LightingActivity extends PartsActivity {
                     .show();
         }
 
+        private void showDelayDialog() {
+            final int[] delays = ScreenLedSync.SCREEN_DELAYS_MS;
+            final CharSequence[] labels = new CharSequence[delays.length];
+            int checked = 0;
+            for (int i = 0; i < delays.length; i++) {
+                labels[i] = delayLabel(delays[i]);
+                if (delays[i] == ScreenLedSync.screenDelay()) {
+                    checked = i;
+                }
+            }
+            new AlertDialog.Builder(requireContext())
+                    .setTitle(R.string.lighting_screen_delay_title)
+                    .setSingleChoiceItems(labels, checked, (dialog, which) -> {
+                        ScreenLedSync.setScreenDelay(delays[which]);
+                        dialog.dismiss();
+                        refresh();
+                    })
+                    .setNegativeButton(R.string.cancel, null)
+                    .show();
+        }
+
+        private String delayLabel(int ms) {
+            return ms <= 0 ? getString(R.string.lighting_screen_delay_off)
+                    : getString(R.string.lighting_screen_delay_value, ms);
+        }
+
         private String effectName(String effect) {
             return Led.MODE_SCREEN.equals(effect)
                     ? getString(R.string.lighting_effect_screen)
@@ -302,14 +339,13 @@ public class LightingActivity extends PartsActivity {
             final String effect = on ? Led.effect() : Prefs.lastLedMode(requireContext());
             mEffect.setSummary(effectName(effect));
 
-            mSpeed.setTitle(screen ? R.string.lighting_smoothing_title
-                    : R.string.lighting_speed_title);
+            mSpeed.setTitle(R.string.lighting_speed_title);
             mSpeed.setValue(Led.speed());
-            // The daemon animates duo with led.speed too (5000/speed), so it
-            // gets the speed slider just like breathing and rainbow (#100).
-            // Match screen reuses it for the smoothing strength (#167).
-            final boolean animated = screen
-                    || Led.MODE_BREATHING.equals(effect)
+            // Match screen is a literal per-half average with an optional
+            // delay, so led.speed no longer drives it.  Breathing, rainbow and
+            // duo keep the speed slider (duo is animated with led.speed too,
+            // 5000/speed, #100).
+            final boolean animated = Led.MODE_BREATHING.equals(effect)
                     || Led.MODE_RAINBOW.equals(effect)
                     || Led.MODE_DUO.equals(effect);
             mSpeed.setEnabled(animated);
@@ -317,6 +353,8 @@ public class LightingActivity extends PartsActivity {
             mScreenRate.setVisible(screen);
             mScreenRate.setSummary(getString(R.string.lighting_screen_rate_value,
                     Led.screenRate()));
+            mScreenDelay.setVisible(screen);
+            mScreenDelay.setSummary(delayLabel(ScreenLedSync.screenDelay()));
             mScreenNote.setVisible(screen);
         }
     }
