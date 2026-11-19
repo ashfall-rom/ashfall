@@ -24,6 +24,7 @@ import androidx.preference.Preference;
 import androidx.preference.PreferenceCategory;
 import androidx.preference.PreferenceFragmentCompat;
 import androidx.preference.PreferenceScreen;
+import androidx.preference.SwitchPreferenceCompat;
 
 import org.ashfall.parts.hw.Led;
 import org.ashfall.parts.ui.ColorPickerDialog;
@@ -62,6 +63,7 @@ public class LightingActivity extends PartsActivity {
         private Preference mScreenRate;
         private Preference mScreenDelay;
         private Preference mScreenBoost;
+        private SwitchPreferenceCompat mScreenDim;
         private Preference mScreenNote;
 
         @Override
@@ -169,6 +171,18 @@ public class LightingActivity extends PartsActivity {
                 return true;
             });
             effectCategory.addPreference(mScreenBoost);
+
+            mScreenDim = new SwitchPreferenceCompat(requireContext());
+            mScreenDim.setKey("lighting_screen_dim");
+            mScreenDim.setTitle(R.string.lighting_screen_dim_title);
+            mScreenDim.setSummary(R.string.lighting_screen_dim_summary);
+            mScreenDim.setChecked(ScreenLedSync.screenDim());
+            mScreenDim.setOnPreferenceChangeListener((preference, value) -> {
+                ScreenLedSync.setScreenDim((Boolean) value);
+                refresh();
+                return true;
+            });
+            effectCategory.addPreference(mScreenDim);
 
             mScreenNote = new Preference(requireContext());
             mScreenNote.setKey("lighting_screen_note");
@@ -401,6 +415,8 @@ public class LightingActivity extends PartsActivity {
             mScreenDelay.setSummary(delayLabel(ScreenLedSync.screenDelay()));
             mScreenBoost.setVisible(screen);
             mScreenBoost.setSummary(boostLabel(ScreenLedSync.screenBoost()));
+            mScreenDim.setVisible(screen);
+            mScreenDim.setChecked(ScreenLedSync.screenDim());
             mScreenNote.setVisible(screen);
         }
     }

@@ -81,6 +81,8 @@ public class LightingDialog extends Dialog {
     private TextView mScreenDelayValue;
     private LinearLayout mScreenBoostRow;
     private TextView mScreenBoostValue;
+    private LinearLayout mScreenDimRow;
+    private TextView mScreenDimValue;
     private TextView mScreenNote;
 
     private boolean mUpdating;
@@ -167,11 +169,15 @@ public class LightingDialog extends Dialog {
                 view -> cycleScreenBoost());
         mScreenBoostValue = (TextView) mScreenBoostRow.getChildAt(1);
 
+        mScreenDimRow = screenRow(R.string.lighting_screen_dim_title, index + 3,
+                view -> toggleScreenDim());
+        mScreenDimValue = (TextView) mScreenDimRow.getChildAt(1);
+
         mScreenNote = new TextView(context);
         mScreenNote.setTextAppearance(context, R.style.AshFallDialogSecondary);
         mScreenNote.setText(R.string.lighting_screen_note);
         mScreenNote.setPadding(0, 0, 0, Ui.dp(context, 8));
-        container.addView(mScreenNote, index + 3);
+        container.addView(mScreenNote, index + 4);
     }
 
     /** One tappable "title ... value" row in the Match screen block. */
@@ -220,6 +226,16 @@ public class LightingDialog extends Dialog {
     private String delayLabel(int ms) {
         return ms <= 0 ? getContext().getString(R.string.lighting_screen_delay_off)
                 : getContext().getString(R.string.lighting_screen_delay_value, ms);
+    }
+
+    private void toggleScreenDim() {
+        ScreenLedSync.setScreenDim(!ScreenLedSync.screenDim());
+        refresh();
+    }
+
+    private String dimLabel() {
+        return getContext().getString(ScreenLedSync.screenDim()
+                ? R.string.lighting_screen_dim_on : R.string.lighting_screen_dim_off);
     }
 
     private void cycleScreenBoost() {
@@ -479,6 +495,9 @@ public class LightingDialog extends Dialog {
             }
             if (mScreenBoostValue != null) {
                 mScreenBoostValue.setText(boostLabel(ScreenLedSync.screenBoost()));
+            }
+            if (mScreenDimValue != null) {
+                mScreenDimValue.setText(dimLabel());
             }
         } finally {
             mUpdating = false;

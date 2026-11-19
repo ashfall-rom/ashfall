@@ -228,6 +228,10 @@
     <string name="lighting_screen_boost_low">Low</string>
     <string name="lighting_screen_boost_medium">Medium</string>
     <string name="lighting_screen_boost_high">High</string>
+    <string name="lighting_screen_dim_title">Dim dark scenes</string>
+    <string name="lighting_screen_dim_summary">Darker screens dim the LEDs</string>
+    <string name="lighting_screen_dim_on">On</string>
+    <string name="lighting_screen_dim_off">Off</string>
     <string name="lighting_smoothing_title">Smoothing</string>
     <string name="lighting_screen_failed">Screen capture didn\'t start. Lighting kept its last effect.</string>
     <string name="led_sync_title">LED screen sync</string>

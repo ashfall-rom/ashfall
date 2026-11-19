@@ -333,6 +333,7 @@ contract does not change — the sampler is one more publisher of
 | Screen rate | `persist.ashfall.led.screen_rate` | `10` (default) / `15` / `30` frames per second |
 | Delay changes | `persist.ashfall.led.screen_delay` | `0` (Off, default) / `100` / `250` / `500` ms |
 | Colour boost | `persist.ashfall.led.screen_boost` | `0` (Off) / `30` (Low) / `60` (Medium, default) / `100` (High) percent added to HSV saturation |
+| Dim dark scenes | `persist.ashfall.led.screen_dim` | `1` (default) / `0`; scales each ring by the frame brightness so dark scenes go dim |
 | Brightness | `persist.ashfall.led.brightness` | scales the published colour on every publish |
 
 * **Literal split average.**  The screen is split in two and each half is
@@ -357,18 +358,32 @@ contract does not change — the sampler is one more publisher of
   is re-applied on the same tick.  It is a stability gate, not an animation,
   and it is UI-only (`ashfall-hwd` never reads it).
 * **Colour boost** multiplies HSV saturation of the published average by
-  `1 + pct/100` (Low 1.3, Medium 1.6, High 2.0) and keeps the value, so the
+  `1 + pct/50` (Low 1.6, Medium 2.2, High 3.0) and keeps the value, so the
   ring keeps its brightness but gains chroma — low-saturation video, which the
   literal average turns near-white, reads as colour on the LEDs.  White/grey
   (S = 0) and fully saturated colours (S = 1, e.g. an exact red/blue split) are
   unchanged, and Off is a bit-exact copy of the literal average.  It is read
   live on every publish like brightness, after the average and delay gate and
   before the brightness scale.  UI-only; the daemon never reads it.
+* **Dim dark scenes** (default on) multiplies each ring by its frame's HSV
+  value (the brightest channel) after the boost and before the brightness
+  scale, so a near-black frame produces near-off LEDs instead of a bright
+  grey/white glow; fully bright colours are unchanged.  Off restores the
+  boost-only result.  Read live on every publish; UI-only.
+* **Sleep and wake.** When the panel goes off the sampler stops capturing but
+  keeps the last override and its heartbeat for 2 s, which covers hwd's 250 ms
+  screen-off debounce and its 1.5 s wake re-apply window: the rings keep the
+  last screen colour until they are switched off, instead of flashing the
+  configured effect.  When the panel comes back the last colour is re-published
+  with a fresh heartbeat immediately (DisplayManager listener), then capture
+  restarts and the first frame updates it; the configured effect is never
+  shown in between.  The heartbeat stops after the grace, so sleep has no
+  400 ms property writes.
 * Capture: `DisplayManager.createVirtualDisplay` with
   `VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR` into an `ImageReader` (RGBA_8888, 64×36),
   `CAPTURE_VIDEO_OUTPUT`.  No MediaProjection, no consent dialog.
 * Processing: sRGB decode → per-half average in linear light → sRGB encode →
-  optional delay gate → colour boost → brightness.  No smoothing or colour
+  optional delay gate → colour boost → dim dark scenes → brightness.  No smoothing or colour
   lift is applied to the average itself, and `led.speed` no longer affects
   Match screen (it stays available for breathing, rainbow and duo).  Both the
   brightness slider and Colour boost are read on every publish, so moving
@@ -413,10 +428,13 @@ contract does not change — the sampler is one more publisher of
   (#241); Colour boost changes the rings live — Off reproduces the literal
   average exactly, Medium adds chroma to the muted video samples
   (`736A69:666260`-style frames gain tint) while a red/blue split stays exact
-  and a white page stays white; a `FLAG_SECURE` page keeps
-  the previous colour via the heartbeat; `am force-stop org.ashfall.parts`
-  clears the override within 1.5 s (daemon guardian) and the configured effect
-  returns.
+  and a white page stays white; Dim dark scenes Off lets a black page read as
+  the boosted grey, On drives it near off; a `FLAG_SECURE` page keeps
+  the previous colour via the heartbeat; turning the panel off keeps the last
+  screen colour until the rings switch off and never flashes the configured
+  effect, and waking re-publishes the last colour before the first new frame;
+  `am force-stop org.ashfall.parts` clears the override within 1.5 s (daemon
+  guardian) and the configured effect returns.
 
 ### 2.4 Controller
 
@@ -654,7 +672,7 @@ Read/written exactly as specified in `docs/phase5.md`:
 * `ashfall.ui.{fan_live,fan_preview_curve}`
 * `ashfall.status.fan.{temp,pct,rpm,safety}`
 * `persist.ashfall.led.{mode,color_left,color_right,sync,brightness,speed}`
-* `persist.ashfall.led.{screen_sync,screen_rate,screen_delay,screen_boost}`
+* `persist.ashfall.led.{screen_sync,screen_rate,screen_delay,screen_boost,screen_dim}`
   (UI-only; Match screen, #167)
 * `ashfall.ui.{led_override,led_override_live,led_suspend}` (live colour, its
   heartbeat, and the gamepad tester's suspend flag)
