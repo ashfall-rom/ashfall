@@ -136,6 +136,15 @@ down to bit 0 against the default table at `librsinput.so + 0x2e82c`:
 | 1 | `BTN_TR` (0x137) | R1 |
 | 0 | `BTN_TL` (0x136) | L1 |
 
+Bits 6 and 7 (Home and Back) are injected through a separate small keyboard
+device, **AshFall System Keys** (`2020:3003`).  The gamepad identities do not
+carry them: Android matches the fusion device to
+`Vendor_045e_Product_028e.kl` (the Xbox 360 layout, the point of the fusion
+identity), which has no `key 158`/`key 172` entries, so both keys were dropped
+while Gamepad Fusion was on.  The extra device has no keylayout of its own, so
+Android falls back to `Generic.kl`, where `KEY_HOMEPAGE` and `KEY_BACK` are
+mapped.
+
 Analog mapping follows AOSP's `VirtualGamepad` convention:
 `LX -> ABS_X`, `LY -> ABS_Y`, `RX -> ABS_Z`, `RY -> ABS_RZ`,
 `L2 -> ABS_BRAKE` (Android `AXIS_LTRIGGER`), `R2 -> ABS_GAS`

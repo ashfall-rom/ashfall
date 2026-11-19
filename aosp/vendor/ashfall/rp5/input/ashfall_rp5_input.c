@@ -123,6 +123,16 @@ static const uint16_t mcu_keymap[16] = {
     BTN_B,          /* bit 15 */
 };
 
+/* The MCU's Home and Back buttons are system keys, not gamepad buttons.  The
+ * layouts Android applies to the gamepad identities (the Xbox 360 .kl for the
+ * fusion device in particular) leave KEY_HOMEPAGE and KEY_BACK unmapped, so a
+ * pad device drops them.  They are injected through a small keyboard device of
+ * their own, which always falls back to Generic.kl (#185). */
+#define MCU_BIT_HOME 6
+#define MCU_BIT_BACK 7
+#define MCU_SYSKEY_MASK \
+    ((uint16_t)((1u << MCU_BIT_HOME) | (1u << MCU_BIT_BACK)))
+
 /* Payload bits for the D-pad, matching the key table above. */
 #define KEY_BIT_UP    (1u << 8)
 #define KEY_BIT_DOWN  (1u << 9)
@@ -194,6 +204,7 @@ struct daemon {
     int mcu_fd;
     int uinput_fd;
     int pointer_fd; /* external-display pointer device, -1 while off (#131) */
+    int syskey_fd;  /* Home/Back/Menu keyboard device (#185) */
     int own_fd;    /* our own event node, for EV_FF play events */
     int notify_fd; /* inotify watch on /dev/input */
 
@@ -208,6 +219,7 @@ struct daemon {
     uint8_t rx[4096];
     size_t rx_len;
     uint16_t prev_keys;
+    uint16_t syskey_prev; /* Home/Back state last injected (#185) */
     int prev_axes[AXIS_COUNT];
     int good_frames;
 
@@ -396,6 +408,42 @@ static int create_pointer_uinput(struct daemon *d)
      * re-reports whatever is physically held instead of assuming the button
      * that was pressed while the device was missing is already down. */
     pointer_release(&d->pointer, NULL, NULL);
+    return fd;
+}
+
+/* --- Home/Back keyboard device (#185) ------------------------------------- */
+
+/*
+ * A keyboard device for the MCU's Home and Back buttons.  Generic.kl maps
+ * KEY_HOMEPAGE (172) and KEY_BACK (158) for it, so the two system buttons work
+ * whatever keylayout Android picks for the gamepad identity - the Xbox 360
+ * layout used by the fusion device has no entries for them.  Created once and
+ * kept for the daemon's lifetime; no app ever sees this device as a gamepad.
+ */
+static int create_syskey_uinput(struct daemon *d)
+{
+    static const uint16_t syskey_keys[] = {KEY_HOMEPAGE, KEY_BACK};
+    struct uinput_dev_spec spec;
+    bool rumble = false;
+    int fd;
+
+    memset(&spec, 0, sizeof(spec));
+    spec.name = SYSKEY_NAME;
+    spec.bustype = BUS_USB;
+    spec.vendor = SYSKEY_VID;
+    spec.product = SYSKEY_PID;
+    spec.version = 1;
+    spec.keys = syskey_keys;
+    spec.key_count = (int)ARRAY_SIZE(syskey_keys);
+
+    fd = uinput_dev_create(&uinput_ops, &spec, &rumble);
+    if (fd < 0) {
+        ah_logf(AH_LOG_ERROR, "uinput %s: %s", spec.name, strerror(errno));
+        return -1;
+    }
+    ah_logf(AH_LOG_INFO, "uinput %s created (%04x:%04x, Home/Back keys)",
+            spec.name, spec.vendor, spec.product);
+    d->syskey_prev = 0;
     return fd;
 }
 
@@ -1034,6 +1082,31 @@ static void mcu_release(struct daemon *d)
         d->prev_axes[i] = st.axes[i];
 }
 
+/*
+ * Home and Back go through their own device (#185): the gamepad layouts
+ * Android matches by name or vendor/product have no HOME/BACK entries, so the
+ * events would be dropped there.  Edges only, one SYN per change, and the
+ * state is tracked separately from prev_keys because the fusion path keeps its
+ * own per-pad state.
+ */
+static void syskey_route(struct daemon *d, uint16_t keys)
+{
+    const uint16_t changed =
+            (uint16_t)((keys ^ d->syskey_prev) & MCU_SYSKEY_MASK);
+
+    if (changed && d->syskey_fd >= 0) {
+        if (changed & (1u << MCU_BIT_HOME))
+            emit_event(d->syskey_fd, EV_KEY, KEY_HOMEPAGE,
+                       (keys >> MCU_BIT_HOME) & 1);
+        if (changed & (1u << MCU_BIT_BACK))
+            emit_event(d->syskey_fd, EV_KEY, KEY_BACK,
+                       (keys >> MCU_BIT_BACK) & 1);
+        emit_sync(d->syskey_fd);
+    }
+    d->syskey_prev =
+            (uint16_t)((d->syskey_prev & ~MCU_SYSKEY_MASK) | (keys & MCU_SYSKEY_MASK));
+}
+
 /* The MCU state is either the uinput device itself (fusion off) or one pad of
  * the merge (fusion on). */
 static void mcu_release_state(struct daemon *d)
@@ -1048,6 +1121,7 @@ static void mcu_release_state(struct daemon *d)
     }
     if (!d->grabbed)
         pointer_release(&d->pointer, pointer_emit, d);
+    syskey_route(d, 0);
     d->good_frames = 0;
 }
 
@@ -1061,6 +1135,8 @@ static void mcu_to_fusion(struct daemon *d, uint16_t keys,
     for (int i = 0; i < 16; i++) {
         if (mcu_keymap[i] == 0)
             continue;
+        if (i == MCU_BIT_HOME || i == MCU_BIT_BACK)
+            continue; /* injected through the system-keys device (#185) */
         fusion_key_event(&d->fusion, index, mcu_keymap[i],
                          (keys >> i) & 1);
     }
@@ -1136,6 +1212,8 @@ static void handle_status(struct daemon *d, const uint8_t *data, size_t len)
         return;
     }
 
+    syskey_route(d, pad_keys);
+
     if (d->fusion_device) {
         mcu_to_fusion(d, pad_keys, pad_axes, now_ms);
         d->good_frames++;
@@ -1150,6 +1228,8 @@ static void handle_status(struct daemon *d, const uint8_t *data, size_t len)
                 continue;
             if (mcu_keymap[i] == 0)
                 continue; /* D-pad bit, reported through ABS_HAT0X/Y */
+            if (i == MCU_BIT_HOME || i == MCU_BIT_BACK)
+                continue; /* injected through the system-keys device (#185) */
             emit_event(d->uinput_fd, EV_KEY, mcu_keymap[i],
                        (pad_keys >> i) & 1);
         }
@@ -1636,6 +1716,7 @@ int main(void)
 
     memset(&d, 0, sizeof(d));
     d.mcu_fd = d.uinput_fd = d.pointer_fd = d.own_fd = d.notify_fd = -1;
+    d.syskey_fd = -1;
     for (int i = 0; i < FUSION_MAX_PADS; i++)
         d.pads[i].fd = -1;
 
@@ -1678,6 +1759,7 @@ int main(void)
     }
     if (d.uinput_fd < 0)
         return 1;
+    d.syskey_fd = create_syskey_uinput(&d);
     d.fusion_device = d.fusion.enabled;
     fusion_reset_reported(&d.fusion);
     for (int i = 0; i < AXIS_COUNT; i++)
@@ -1877,6 +1959,10 @@ int main(void)
     if (d.uinput_fd >= 0) {
         ioctl(d.uinput_fd, UI_DEV_DESTROY);
         close(d.uinput_fd);
+    }
+    if (d.syskey_fd >= 0) {
+        ioctl(d.syskey_fd, UI_DEV_DESTROY);
+        close(d.syskey_fd);
     }
     return 0;
 }

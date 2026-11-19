@@ -57,6 +57,13 @@
 #define FUSION_MCU_VID 0x2020
 #define FUSION_MCU_PID 0x3001
 
+/* Home/Back keyboard device (#185): a name and IDs of its own so no gamepad
+ * keylayout matches it and Android falls back to Generic.kl, where
+ * KEY_HOMEPAGE/KEY_BACK are mapped. */
+#define SYSKEY_NAME "AshFall System Keys"
+#define SYSKEY_VID 0x2020
+#define SYSKEY_PID 0x3003
+
 #define FUSION_BITS_BYTES(bits) (((bits) + 7) / 8)
 
 enum fusion_layout {
