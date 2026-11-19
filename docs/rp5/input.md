@@ -136,6 +136,15 @@ down to bit 0 against the default table at `librsinput.so + 0x2e82c`:
 | 1 | `BTN_TR` (0x137) | R1 |
 | 0 | `BTN_TL` (0x136) | L1 |
 
+Bits 6 and 7 (Home and Back) are injected through a separate small keyboard
+device, **AshFall System Keys** (`2020:3003`).  The gamepad identities do not
+carry them: Android matches the fusion device to
+`Vendor_045e_Product_028e.kl` (the Xbox 360 layout, the point of the fusion
+identity), which has no `key 158`/`key 172` entries, so both keys were dropped
+while Gamepad Fusion was on.  The extra device has no keylayout of its own, so
+Android falls back to `Generic.kl`, where `KEY_HOMEPAGE` and `KEY_BACK` are
+mapped.
+
 Analog mapping follows AOSP's `VirtualGamepad` convention:
 `LX -> ABS_X`, `LY -> ABS_Y`, `RX -> ABS_Z`, `RY -> ABS_RZ`,
 `L2 -> ABS_BRAKE` (Android `AXIS_LTRIGGER`), `R2 -> ABS_GAS`
@@ -735,11 +744,11 @@ has no hole sentinel.
 | input | action | gamepad device |
 |---|---|---|
 | Right stick | pointer movement (`REL_X`/`REL_Y`) | **consumed** (zeroed) |
-| L1 | left button (`BTN_LEFT`); hold + move = drag | **consumed** |
-| L2 (analog) | right button (`BTN_RIGHT`), 50 %/37.5 % hysteresis | **consumed** (axis zeroed) |
+| R1 | left button (`BTN_LEFT`); hold + move = drag | **consumed** |
+| R2 (analog) | right button (`BTN_RIGHT`), 50 %/37.5 % hysteresis | **consumed** (axis zeroed) |
 | Left stick vertical | scroll up/down (`REL_WHEEL`, stick up = +1) | **consumed** (zeroed) |
 | Left stick horizontal | scroll left/right (`REL_HWHEEL`, stick right = +1) | **consumed** (zeroed) |
-| R1, R2 | `BTN_TR` / `ABS_GAS` | unchanged |
+| L1, L2 | `BTN_TL` / `ABS_BRAKE` | unchanged |
 | A, B, X, Y, R3, L3 | face/thumb buttons | unchanged |
 | D-pad | focus navigation (`ABS_HAT0X/Y`) | unchanged |
 | Start / Select | `BTN_START` / `BTN_SELECT` | unchanged |
@@ -747,7 +756,7 @@ has no hole sentinel.
 
 Consumption is a routing step, not a capability change: the MCU frame is
 reshaped before it reaches the gamepad device (`pointer_route()` in
-`ashfall_rp5_input.c`), so a game sees no L1 click, no trigger pull and no
+`ashfall_rp5_input.c`), so a game sees no R1 click, no trigger pull and no
 stick deflection that the pointer already used, while every other button keeps
 working.  Only the **internal pad** is masked: pads merged by Gamepad Fusion
 keep their full mapping, and `RAW` still streams every physical value.  The mask
@@ -845,15 +854,15 @@ device pass; nothing below runs on the internal panel.
 3. Right stick: cursor moves smoothly at 125 Hz; a held stick keeps moving; a
    diagonal move does not exceed ~1200 px/s; a tiny deflection just outside 5 %
    still moves (fractional accumulation), and inside 5 % does nothing.
-4. L1 click, L1 held + right stick = drag, L2 right click, left stick vertical
+4. R1 click, R1 held + right stick = drag, R2 right click, left stick vertical
    scroll (one notch at once, then faster with deflection), left stick
    horizontal scroll.
-5. Pass-through: R1/R2/A/B/X/Y/R3/L3, D-pad, Start/Select and Home/Back still
-   reach the gamepad device (`getevent -l` on both nodes) and **L1/L2/sticks do
+5. Pass-through: L1/L2/A/B/X/Y/R3/L3, D-pad, Start/Select and Home/Back still
+   reach the gamepad device (`getevent -l` on both nodes) and **R1/R2/sticks do
    not** appear on the gamepad node while the pointer is on.  With the pointer
    off the same buttons and both sticks are back on the gamepad node.
 6. Start a game with the pointer on: no cursor movement from the right stick in
-   the game, no L1 click, no stick input from the internal pad; the other
+   the game, no R1 click, no stick input from the internal pad; the other
    buttons still work.  Turn the pointer off and confirm the full pad returns
    without a reboot and with no stuck key.
 7. Unplug the external display (or turn it off) **with the dialog closed**: the

@@ -103,7 +103,7 @@ bool pointer_set_enabled(struct pointer_state *ps, bool on)
 }
 
 void pointer_frame(struct pointer_state *ps, uint16_t keys, int lx, int ly,
-                   int rx, int ry, int l2, int64_t now_ms)
+                   int rx, int ry, int r2, int64_t now_ms)
 {
     if (!ps)
         return;
@@ -112,7 +112,7 @@ void pointer_frame(struct pointer_state *ps, uint16_t keys, int lx, int ly,
     ps->ly = ly;
     ps->rx = rx;
     ps->ry = ry;
-    ps->l2 = l2;
+    ps->r2 = r2;
     ps->last_frame_ms = now_ms;
     ps->have_frame = true;
 }
@@ -129,7 +129,7 @@ static void pointer_age(struct pointer_state *ps, int64_t now_ms)
     ps->ly = 0;
     ps->rx = 0;
     ps->ry = 0;
-    ps->l2 = 0;
+    ps->r2 = 0;
     ps->have_frame = false;
 }
 
@@ -145,14 +145,14 @@ static bool trigger_down(int value, bool was_down)
 static void pointer_buttons(struct pointer_state *ps, session_emit_fn emit,
                             void *ctx, int *emitted)
 {
-    /* L1 is the left button: holding it while the right stick moves is a drag.
-     * L2 is the right button, with the same 50 %/37.5 % trigger hysteresis the
+    /* R1 is the left button: holding it while the right stick moves is a drag.
+     * R2 is the right button, with the same 50 %/37.5 % trigger hysteresis the
      * rest of the daemon uses. */
-    bool left = (ps->keys & POINTER_KEY_L1) != 0;
+    bool left = (ps->keys & POINTER_KEY_R1) != 0;
     bool right;
 
-    ps->l2_down = trigger_down(ps->l2, ps->l2_down);
-    right = ps->l2_down;
+    ps->r2_down = trigger_down(ps->r2, ps->r2_down);
+    right = ps->r2_down;
 
     if (left != ps->btn_left) {
         ps->btn_left = left;
@@ -311,7 +311,7 @@ int pointer_release(struct pointer_state *ps, session_emit_fn emit, void *ctx)
 
     ps->btn_left = false;
     ps->btn_right = false;
-    ps->l2_down = false;
+    ps->r2_down = false;
     memset(&ps->scroll_x, 0, sizeof(ps->scroll_x));
     memset(&ps->scroll_y, 0, sizeof(ps->scroll_y));
     ps->vx = 0.0;

@@ -1857,7 +1857,7 @@ static void test_pointer_movement(void)
     /* Off: emits nothing, even with the right stick at full deflection. */
     pointer_defaults(&ps);
     memset(&cap, 0, sizeof(cap));
-    pointer_frame(&ps, POINTER_KEY_L1, 0, 0, 32767, 32767, 255, t);
+    pointer_frame(&ps, POINTER_KEY_R1, 0, 0, 32767, 32767, 255, t);
     for (int i = 0; i < 20; i++)
         pointer_tick(&ps, t + (int64_t)i * POINTER_TICK_MS, capture_emit, &cap);
     CHECK_EQ(cap.count, 0);
@@ -1952,26 +1952,26 @@ static void test_pointer_buttons(void)
     pointer_defaults(&ps);
     pointer_set_enabled(&ps, true);
 
-    /* L1 = left button; holding it is the drag gesture. */
-    pointer_frame(&ps, POINTER_KEY_L1, 0, 0, 0, 0, 0, t);
+    /* R1 = left button; holding it is the drag gesture. */
+    pointer_frame(&ps, POINTER_KEY_R1, 0, 0, 0, 0, 0, t);
     pointer_tick(&ps, t, capture_emit, &cap);
     CHECK(ps.btn_left);
     CHECK_EQ(capture_count(&cap, EV_KEY, BTN_LEFT, 1), 1);
 
     /* Still held: one press, no repeats. */
-    pointer_frame(&ps, POINTER_KEY_L1, 0, 0, 0, 0, 0, t + 8);
+    pointer_frame(&ps, POINTER_KEY_R1, 0, 0, 0, 0, 0, t + 8);
     pointer_tick(&ps, t + 8, capture_emit, &cap);
     CHECK(ps.btn_left);
     CHECK_EQ(capture_count(&cap, EV_KEY, BTN_LEFT, 1), 1);
     CHECK_EQ(capture_count(&cap, EV_KEY, BTN_LEFT, 0), 0);
 
-    /* A and R3 stay gamepad buttons: they must not click. */
+    /* A, R3, L1 and L2 stay gamepad buttons: they must not click. */
     pointer_frame(&ps, POINTER_KEY_A | POINTER_KEY_R3, 0, 0, 0, 0, 0, t + 16);
     pointer_tick(&ps, t + 16, capture_emit, &cap);
     CHECK(!ps.btn_left);
     CHECK_EQ(capture_count(&cap, EV_KEY, BTN_LEFT, 0), 1);
 
-    /* L2 = right button, with 50 %/37.5 % hysteresis. */
+    /* R2 = right button, with 50 %/37.5 % hysteresis. */
     pointer_frame(&ps, 0, 0, 0, 0, 0, 255, t + 24);
     pointer_tick(&ps, t + 24, capture_emit, &cap);
     CHECK(ps.btn_right);
@@ -1984,8 +1984,8 @@ static void test_pointer_buttons(void)
     CHECK(!ps.btn_right);
     CHECK_EQ(capture_count(&cap, EV_KEY, BTN_RIGHT, 0), 1);
 
-    /* Right stick button / R2 stay gamepad buttons too. */
-    pointer_frame(&ps, POINTER_KEY_R1, 0, 0, 0, 0, 0, t + 48);
+    /* Right stick button / L1 stay gamepad buttons too. */
+    pointer_frame(&ps, POINTER_KEY_L1, 0, 0, 0, 0, 0, t + 48);
     pointer_tick(&ps, t + 48, capture_emit, &cap);
     CHECK(!ps.btn_left);
     CHECK(!ps.btn_right);
@@ -2096,8 +2096,8 @@ static void test_pointer_release(void)
     pointer_defaults(&ps);
     pointer_set_enabled(&ps, true);
 
-    /* L1 + L2 pulled: both buttons down, plus a scroll in flight. */
-    pointer_frame(&ps, POINTER_KEY_L1, 0, -32767, 0, 0, 255, t);
+    /* R1 + R2 pulled: both buttons down, plus a scroll in flight. */
+    pointer_frame(&ps, POINTER_KEY_R1, 0, -32767, 0, 0, 255, t);
     pointer_tick(&ps, t, capture_emit, &cap);
     CHECK(ps.btn_left);
     CHECK(ps.btn_right);
@@ -2118,7 +2118,7 @@ static void test_pointer_release(void)
     CHECK_EQ(pointer_release(&ps, capture_emit, &cap), 0);
 
     /* Silent release still clears the state (GRAB ON / shutdown path). */
-    pointer_frame(&ps, POINTER_KEY_L1, 0, 0, 0, 0, 0, t + 8);
+    pointer_frame(&ps, POINTER_KEY_R1, 0, 0, 0, 0, 0, t + 8);
     pointer_tick(&ps, t + 8, capture_emit, &cap);
     CHECK(ps.btn_left);
     CHECK_EQ(pointer_release(&ps, NULL, NULL), 0);
@@ -2134,7 +2134,7 @@ static void test_pointer_stale_frame(void)
     memset(&cap, 0, sizeof(cap));
     pointer_defaults(&ps);
     pointer_set_enabled(&ps, true);
-    pointer_frame(&ps, POINTER_KEY_L1, 0, 0, 32767, 0, 0, t);
+    pointer_frame(&ps, POINTER_KEY_R1, 0, 0, 32767, 0, 0, t);
     pointer_tick(&ps, t, capture_emit, &cap);
     CHECK(ps.btn_left);
 
