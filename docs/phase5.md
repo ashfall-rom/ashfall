@@ -212,7 +212,8 @@ Supersedes the matching parts of §2/§3. Issue numbers in the per-area issues.
 | `persist.ashfall.led.screen_sync` | UI-only flag, not read by hwd | app -> app | `0` (default) / `1`: the "Match screen" effect is selected; `led.mode` keeps the last real effect |
 | `persist.ashfall.led.screen_rate` | UI-only value, not read by hwd | app -> app | `10` (default) / `15` / `30`: screen capture rate in frames per second |
 | `persist.ashfall.led.screen_delay` | UI-only value, not read by hwd | app -> app | `0` (default, Off) / `100` / `250` / `500`: hold a changed left/right average until it has been stable for this many milliseconds before publishing it; `0` publishes every frame |
-| `persist.ashfall.led.screen_boost` | UI-only value, not read by hwd | app -> app | `0` (Off) / `30` (Low) / `60` (Medium, default) / `100` (High): percent added to the HSV saturation of each published half (`S' = min(1, S * (1 + pct/100))`, value unchanged); applied after the average and delay gate, before `led.brightness` |
+| `persist.ashfall.led.screen_boost` | UI-only value, not read by hwd | app -> app | `0` (Off) / `30` (Low) / `60` (Medium, default) / `100` (High): percent added to the HSV saturation of each published half (`S' = min(1, S * (1 + pct/50))`, value unchanged); applied after the average and delay gate, before `led.brightness` |
+| `persist.ashfall.led.screen_dim` | UI-only value, not read by hwd | app -> app | `1` (default) / `0`: scale each published half by its HSV value (brightest channel), so dark scenes dim the ring instead of glowing white; applied after the colour boost, before `led.brightness` |
 | `ashfall.perf.throttle_override` | new `ashfall_perf_prop` (non-persist => resets on reboot) | app -> hwd | `1` = disable software clock throttling (kernel thermal mitigation / cooling devices; hardware limits stay) |
 | `persist.ashfall.perf.throttle_override_permanent` | `ashfall_perf_prop` | app -> hwd | `1` = apply the override at every boot (hidden "developer" switch, see §6.4) |
 
@@ -306,10 +307,15 @@ configured lighting as soon as the override stops.
   result.  A 100 ms sampler tick advances the gate and re-publishes on a static
   screen that sends no frames (#241); it stops with the sampler.  The optional
   `persist.ashfall.led.screen_boost` multiplies HSV saturation of each averaged
-  half by `1 + pct/100` (Off/Low/Medium/High = 1.0/1.3/1.6/2.0, default
+  half by `1 + pct/50` (Off/Low/Medium/High = 1.0/1.6/2.2/3.0, default
   Medium) with the value unchanged, so muted video gains chroma while white and
-  fully saturated colours stay exact; it is read on every publish, after the
-  average and before brightness.  HDR/wide-gamut content is clamped to SDR by
+  fully saturated colours stay exact.  `persist.ashfall.led.screen_dim`
+  (default 1) then scales each half by its HSV value, so near-black scenes go
+  dim instead of glowing white.  Both are read on every publish, after the
+  average and before brightness.  On panel off the sampler releases the
+  capture but keeps the last override and heartbeat for 2 s, so the rings carry
+  the last screen colour until they switch off; on panel on the last colour is
+  re-published immediately before capture restarts.  HDR/wide-gamut content is clamped to SDR by
   the RGBA_8888 readback.  Near-black frames (secure/DRM surfaces, panel off)
   hold the last colour.
 * **Override contract**: publishes `ashfall.ui.led_override` and refreshes the

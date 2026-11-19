@@ -70,12 +70,20 @@ public final class ScreenLedSync {
     /**
      * Match screen "Colour boost", percent added to HSV saturation:
      * {@code 0} (Off) keeps the literal average, 30/60/100 give a factor of
-     * 1.3/1.6/2.0.  Sampler-only, read live on every publish; the daemon never
-     * reads it.
+     * 1.6/2.2/3.0 (factor = 1 + pct/50).  Sampler-only, read live on every
+     * publish; the daemon never reads it.
      */
     public static final String SCREEN_BOOST = "persist.ashfall.led.screen_boost";
     public static final int DEFAULT_SCREEN_BOOST_PCT = 60;
     public static final int[] SCREEN_BOOSTS_PCT = {0, 30, 60, 100};
+
+    /**
+     * Match screen "Dim dark scenes": scale the ring by the frame's brightness
+     * (HSV value) so a near-black frame goes near-off instead of glowing as a
+     * bright grey.  On by default; sampler-only, read live on every publish.
+     */
+    public static final String SCREEN_DIM = "persist.ashfall.led.screen_dim";
+    public static final boolean DEFAULT_SCREEN_DIM = true;
 
     /** 64x36 keeps the readback cheap and still gives each half 32x36 pixels. */
     private static final int CAPTURE_WIDTH = 64;
@@ -127,6 +135,15 @@ public final class ScreenLedSync {
     private Handler mHandler;
 
     private volatile boolean mRunning;
+    /**
+     * Screen off: capture is released but the last colour and its heartbeat are
+     * kept for {@link #PAUSE_HEARTBEAT_MS}, so hwd turns the rings off with the
+     * last screen colour instead of the configured one, and the colour is still
+     * fresh when the panel comes back.
+     */
+    private volatile boolean mPaused;
+    private static final long PAUSE_HEARTBEAT_MS = 2000;
+    private long mHeartbeatStopAt;
     private long mLastFrameAt;
     private double mPublishBudgetMs;
 
@@ -170,6 +187,15 @@ public final class ScreenLedSync {
      * <p>Idempotent: calling it while running keeps the current session.
      */
     public boolean start() {
+        return start(false);
+    }
+
+    /**
+     * Starts mirroring.  {@code keepLast} is used when the panel comes back:
+     * the previous colour and its heartbeat stay published until the first new
+     * frame, so hwd never falls back to the configured colour on wake.
+     */
+    public boolean start(boolean keepLast) {
         if (mRunning) {
             return true;
         }
@@ -178,11 +204,41 @@ public final class ScreenLedSync {
             Log.w(TAG, "screen sync: no display service");
             return false;
         }
-        try {
+        if (mHandler == null) {
             mThread = new HandlerThread("ashfall-led-sync", Process.THREAD_PRIORITY_DISPLAY);
             mThread.start();
             mHandler = new Handler(mThread.getLooper());
+        }
+        if (!openCapture()) {
+            release();
+            return false;
+        }
 
+        mLastFrameAt = 0;
+        mPublishBudgetMs = 0;
+        mGotFrame = false;
+        mYielded = false;
+        mPendingValid = false;
+        mPendingSince = 0;
+        if (!keepLast) {
+            mHasColour = false;
+            mLeft[0] = mLeft[1] = mLeft[2] = 0f;
+            mRight[0] = mRight[1] = mRight[2] = 0f;
+            mLastValue = "";
+        }
+        mStartedAt = SystemClock.elapsedRealtime();
+        mFailureReported = false;
+        mRunning = true;
+        mPaused = false;
+        mHeartbeatStopAt = 0;
+        postHeartbeat();
+        postTick();
+        Log.i(TAG, "screen sync: started at " + Led.screenRate() + " Hz");
+        return true;
+    }
+
+    private boolean openCapture() {
+        try {
             final ImageReader reader = ImageReader.newInstance(CAPTURE_WIDTH,
                     CAPTURE_HEIGHT, PixelFormat.RGBA_8888, 2);
             reader.setOnImageAvailableListener(this::onImageAvailable, mHandler);
@@ -198,29 +254,61 @@ public final class ScreenLedSync {
             if (mVirtualDisplay == null) {
                 throw new IllegalStateException("createVirtualDisplay returned null");
             }
+            return true;
         } catch (Throwable t) {
             Log.w(TAG, "screen sync: capture did not start", t);
-            release();
+            releaseCapture();
             return false;
         }
+    }
 
-        mLastFrameAt = 0;
-        mPublishBudgetMs = 0;
-        mGotFrame = false;
-        mYielded = false;
-        mHasColour = false;
-        mPendingValid = false;
-        mPendingSince = 0;
-        mLeft[0] = mLeft[1] = mLeft[2] = 0f;
-        mRight[0] = mRight[1] = mRight[2] = 0f;
-        mLastValue = "";
-        mStartedAt = SystemClock.elapsedRealtime();
-        mFailureReported = false;
-        mRunning = true;
+    /**
+     * Panel off: stop the capture but keep the last override and its heartbeat
+     * for two seconds.  hwd turns the rings off 250 ms after the panel goes
+     * dark; without this grace it would briefly fall back to the configured
+     * lighting because the override had already been cleared.
+     */
+    public void pauseForScreenOff() {
+        if (!mRunning) {
+            return;
+        }
+        mRunning = false;
+        mPaused = true;
+        mHeartbeatStopAt = SystemClock.elapsedRealtime() + PAUSE_HEARTBEAT_MS;
+        releaseCapture();
+        synchronized (mLock) {
+            if (mHasColour) {
+                writeHeartbeatLocked();
+            }
+        }
         postHeartbeat();
-        postTick();
-        Log.i(TAG, "screen sync: started at " + Led.screenRate() + " Hz");
-        return true;
+        Log.i(TAG, "screen sync: paused for screen off");
+    }
+
+    /**
+     * Panel on: re-publish the last colour with a fresh heartbeat immediately,
+     * then restart the capture.  hwd's wake re-apply then uses the last screen
+     * colour, not the configured one.
+     */
+    public void resumeFromScreenOn() {
+        if (!mPaused) {
+            return;
+        }
+        mPaused = false;
+        synchronized (mLock) {
+            if (!mLastValue.isEmpty()) {
+                final String current = Props.get(OVERRIDE, "");
+                if (current.isEmpty() || current.equals(mLastValue)) {
+                    Props.set(OVERRIDE, mLastValue);
+                    writeHeartbeatLocked();
+                }
+            }
+        }
+        start(true);
+    }
+
+    public boolean isPaused() {
+        return mPaused;
     }
 
     /**
@@ -230,6 +318,8 @@ public final class ScreenLedSync {
     public void stop() {
         final boolean wasRunning = mRunning;
         mRunning = false;
+        mPaused = false;
+        mHeartbeatStopAt = 0;
         mStartedAt = 0;
         // Serialised with publish() so a frame that was already in flight can
         // never re-latch the rings after this clear.
@@ -296,11 +386,21 @@ public final class ScreenLedSync {
         }
     }
 
-    private void release() {
-        if (mHandler != null) {
-            mHandler.removeCallbacksAndMessages(null);
-            mHandler = null;
-        }
+    /** "Dim dark scenes": on by default, read live on every publish. */
+    public static boolean screenDim() {
+        return Props.getBoolean(SCREEN_DIM, DEFAULT_SCREEN_DIM);
+    }
+
+    public static void setScreenDim(boolean dim) {
+        Props.set(SCREEN_DIM, dim ? "1" : "0");
+    }
+
+    /**
+     * Closes the capture producer but keeps the handler thread alive, so the
+     * last override can stay alive through a short screen-off window (600 ms
+     * grace) and be re-published before the panel is on again.
+     */
+    private void releaseCapture() {
         // Stop the producer before closing the queue.
         if (mVirtualDisplay != null) {
             try {
@@ -331,6 +431,15 @@ public final class ScreenLedSync {
                 }
             }
         }
+        mTickPosted = false;
+    }
+
+    private void release() {
+        if (mHandler != null) {
+            mHandler.removeCallbacksAndMessages(null);
+            mHandler = null;
+        }
+        releaseCapture();
         if (mThread != null) {
             mThread.quitSafely();
             mThread = null;
@@ -390,7 +499,11 @@ public final class ScreenLedSync {
 
     /** Keeps the override alive for the daemon's stale-override guardian (#94). */
     private void heartbeat() {
-        if (!mRunning) {
+        final long now = SystemClock.elapsedRealtime();
+        // While paused the heartbeat only covers the screen-off grace; after
+        // it the property stays but goes stale, so sleep has no 400 ms writes.
+        if (!mRunning && (!mPaused || now >= mHeartbeatStopAt)) {
+            mHeartbeatPosted = false;
             return;
         }
         synchronized (mLock) {
@@ -403,9 +516,10 @@ public final class ScreenLedSync {
             handler.postDelayed(mHeartbeat, HEARTBEAT_MS);
         }
         // Only "no frame at all" is a capture failure.  A stream of black
-        // frames is a hold, not an error (#195).
-        if (!mGotFrame && mStartedAt != 0
-                && SystemClock.elapsedRealtime() - mStartedAt > START_TIMEOUT_MS) {
+        // frames is a hold, not an error (#195).  A paused sampler has no
+        // capture to judge.
+        if (mRunning && !mGotFrame && mStartedAt != 0
+                && now - mStartedAt > START_TIMEOUT_MS) {
             reportFailure("no frame within " + START_TIMEOUT_MS + " ms");
         }
     }
@@ -772,9 +886,16 @@ public final class ScreenLedSync {
         // Colour boost is also read live, and runs before the brightness scale
         // on the literal per-half average.  Off (factor 1.0) copies the
         // average bit-exactly, so it reproduces the unboosted behaviour.
-        final float boost = 1f + screenBoost() / 100f;
+        // 30/60/100 map to 1.6/2.2/3.0 (factor = 1 + pct/50).
+        final float boost = 1f + screenBoost() / 50f;
         boostSaturation(mLeft, boost, mBoostedLeft);
         boostSaturation(mRight, boost, mBoostedRight);
+        // Dark scenes should dim the ring instead of glowing as a bright
+        // grey/white: scale each ring by its own HSV value (max channel).
+        if (screenDim()) {
+            dimDark(mBoostedLeft);
+            dimDark(mBoostedRight);
+        }
         final int rLeft = scale(mBoostedLeft[0], brightness);
         final int gLeft = scale(mBoostedLeft[1], brightness);
         final int bLeft = scale(mBoostedLeft[2], brightness);
@@ -858,6 +979,17 @@ public final class ScreenLedSync {
             Props.set(OVERRIDE_LIVE, "");
         }
         mLastValue = "";
+    }
+
+    /**
+     * "Dim dark scenes": multiply by HSV value (the brightest channel), so a
+     * near-black half goes near-off and a fully bright colour is unchanged.
+     */
+    private static void dimDark(float[] colour) {
+        final float value = Math.max(colour[0], Math.max(colour[1], colour[2]));
+        colour[0] *= value;
+        colour[1] *= value;
+        colour[2] *= value;
     }
 
     private static int scale(float value, int brightness) {
