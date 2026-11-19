@@ -48,7 +48,7 @@ import org.ashfall.parts.ui.ScreenLedSync;
  * a capture failure — clears {@code ashfall.ui.led_override} and the
  * {@code ashfall.ui.led_override_live} heartbeat.
  */
-public class LedSyncService extends Service {
+public class LedSyncService extends Service implements DisplayManager.DisplayListener {
 
     private static final String TAG = "AshFallParts";
     private static final String ACTION_START = "org.ashfall.parts.action.LED_SYNC_START";
@@ -62,6 +62,7 @@ public class LedSyncService extends Service {
     private boolean mSupervising;
     private boolean mFailed;
     private boolean mDestroyed;
+    private boolean mDisplayListenerRegistered;
 
     /** Starts or stops the service to match the current effect. */
     public static void sync(Context context) {
@@ -103,6 +104,44 @@ public class LedSyncService extends Service {
         // the UI, so bounce it to the main thread.
         mSync = new ScreenLedSync(this,
                 reason -> mHandler.post(() -> onCaptureFailed(reason)));
+        // React to panel on/off immediately instead of waiting for the next
+        // supervisor tick: hwd re-applies the LEDs 250 ms after a wake, and
+        // the last screen colour must already be re-published by then.
+        final DisplayManager displays =
+                (DisplayManager) getSystemService(Context.DISPLAY_SERVICE);
+        if (displays != null) {
+            displays.registerDisplayListener(this, mHandler);
+            mDisplayListenerRegistered = true;
+        }
+    }
+
+    @Override
+    public void onDisplayAdded(int displayId) {
+    }
+
+    @Override
+    public void onDisplayRemoved(int displayId) {
+    }
+
+    @Override
+    public void onDisplayChanged(int displayId) {
+        if (displayId != Display.DEFAULT_DISPLAY || mDestroyed || !mSupervising) {
+            return;
+        }
+        if (!screenOn()) {
+            if (mSync != null && mSync.isRunning()) {
+                mSync.pauseForScreenOff();
+            }
+            return;
+        }
+        if (mSync == null || suspended() || !Led.screenSyncFlag() || !Led.isOn()) {
+            return;
+        }
+        if (mSync.isPaused()) {
+            mSync.resumeFromScreenOn();
+        } else if (!mSync.isRunning()) {
+            mSync.start(true);
+        }
     }
 
     @Override
@@ -139,6 +178,14 @@ public class LedSyncService extends Service {
     public void onDestroy() {
         mDestroyed = true;
         mSupervising = false;
+        if (mDisplayListenerRegistered) {
+            final DisplayManager displays =
+                    (DisplayManager) getSystemService(Context.DISPLAY_SERVICE);
+            if (displays != null) {
+                displays.unregisterDisplayListener(this);
+            }
+            mDisplayListenerRegistered = false;
+        }
         mHandler.removeCallbacksAndMessages(null);
         if (mSync != null) {
             // Clears ashfall.ui.led_override and the heartbeat.
@@ -175,10 +222,15 @@ public class LedSyncService extends Service {
                 onCaptureFailed("capture did not start");
                 return;
             }
-        } else if (mSync != null && mSync.isRunning()) {
-            // Pause sampling and clear the override; the service stays alive
-            // so it can resume when the panel or the tester releases the rings.
-            mSync.stop();
+        } else if (suspended()) {
+            // The tester owns the rings: clear our override as before.
+            if (mSync != null && mSync.isRunning()) {
+                mSync.stop();
+            }
+        } else if (!screenOn() && mSync != null && mSync.isRunning()) {
+            // Keep the last colour and its heartbeat through the screen-off
+            // debounce so the configured colour never flashes before off.
+            mSync.pauseForScreenOff();
         }
         mHandler.postDelayed(mSupervise, SUPERVISE_MS);
     }
