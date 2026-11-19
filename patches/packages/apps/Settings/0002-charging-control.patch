@@ -120,7 +120,7 @@ index 57d699d..ca093bb 100644
 +    <!-- Title of the toggle [CHAR LIMIT=30] -->
 +    <string name="charging_separation_title">Charging separation</string>
 +    <!-- Summary of the toggle [CHAR LIMIT=60] -->
-+    <string name="charging_separation_summary">Run from the charger without charging the battery</string>
++    <string name="charging_separation_summary">Stop charging while the charger is connected</string>
 +    <!-- Title of the firmware support row [CHAR LIMIT=20] -->
 +    <string name="charging_control_support_title">Firmware support</string>
 +    <!-- Support row while the device's charging control is being checked [CHAR LIMIT=30] -->
@@ -136,7 +136,7 @@ index 57d699d..ca093bb 100644
 +    <!-- The 80 %/10 % policy in one line [CHAR LIMIT=30] -->
 +    <string name="charging_control_policy_summary">Stay between 80% and 10%</string>
 +    <!-- Safety warning about fuel-gauge drift on long separation sessions -->
-+    <string name="charging_control_warning">Long sessions can make the battery percentage drift. Unplug now and then.</string>
++    <string name="charging_control_warning">Charging stops while this is on and the device runs on battery, so the level can fall.</string>
 +    <!-- Refusal while the charger is not connected [CHAR LIMIT=40] -->
 +    <string name="charging_control_not_plugged">Connect the charger to use this</string>
 +    <!-- Refusal when the battery is below 20 % [CHAR LIMIT=60] -->

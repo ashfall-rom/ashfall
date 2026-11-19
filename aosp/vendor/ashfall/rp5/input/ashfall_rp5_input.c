@@ -27,8 +27,8 @@
  * External-display pointer (#131) is additive and opt-in:
  * persist.ashfall.pad.pointer=1 creates a second uinput device, "AshFall RP5
  * Pointer" (EV_REL + BTN_LEFT/RIGHT/MIDDLE + INPUT_PROP_POINTER), and drives
- * it from the right stick at a fixed 125 Hz.  While it is on, the MCU pad's L1,
- * L2, left stick and right stick belong to the pointer and are not forwarded to
+ * it from the right stick at a fixed 125 Hz.  While it is on, the MCU pad's R1,
+ * R2, left stick and right stick belong to the pointer and are not forwarded to
  * the gamepad device either; every other button passes through unchanged.  The
  * gamepad capability set and the RAW bit layout never change.
  *
@@ -1069,10 +1069,10 @@ static void mcu_to_fusion(struct daemon *d, uint16_t keys,
 }
 
 /*
- * While the external-display pointer is on, the MCU pad's L1, L2, left stick
+ * While the external-display pointer is on, the MCU pad's R1, R2, left stick
  * and right stick drive the mouse.  Forward a masked copy of the frame to the
  * gamepad so a game cannot see a click, a trigger pull or a stick move that the
- * pointer already consumed.  R1/R2/face buttons/D-pad/Start/Select pass
+ * pointer already consumed.  L1/L2/face buttons/D-pad/Start/Select pass
  * through, and only the internal pad is masked: external pads merged by
  * Gamepad Fusion keep their full mapping.
  *
@@ -1090,7 +1090,7 @@ static void pointer_route(const struct daemon *d, uint16_t *keys,
     axes[AXIS_LY] = 0;
     axes[AXIS_RX] = 0;
     axes[AXIS_RY] = 0;
-    axes[AXIS_L2] = 0;
+    axes[AXIS_R2] = 0;
 }
 
 static void handle_status(struct daemon *d, const uint8_t *data, size_t len)
@@ -1115,7 +1115,7 @@ static void handle_status(struct daemon *d, const uint8_t *data, size_t len)
      * from the current physical state, never a stale one.  pointer_tick() only
      * emits while the pointer is on and outside GRAB. */
     pointer_frame(&d->pointer, keys, sticks[0], sticks[1], sticks[2], sticks[3],
-                  axes[AXIS_L2], now_ms);
+                  axes[AXIS_R2], now_ms);
 
     memcpy(pad_axes, axes, sizeof(pad_axes));
     pad_keys = keys;

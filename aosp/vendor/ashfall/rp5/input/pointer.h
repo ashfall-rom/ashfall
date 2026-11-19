@@ -20,7 +20,7 @@
  *   - persist.ashfall.pad.pointer = 1 | 0 (default 0), read live;
  *   - right stick = pointer, 5 % radial deadzone, expo 1.8, acceleration ramp,
  *     ~1200 px/s cap, fractional pixels accumulated across ticks;
- *   - L1 = BTN_LEFT (hold = drag), L2 = BTN_RIGHT (hold);
+ *   - R1 = BTN_LEFT (hold = drag), R2 = BTN_RIGHT (hold);
  *   - left stick = scroll: vertical -> REL_WHEEL, horizontal -> REL_HWHEEL,
  *     with a per-axis deadzone, repeat and deflection-dependent acceleration;
  *   - a fixed 125 Hz emission while the pointer is on, so a held stick keeps
@@ -67,7 +67,7 @@
 #define POINTER_SCROLL_SLOW_MS 250
 #define POINTER_SCROLL_FAST_MS 60
 
-/* Analog L2: press at >= 50 %, release at <= 37.5 % (hysteresis). */
+/* Analog R2: press at >= 50 %, release at <= 37.5 % (hysteresis). */
 #define POINTER_TRIGGER_ON 128
 #define POINTER_TRIGGER_OFF 96
 
@@ -92,12 +92,12 @@
 #define POINTER_KEY_A (1u << 14)
 #define POINTER_KEY_B (1u << 15)
 
-/* Keys the MCU pad gives up while the pointer is on: L1 is the left mouse
+/* Keys the MCU pad gives up while the pointer is on: R1 is the left mouse
  * button, so it must not also reach the gamepad device (a game would see a
- * click).  R1/R2/A/B/X/Y/R3/L3, D-pad, Start/Select and Home/Back pass
- * through; L2, the left stick and the right stick are the axes consumed in
+ * click).  L1/L2/A/B/X/Y/R3/L3, D-pad, Start/Select and Home/Back pass
+ * through; R2, the left stick and the right stick are the axes consumed in
  * ashfall_rp5_input.c. */
-#define POINTER_CONSUMED_KEYS (POINTER_KEY_L1)
+#define POINTER_CONSUMED_KEYS (POINTER_KEY_R1)
 
 /* One scroll axis' auto-repeat state. */
 struct pointer_repeat {
@@ -117,7 +117,7 @@ struct pointer_state {
     uint16_t keys;
     int lx, ly;
     int rx, ry;
-    int l2; /* calibrated 0..255, trigger hysteresis applied */
+    int r2; /* calibrated 0..255, trigger hysteresis applied */
     int64_t last_frame_ms;
     bool have_frame;
 
@@ -126,7 +126,7 @@ struct pointer_state {
     double frac_x, frac_y;
 
     bool btn_left, btn_right;
-    bool l2_down;
+    bool r2_down;
 
     struct pointer_repeat scroll_x; /* left stick horizontal -> REL_HWHEEL */
     struct pointer_repeat scroll_y; /* left stick vertical   -> REL_WHEEL */
@@ -136,8 +136,8 @@ struct pointer_state {
 };
 
 /* Device capabilities for uinput_dev_spec (uinput_dev.c).  BTN_MIDDLE is
- * advertised for pointer identity but no input maps to it: L1 is the left and
- * L2 the right button. */
+ * advertised for pointer identity but no input maps to it: R1 is the left and
+ * R2 the right button. */
 extern const uint16_t pointer_keys[];
 extern const int pointer_key_count;
 extern const uint16_t pointer_rels[];
@@ -168,7 +168,7 @@ bool pointer_set_enabled(struct pointer_state *ps, bool on);
 /* Record one decoded status frame.  Called for every frame, including while
  * GRAB is on, so GRAB OFF resumes from the current physical state. */
 void pointer_frame(struct pointer_state *ps, uint16_t keys, int lx, int ly,
-                   int rx, int ry, int l2, int64_t now_ms);
+                   int rx, int ry, int r2, int64_t now_ms);
 
 /* Release every held pointer button and clear velocity, fraction and scroll
  * repeat state.  `emit` may be NULL to clear silently (GRAB ON / shutdown

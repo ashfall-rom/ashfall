@@ -261,9 +261,38 @@ D-pad and landscape; no native battery behaviour changes.
 
 ## 8. Charging control (#140)
 
+> **Device finding (2026-11-19):** the retail factory HAL's `chargerEnable` is a
+> **no-op** on this kernel.  The HAL writes a command to `/dev/socket/mmi`; the
+> `mmid` daemon then opens `/sys/class/power_supply/battery/input_suspend`, which
+> does not exist on the RP5's PM8150B/smb5 kernel (the driver logs
+> `pl_input_suspend channel unavailable`).  The binder transaction still returns
+> OK, so the page says `Supported` while the battery keeps charging.
+>
+> The operative backend is `ashfall-hwd`, using the QTI charger class pair under
+> `/sys/class/qcom-battery`: `restrict_chg=1` switches the charger to the
+> restricted charge current and `restrict_cur` sets that current, so
+> `restrict_cur=0` stops battery charging.  The charger input is suspended at
+> the same time (USB current ~0), so the device runs on battery while plugged
+> in - the same end state the vendor's own `mmid` would produce, because its
+> `input_suspend` node is what this kernel lacks.  This kernel exposes no
+> bypass/power-path node, so the level cannot be held by the adapter alone.
+>
+> Measured on the RP5 with the adapter attached: `constant_charge_current`
+> 1 A -> 0, `charge_counter` -0.3..-2.2 mAh/min with separation on versus
+> +3.7..+5.6 mAh/min with it off.  hwd saves the vendor current (1 A) and
+> restores it, with `restrict_chg=0`, when separation is switched off.  The
+> vendor charging stack recomputes the current on adapter plug and on thermal
+> events, so a held request is re-asserted every 30 s.  Both nodes carry the
+> genfscon type `ashfall_charger_sysfs`.  The Settings HAL call remains as the
+> firmware-support probe only.
+>
 Second patch on the same page, stacked on §1 and independent of SystemUI:
-while the adapter stays connected, **Charging separation** stops battery
-charging and runs the device from the adapter. v1 is the manual toggle only.
+**Charging separation** stops battery charging while the adapter stays
+connected; the charger input is suspended, so the device runs on battery and
+the level drifts down slowly (the same behaviour the vendor's own `mmid` would
+produce with `input_suspend`). This kernel exposes no bypass/power-path node,
+so a hold-at-level needs the automatic top-up loop below. v1 is the manual
+toggle only.
 The automatic 80 %/10 % hysteresis needs an always-on sampler and stays a
 follow-up: `ashfall-hwd` cannot call a vendor HIDL service from `system_ext`,
 so the boot re-apply lives in Settings while the ongoing policy would live in

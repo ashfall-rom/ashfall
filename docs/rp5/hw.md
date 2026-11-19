@@ -510,6 +510,7 @@ device (build `20261113-213314`):
 | `ashfall_cpu_sysfs` | `/devices/system/cpu/cpufreq`, `/devices/system/cpu/cpu{0..7}/cpufreq` | phase 6 (#124): the `policy*` dirs are symlinks into `cpuN/cpufreq`; the platform label `sysfs_devices_system_cpu` is not writable by a coredomain (§12) |
 | `ashfall_swap_file` | `/data/ashfall(/.*)?` | phase 6 (#141): the swapfile directory and file; created by init at `post-fs-data` so the label is inherited (§13) |
 | `ashfall_gpu_sysfs` (+ `gpuclk`, `gpu_busy_percentage`) | `.../kgsl/kgsl-3d0/{gpuclk,gpu_busy_percentage}` (platform + legacy) | phase 6 (#124, wave 3 #156): the read-only live GPU clock and GPU busy percentage behind `ashfall.status.perf.{gpu_mhz,gpu_load_pct}`; `min_freq`/`max_freq` are unchanged (#120 stays open) |
+| `ashfall_charger_sysfs` | `/class/qcom-battery/restrict_chg`, `/class/qcom-battery/restrict_cur` | #140: charging separation. The factory HAL/mmid path is a no-op on this kernel (`battery/input_suspend` does not exist), so hwd sets the QTI restricted-charging flag with a zero restricted current while `persist.ashfall.batt.charge_sep=1`; the vendor current is restored when off and the request re-asserted every 30 s |
 | `proc_meminfo`, `proc_stat` (platform) | `/proc/meminfo`, `/proc/stat` | phase 6 (#141) / wave 3 (#156): the swapfile status and the CPU-load delta; both are explicit allows because the platform does not grant them to every domain (§12/§13) |
 
 On the test build the nodes were still labelled `u:object_r:sysfs:s0` (and the

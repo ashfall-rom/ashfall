@@ -27,6 +27,7 @@ type ashfall_led_sysfs, fs_type, sysfs_type;
 # Directory traversal is covered by the stock vendor rule
 # `allow { domain - isolated_app_all } vendor_sysfs_kgsl:dir search`.
 type ashfall_gpu_sysfs, fs_type, sysfs_type;
+type ashfall_charger_sysfs, fs_type, sysfs_type;
 
 typeattribute ashfall_hwd coredomain;
 
@@ -56,6 +57,9 @@ allow ashfall_hwd ashfall_led_sysfs:file rw_file_perms;
 # (gpuclk/gpu_busy_percentage are read-only, the daemon only reads them); the
 # daemon runs as root and is the only writer of the cap.
 allow ashfall_hwd ashfall_gpu_sysfs:file rw_file_perms;
+allow ashfall_hwd ashfall_charger_sysfs:dir r_dir_perms;
+allow ashfall_hwd ashfall_charger_sysfs:lnk_file read;
+allow ashfall_hwd ashfall_charger_sysfs:file rw_file_perms;
 allow ashfall_hwd ashfall_gpu_sysfs:lnk_file read;
 
 # CPU frequency caps/governor (phase 6, #124).  /sys/devices/system/cpu is
