@@ -608,6 +608,7 @@ static void pad_release_fd(struct pad_handle *pad)
     close(pad->fd);
     memset(pad, 0, sizeof(*pad));
     pad->fd = -1;
+    pad->shadow_fd = -1;
 }
 
 /* The event node of one of our own shadows must never be opened as a pad: it
@@ -1208,6 +1209,7 @@ static void pad_drop(struct daemon *d, int slot, const char *reason)
     }
     memset(pad, 0, sizeof(*pad));
     pad->fd = -1;
+    pad->shadow_fd = -1;
 }
 
 static void pad_drop_all(struct daemon *d)
@@ -1315,6 +1317,7 @@ static void pad_scan(struct daemon *d)
             handle = &d->pads[slot];
             memset(handle, 0, sizeof(*handle));
             handle->fd = fd;
+            handle->shadow_fd = -1;
             handle->writable = writable;
             snprintf(handle->node, sizeof(handle->node), "%s", node);
             snprintf(handle->name, sizeof(handle->name), "%s", probe.name);
@@ -1375,6 +1378,7 @@ static void pad_scan(struct daemon *d)
         handle = &d->pads[slot];
         memset(handle, 0, sizeof(*handle));
         handle->fd = fd;
+        handle->shadow_fd = -1;
         handle->writable = writable;
         snprintf(handle->node, sizeof(handle->node), "%s", node);
         snprintf(handle->name, sizeof(handle->name), "%s", probe.name);
@@ -2418,8 +2422,10 @@ int main(void)
     memset(&d, 0, sizeof(d));
     d.mcu_fd = d.uinput_fd = d.pointer_fd = d.own_fd = d.notify_fd = -1;
     d.syskey_fd = -1;
-    for (int i = 0; i < FUSION_MAX_PADS; i++)
+    for (int i = 0; i < FUSION_MAX_PADS; i++) {
         d.pads[i].fd = -1;
+        d.pads[i].shadow_fd = -1;
+    }
 
     memset(&sa, 0, sizeof(sa));
     sa.sa_handler = on_signal;
