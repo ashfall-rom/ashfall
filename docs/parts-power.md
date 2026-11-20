@@ -53,8 +53,8 @@ preset.  There is no Apply button: every control writes its property and
 
 ## 2. Live graph
 
-The graph reuses `ui/FanGraphView`, generalised into a small chart (one or two
-y axes, any number of series, `NaN` = gap) instead of a second chart class.
+The graph reuses `ui/FanGraphView`, generalised into a small chart (one, two or
+three y axes, any number of series, `NaN` = gap) instead of a second chart class.
 The Fan page keeps its default chart, its 120 × 500 ms window and its API
 (`History`, `setHistory`), so `ui/StatusPreference` is untouched.
 
