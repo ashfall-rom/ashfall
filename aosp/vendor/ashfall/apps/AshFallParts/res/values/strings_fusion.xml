@@ -25,6 +25,7 @@
 
     <string name="fusion_pads_title">Connected pads</string>
     <string name="fusion_pads_none">No pad found. Connect a pad and rescan.</string>
+    <string name="fusion_pads_fusion_off">Fusion is off. Turn it on to merge your pads.</string>
     <string name="fusion_pad_summary">Layout: %1$s</string>
 
     <string name="fusion_layout_saved">Layout saved</string>

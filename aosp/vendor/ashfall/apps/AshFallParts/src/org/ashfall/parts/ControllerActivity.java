@@ -284,9 +284,16 @@ public class ControllerActivity extends PartsActivity {
                 return;
             }
             final boolean available = status != null && status.available;
+            final boolean fusionOn = FusionClient.isOn();
+            final FusionClient.PadListState padState =
+                    FusionClient.padListState(status, fusionOn);
             final List<FusionClient.Pad> pads = available
                     ? status.pads : Collections.emptyList();
             final StringBuilder signature = new StringBuilder(available ? "ok" : "down");
+            signature.append('|').append(fusionOn);
+            if (available) {
+                signature.append('|').append(status.fusion);
+            }
             for (FusionClient.Pad pad : pads) {
                 signature.append('|').append(pad.key).append(':')
                         .append(pad.layout).append(':').append(pad.name);
@@ -301,8 +308,19 @@ public class ControllerActivity extends PartsActivity {
                 final Preference none = new Preference(requireContext());
                 none.setKey("fusion_pads_none");
                 none.setSelectable(false);
-                none.setSummary(available
-                        ? R.string.fusion_pads_none : R.string.fusion_state_unavailable);
+                int resId;
+                switch (padState) {
+                    case FUSION_OFF:
+                        resId = R.string.fusion_pads_fusion_off;
+                        break;
+                    case UNAVAILABLE:
+                        resId = R.string.fusion_state_unavailable;
+                        break;
+                    default:
+                        resId = R.string.fusion_pads_none;
+                        break;
+                }
+                none.setSummary(resId);
                 mFusionPads.addPreference(none);
                 return;
             }
