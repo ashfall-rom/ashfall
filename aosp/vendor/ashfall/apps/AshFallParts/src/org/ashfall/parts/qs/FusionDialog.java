@@ -324,8 +324,6 @@ public class FusionDialog extends Dialog {
         }
         final boolean available = status != null && status.available;
         final boolean fusionOn = FusionClient.isOn();
-        final FusionClient.PadListState padState =
-                FusionClient.padListState(status, fusionOn);
         final List<FusionClient.Pad> pads = available
                 ? status.pads : Collections.emptyList();
         final StringBuilder signature = new StringBuilder(available ? "ok" : "down");
@@ -344,19 +342,7 @@ public class FusionDialog extends Dialog {
         mPads.removeAllViews();
         if (pads.isEmpty()) {
             final TextView note = new TextView(getContext());
-            int resId;
-            switch (padState) {
-                case FUSION_OFF:
-                    resId = R.string.fusion_pads_fusion_off;
-                    break;
-                case UNAVAILABLE:
-                    resId = R.string.fusion_state_unavailable;
-                    break;
-                default:
-                    resId = R.string.fusion_pads_none;
-                    break;
-            }
-            note.setText(resId);
+            note.setText(FusionClient.padListMessage(status, fusionOn));
             note.setTextAppearance(R.style.AshFallDialogSecondary);
             mPads.addView(note);
             fitWindow();

@@ -339,13 +339,6 @@ public final class FusionClient implements Closeable {
         UNAVAILABLE
     }
 
-    /** Alias kept for callers/tests that name the empty state differently. */
-    public enum EmptyPadState {
-        FUSION_OFF,
-        NO_PAD,
-        UNAVAILABLE
-    }
-
     /**
      * Pure decision for the empty connected-pad list.  {@code status} is the
      * parsed {@code FUSION STATUS} reply (or {@code null} when the daemon is
@@ -368,30 +361,6 @@ public final class FusionClient implements Closeable {
         return padListState(status, isOn());
     }
 
-    public static EmptyPadState emptyPadState(Status status, boolean fusionOn) {
-        return EmptyPadState.valueOf(padListState(status, fusionOn).name());
-    }
-
-    public static EmptyPadState emptyPadState(Status status) {
-        return emptyPadState(status, isOn());
-    }
-
-    public static PadListState padsState(Status status, boolean fusionOn) {
-        return padListState(status, fusionOn);
-    }
-
-    public static PadListState padsState(Status status) {
-        return padListState(status);
-    }
-
-    public static PadListState padState(Status status, boolean fusionOn) {
-        return padListState(status, fusionOn);
-    }
-
-    public static PadListState padState(Status status) {
-        return padListState(status);
-    }
-
     /** String resource id for the empty connected-pad note. */
     public static int padListMessage(Status status, boolean fusionOn) {
         switch (padListState(status, fusionOn)) {
@@ -406,14 +375,6 @@ public final class FusionClient implements Closeable {
 
     public static int padListMessage(Status status) {
         return padListMessage(status, isOn());
-    }
-
-    public static int emptyPadMessage(Status status, boolean fusionOn) {
-        return padListMessage(status, fusionOn);
-    }
-
-    public static int emptyPadMessage(Status status) {
-        return padListMessage(status);
     }
 
     private static String valueFor(String property, String key) {
