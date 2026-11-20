@@ -46,8 +46,10 @@ import java.util.Arrays;
  * the right axis (labels at 0/50/100 %).
  *
  * <p>Power chart: battery power in watts on the left axis (0..12 W, labels at
- * 0/6/12) and the real CPU/GPU utilisation on the right axis (0..100 %, labels
- * at 0/50/100 %); the exact clocks are in the legend, not plotted (#156 §3).
+ * 0/6/12), the real CPU/GPU utilisation on the right axis (0..100 %, labels at
+ * 0/50/100 %) and the CPU/GPU clocks on a third (far-right) MHz axis (0..3000,
+ * labels at 0/1000/2000/3000).  The exact clocks are also in the legend
+ * (#250.4).
  */
 public class FanGraphView extends View {
 
@@ -90,7 +92,7 @@ public class FanGraphView extends View {
      */
     public static final class Series {
 
-        /** 0 = left axis, 1 = right axis. */
+        /** 0 = left axis, 1 = right axis, 2 = third (far-right) axis. */
         public final int axis;
         public final int color;
         public final float min;
@@ -104,20 +106,28 @@ public class FanGraphView extends View {
         }
     }
 
-    /** A chart description: one or two axes, its series and its window width. */
+    /** A chart description: one, two or three axes, its series and its window width. */
     public static final class Chart {
 
         public final Axis left;
         /** {@code null} when the chart has a single axis. */
         @Nullable
         public final Axis right;
+        /** {@code null} when the chart has fewer than three axes. */
+        @Nullable
+        public final Axis third;
         public final Series[] series;
         /** Slots in one window; one slot is one page tick. */
         public final int samples;
 
         public Chart(Axis left, @Nullable Axis right, Series[] series, int samples) {
+            this(left, right, null, series, samples);
+        }
+
+        public Chart(Axis left, @Nullable Axis right, @Nullable Axis third, Series[] series, int samples) {
             this.left = left;
             this.right = right;
+            this.third = third;
             this.series = series;
             this.samples = samples;
         }
@@ -367,10 +377,16 @@ public class FanGraphView extends View {
         final float labelHeight = metrics.descent - metrics.ascent;
         final String leftTop = format(chart.left, chart.left.max);
         final String rightTop = chart.right == null ? "" : format(chart.right, chart.right.max);
+        final String thirdTop = chart.third == null ? "" : format(chart.third, chart.third.max);
 
         final float plotLeft = getPaddingLeft() + mLabelPaint.measureText(leftTop) + mLabelGap;
-        final float plotRight = getWidth() - getPaddingRight()
-                - (chart.right == null ? 0f : mLabelPaint.measureText(rightTop) + mLabelGap);
+        float plotRight = getWidth() - getPaddingRight();
+        if (chart.third != null) {
+            plotRight -= mLabelPaint.measureText(thirdTop) + mLabelGap;
+        }
+        if (chart.right != null) {
+            plotRight -= mLabelPaint.measureText(rightTop) + mLabelGap;
+        }
         final float plotTop = getPaddingTop() + labelHeight / 2f;
         final float plotBottom = getHeight() - getPaddingBottom() - labelHeight / 2f;
         if (plotRight <= plotLeft || plotBottom <= plotTop) {
@@ -393,6 +409,17 @@ public class FanGraphView extends View {
                 final float y = yFor(fraction(value, chart.right.min, chart.right.max),
                         plotTop, plotBottom);
                 drawLabel(canvas, format(chart.right, value), plotRight + mLabelGap, y, metrics);
+            }
+        }
+        // Third (far-right) axis: labels only, no grid lines.
+        if (chart.third != null) {
+            mLabelPaint.setTextAlign(Paint.Align.LEFT);
+            final float thirdX = plotRight + mLabelGap
+                    + (chart.right == null ? 0f : mLabelPaint.measureText(rightTop) + mLabelGap);
+            for (float value : chart.third.grid) {
+                final float y = yFor(fraction(value, chart.third.min, chart.third.max),
+                        plotTop, plotBottom);
+                drawLabel(canvas, format(chart.third, value), thirdX, y, metrics);
             }
         }
 

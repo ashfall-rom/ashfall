@@ -64,18 +64,26 @@ The Fan page keeps its default chart, its 120 × 500 ms window and its API
 | Left axis | battery power 0..12 W, grid and labels at 0/6/12 W |
 | Power source | `BatteryManager` (framework): sticky `ACTION_BATTERY_CHANGED` for `EXTRA_VOLTAGE` + `BATTERY_PROPERTY_CURRENT_NOW`; `power_mw = abs(current_ua) * voltage_mv / 1e6` |
 | Right axis | **real CPU and GPU utilisation** 0..100 %, labels at 0/50/100 % |
+| Third axis | **CPU/GPU clocks** 0..3000 MHz, shared axis, labels at 0/1000/2000/3000 MHz (`%d MHz`); no extra grid lines (the left-axis grid stays the only grid) |
 | CPU load | `ashfall.status.perf.cpu_load_pct`: `/proc/stat` idle delta over the total delta, sampled by `ashfall-hwd` |
 | GPU load | `ashfall.status.perf.gpu_load_pct`: kgsl `gpu_busy_percentage` |
-| Clocks | not plotted; the legend carries `silver · gold · prime · GPU MHz` |
-| Series | power (orange), CPU load (blue), GPU load (green) - the three day/night series colours of the Fan graph |
+| Clocks | plotted on the third (MHz) axis as four series (silver/gold/prime/GPU); the legend still carries `silver · gold · prime · GPU MHz` with the exact numbers |
+| Series | power (orange), CPU load (blue), GPU load (green), silver/gold/prime/GPU clocks (silver/gold/prime/gpu clock colours) - seven series over the same 60 s window |
 
 * **Usage is real load, never a clock percentage** (#156 §3).  The old chart
   plotted `scaling_cur_freq / max` and `gpu_mhz / 1000`, so an idle CPU sat at
   ~100 % and the GPU at its cap.  Both series now come from the daemon's own
-  utilisation counters and are plotted as published.
+  utilisation counters and are plotted as published.  The clocks are **added** as
+  their own series on a shared 0..3000 MHz axis (#250.4); this is not a revert
+  of #156 §3 and the utilisation lines are unchanged.
+* The clocks are plotted over the same 60 s window from
+  `ashfall.status.perf.cpu_mhz_silver/_gold/_prime` and
+  `ashfall.status.perf.gpu_mhz`; `-1`/missing is a gap, never a drawn zero, and
+  the four clock series share one honest MHz axis (no per-series maxes).
 * The clocks are still shown, exactly, in the legend:
   `silver 1516 · gold 1958 · prime 2073 · GPU 670 MHz`.  A clock the daemon has
-  not published is `—` for that cluster only.
+  not published is `—` for that cluster only; the plotted series and the legend
+  must not disagree.
 * One sample per page tick, and the tick is the only appender (the #132 fix):
   a page open or a preset tap can no longer insert an extra sample.
 * `-1`/missing is a **gap**, never a drawn zero.  Power is `-1` while charging

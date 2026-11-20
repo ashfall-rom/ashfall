@@ -603,7 +603,7 @@ public class PowerFragment extends PreferenceFragmentCompat {
     private static final class PowerStatusPreference extends Preference {
 
         private final FanGraphView.Window mWindow =
-                new FanGraphView.Window(3, FanGraphView.POWER_SAMPLES);
+                new FanGraphView.Window(7, FanGraphView.POWER_SAMPLES);
 
         private int mPowerMw = -1;
         private boolean mCharging;
@@ -659,7 +659,11 @@ public class PowerFragment extends PreferenceFragmentCompat {
             mWindow.append(
                     powerMw < 0 ? Float.NaN : powerMw / 1000f,
                     cpuLoad < 0 ? Float.NaN : cpuLoad,
-                    gpuLoad < 0 ? Float.NaN : gpuLoad);
+                    gpuLoad < 0 ? Float.NaN : gpuLoad,
+                    silverMhz < 0 ? Float.NaN : silverMhz,
+                    goldMhz < 0 ? Float.NaN : goldMhz,
+                    primeMhz < 0 ? Float.NaN : primeMhz,
+                    gpuMhz < 0 ? Float.NaN : gpuMhz);
             apply();
         }
 
@@ -693,16 +697,24 @@ public class PowerFragment extends PreferenceFragmentCompat {
             apply();
         }
 
-        /** Power W on the left dial, the real load percentages on the right one. */
+        /** Power W on the left dial, the real load percentages on the right one,
+         *  and the CPU/GPU clocks on the shared MHz (third) axis. */
         private static FanGraphView.Chart powerChart(Context context) {
             final FanGraphView.Axis left = new FanGraphView.Axis(0f, 12f,
                     new float[] {0f, 6f, 12f}, context.getString(R.string.power_axis_watts));
             final FanGraphView.Axis right = new FanGraphView.Axis(0f, 100f,
                     new float[] {0f, 50f, 100f}, context.getString(R.string.percent_value));
-            return new FanGraphView.Chart(left, right, new FanGraphView.Series[] {
+            final FanGraphView.Axis third = new FanGraphView.Axis(0f, 3000f,
+                    new float[] {0f, 1000f, 2000f, 3000f},
+                    context.getString(R.string.power_axis_mhz));
+            return new FanGraphView.Chart(left, right, third, new FanGraphView.Series[] {
                     new FanGraphView.Series(0, context.getColor(R.color.fan_graph_temp), 0f, 12f),
                     new FanGraphView.Series(1, context.getColor(R.color.fan_graph_pct), 0f, 100f),
                     new FanGraphView.Series(1, context.getColor(R.color.fan_graph_rpm), 0f, 100f),
+                    new FanGraphView.Series(2, context.getColor(R.color.fan_graph_clock_silver), 0f, 3000f),
+                    new FanGraphView.Series(2, context.getColor(R.color.fan_graph_clock_gold), 0f, 3000f),
+                    new FanGraphView.Series(2, context.getColor(R.color.fan_graph_clock_prime), 0f, 3000f),
+                    new FanGraphView.Series(2, context.getColor(R.color.fan_graph_clock_gpu), 0f, 3000f),
             }, FanGraphView.POWER_SAMPLES);
         }
 
