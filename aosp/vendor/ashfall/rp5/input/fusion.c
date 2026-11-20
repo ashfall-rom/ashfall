@@ -802,6 +802,54 @@ static int scale_centred(int value, int src_min, int src_max, int dst_min,
     return scale_linear(value, centre, src_max, 0, dst_max);
 }
 
+/* --- pointer-owned inputs (#250.1) ---------------------------------------- */
+
+bool fusion_slot_pointer_owned(int slot)
+{
+    return slot == FUSION_AXIS_LX || slot == FUSION_AXIS_LY ||
+           slot == FUSION_AXIS_RX || slot == FUSION_AXIS_RY ||
+           slot == FUSION_AXIS_R2;
+}
+
+bool fusion_event_pointer_owned(uint16_t type, uint16_t code, int axis_slot)
+{
+    if (type == EV_KEY)
+        return code == FUSION_POINTER_OWNED_KEY;
+    if (type == EV_ABS)
+        return axis_slot >= 0 && fusion_slot_pointer_owned(axis_slot);
+    return false;
+}
+
+void fusion_slot_axis_range(int slot, int *minimum, int *maximum)
+{
+    axis_target_range(slot, minimum, maximum);
+}
+
+int32_t fusion_pad_rescale(const struct fusion_absinfo *src, int slot,
+                           int32_t value)
+{
+    int dst_min;
+    int dst_max;
+    int32_t scaled;
+
+    axis_target_range(slot, &dst_min, &dst_max);
+    if (!src || !src->present ||
+        (src->minimum == dst_min && src->maximum == dst_max)) {
+        scaled = value;
+    } else if (axis_is_trigger(slot)) {
+        scaled = scale_linear(value, src->minimum, src->maximum, dst_min,
+                              dst_max);
+    } else {
+        scaled = scale_centred(value, src->minimum, src->maximum, dst_min,
+                               dst_max);
+    }
+    if (scaled < dst_min)
+        return dst_min;
+    if (scaled > dst_max)
+        return dst_max;
+    return scaled;
+}
+
 /* --- pad registry --------------------------------------------------------- */
 
 int fusion_pad_index(const struct fusion_state *fs, const char *key)
@@ -942,6 +990,34 @@ static void set_pad_key(struct fusion_pad *pad, uint16_t code, bool down)
         pad->keys[code / 32] &= ~(1u << (code % 32));
 }
 
+void fusion_pad_consume_pointer_inputs(struct fusion_state *fs, int index)
+{
+    struct fusion_pad *pad;
+    bool changed = false;
+
+    if (!fs || index < 0 || index >= FUSION_MAX_PADS)
+        return;
+    pad = &fs->pads[index];
+    if (!pad->present)
+        return;
+    for (int slot = 0; slot < FUSION_AXIS_COUNT; slot++) {
+        if (fusion_slot_pointer_owned(slot) && pad->abs[slot] != 0) {
+            pad->abs[slot] = 0;
+            changed = true;
+        }
+    }
+    if ((pad->keys[FUSION_POINTER_OWNED_KEY / 32] >>
+         (FUSION_POINTER_OWNED_KEY % 32)) & 1) {
+        set_pad_key(pad, FUSION_POINTER_OWNED_KEY, false);
+        changed = true;
+    }
+    if (!changed)
+        return;
+    /* The next flush must re-report the consumed slots and the released key,
+     * not wait for a change that will never come. */
+    fusion_refresh(fs);
+}
+
 void fusion_key_event(struct fusion_state *fs, int index, uint16_t code,
                       int32_t value)
 {
@@ -961,6 +1037,7 @@ void fusion_abs_event(struct fusion_state *fs, int index, int slot,
                       int32_t value, int64_t now_ms)
 {
     struct fusion_pad *pad;
+    struct fusion_absinfo src;
     int32_t clamped;
 
     if (!fs || index < 0 || index >= FUSION_MAX_PADS)
@@ -970,27 +1047,12 @@ void fusion_abs_event(struct fusion_state *fs, int index, int slot,
     pad = &fs->pads[index];
     if (!pad->present)
         return;
-    {
-        int dst_min;
-        int dst_max;
-        int32_t scaled = value;
-
-        axis_target_range(slot, &dst_min, &dst_max);
-        if (pad->abs_min[slot] != dst_min || pad->abs_max[slot] != dst_max) {
-            if (axis_is_trigger(slot))
-                scaled = scale_linear(value, pad->abs_min[slot],
-                                      pad->abs_max[slot], dst_min, dst_max);
-            else
-                scaled = scale_centred(value, pad->abs_min[slot],
-                                       pad->abs_max[slot], dst_min, dst_max);
-        }
-        if (scaled < dst_min)
-            clamped = dst_min;
-        else if (scaled > dst_max)
-            clamped = dst_max;
-        else
-            clamped = scaled;
-    }
+    /* The shared rescale helper (#250): the per-pad shadow feeds the pointer
+     * with exactly the values this stores. */
+    src.present = true;
+    src.minimum = pad->abs_min[slot];
+    src.maximum = pad->abs_max[slot];
+    clamped = fusion_pad_rescale(&src, slot, value);
 
     pad->abs[slot] = clamped;
     pad->abs_seq[slot] = ++fs->seq;

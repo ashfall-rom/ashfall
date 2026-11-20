@@ -1,5 +1,5 @@
 // AshFall RP5 input extensions (calibration, deadzones, control socket,
-// GamepadFusion).
+// GamepadFusion, the per-pad pointer shadows).
 //
 // The daemon's mapping/protocol/fusion code is built for the host with
 // -DASHFALL_HOST; this target only pulls in the MCU/uinput/evdev loop check
@@ -16,6 +16,7 @@ cc_binary {
         "plat.c",
         "pointer.c",
         "session.c",
+        "shadow.c",
         "uinput_dev.c",
     ],
     cflags: [

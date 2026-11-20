@@ -230,8 +230,13 @@ speaks the protocol; the missing piece was only the stock userspace bridge.
   direction from the stock converter) and the stick/trigger deadzones.
 * `fusion.c` / `fusion.h` - GamepadFusion (#138): pad registry state,
   classification (which `/dev/input` nodes are pads), the merge/remap rules,
-  property parsing and the `FUSION STATUS` text.  Free of evdev/uinput so the
-  host tests cover all of it; the daemon owns the fds.
+  property parsing and the `FUSION STATUS` text.  Since #250 also the
+  pointer-owned input rules shared by every source: the owned-slot
+  predicate, the one rescale helper and the registry-side consume.  Free of
+  evdev/uinput so the host tests cover all of it; the daemon owns the fds.
+* `shadow.c` / `shadow.h` - the per-pad pass-through shadow device the
+  desktop pointer re-publishes external pads through when fusion is off
+  (#250).  Spec construction and event routing, free of file descriptors.
 * `uinput_dev.c` / `uinput_dev.h` - the one uinput device: identity, capability
   table, `ff_effects_max` and the exact ioctl order, behind a syscall seam so
   the host tests assert them (#156).
@@ -651,12 +656,14 @@ unaffected (issue #120).  `/dev/uinput` and `serial_device` stay as they were.
 The settings properties need no new rule - the app writes them and
 `get_prop(ashfall_rp5_input, ashfall_prop)` already exists.
 
-## External-display gamepad pointer (#131)
+## External-display gamepad pointer (#131, #250)
 
 A screen connected over USB-C DP/HDMI has no trackpad and no touch cursor, so
-the built-in pad can act as a mouse there.  The pointer is a **second uinput
-device**, never a change to the gamepad, and it exists only while the switch is
-on.
+a gamepad can act as a mouse there.  Since #250 the sources are the built-in
+pad **and every external USB/Bluetooth pad**: with only a USB pad connected
+and fusion off, that pad's right stick moves the cursor while every other
+button still reaches the app.  The pointer is a **second uinput device**,
+never a change to the gamepad, and it exists only while the switch is on.
 
 On-screen desktop windowing on the internal panel is **not planned** (the
 `no-rro` framework config overlay, the freeform feature copy, the Launcher3
@@ -720,7 +727,7 @@ What remains is this pointer, driven by **one** property and one switch.
 | state | uinput devices |
 |---|---|
 | off (default) | gamepad only (`AshFall RP5 Gamepad` 2020:3001, or `AshFall Fusion Controller` 045e:028e with fusion on) |
-| on | the same gamepad **plus** `AshFall RP5 Pointer`, 2020:3002 |
+| on | the same gamepad **plus** `AshFall RP5 Pointer`, 2020:3002, plus one shadow device per attached external pad (see below) |
 
 `AshFall RP5 Pointer` is created when the switch turns on and destroyed on the
 way off, so with the pointer off no mouse device exists at all.
@@ -741,30 +748,112 @@ has no hole sentinel.
 
 ### Mapping (pointer mode only)
 
-| input | action | gamepad device |
-|---|---|---|
-| Right stick | pointer movement (`REL_X`/`REL_Y`) | **consumed** (zeroed) |
-| R1 | left button (`BTN_LEFT`); hold + move = drag | **consumed** |
-| R2 (analog) | right button (`BTN_RIGHT`), 50 %/37.5 % hysteresis | **consumed** (axis zeroed) |
-| Left stick vertical | scroll up/down (`REL_WHEEL`, stick up = +1) | **consumed** (zeroed) |
-| Left stick horizontal | scroll left/right (`REL_HWHEEL`, stick right = +1) | **consumed** (zeroed) |
-| L1, L2 | `BTN_TL` / `ABS_BRAKE` | unchanged |
-| A, B, X, Y, R3, L3 | face/thumb buttons | unchanged |
-| D-pad | focus navigation (`ABS_HAT0X/Y`) | unchanged |
-| Start / Select | `BTN_START` / `BTN_SELECT` | unchanged |
-| Home / Back | `KEY_HOMEPAGE` / `KEY_BACK` | unchanged |
+| input | action | gamepad device (fusion off: the pad's shadow) | gamepad device (fusion on: the merge) |
+|---|---|---|---|
+| Right stick | pointer movement (`REL_X`/`REL_Y`) | **consumed** (reported at rest) | **consumed** before the merge |
+| R1 | left button (`BTN_LEFT`); hold + move = drag | **consumed** (suppressed) | **consumed** before the merge |
+| R2 (analog) | right button (`BTN_RIGHT`), 50 %/37.5 % hysteresis | **consumed** (axis at rest) | **consumed** before the merge |
+| Left stick vertical | scroll up/down (`REL_WHEEL`, stick up = +1) | **consumed** (reported at rest) | **consumed** before the merge |
+| Left stick horizontal | scroll left/right (`REL_HWHEEL`, stick right = +1) | **consumed** (reported at rest) | **consumed** before the merge |
+| L1, L2 | `BTN_TL` / `ABS_BRAKE` | unchanged | unchanged |
+| A, B, X, Y, R3, L3 | face/thumb buttons | unchanged | unchanged |
+| D-pad | focus navigation (`ABS_HAT0X/Y`) | unchanged | unchanged |
+| Start / Select | `BTN_START` / `BTN_SELECT` | unchanged | unchanged |
+| Home / Back | `KEY_HOMEPAGE` / `KEY_BACK` | unchanged | unchanged |
 
-Consumption is a routing step, not a capability change: the MCU frame is
-reshaped before it reaches the gamepad device (`pointer_route()` in
-`ashfall_rp5_input.c`), so a game sees no R1 click, no trigger pull and no
-stick deflection that the pointer already used, while every other button keeps
-working.  Only the **internal pad** is masked: pads merged by Gamepad Fusion
-keep their full mapping, and `RAW` still streams every physical value.  The mask
-follows the live pointer device: if `/dev/uinput` is missing so the pointer
-device could not be created, the pad keeps its full mapping rather than losing
-inputs to a pointer that is not there.
+Consumption is a routing step, not a capability change, and since #250 it
+applies to **every source**: the internal MCU frame is reshaped before it
+reaches the gamepad device (`pointer_route()` in `ashfall_rp5_input.c`), and
+every external pad's events are consumed before they reach the merge (fusion
+on) or are reported at rest by the pad's shadow (fusion off).  No game sees a
+click, a trigger pull or a stick deflection that the pointer already used,
+from any pad, while every other button keeps working.  `RAW` still streams
+every physical value.  The mask follows the live pointer device: if
+`/dev/uinput` is missing so the pointer device could not be created, pads keep
+their full mapping rather than losing inputs to a pointer that is not there.
 
-Implementation choices:
+### Sources and shadows (#250.1)
+
+The pointer's sources are the internal MCU plus **every pad node that
+`fusion_node_mergeable()` accepts** - the same stock classification fusion
+uses, so a motion-only node (accelerometer, no gamepad button) is never
+opened, never grabbed, and stays on Android's sensor path.  The scan/open
+policy is `fusion.enabled || pointer.on`: pads are opened while fusion merges
+them or while the pointer needs a source, on the same 2 s / hotplug cadence.
+
+With **fusion off and the pointer on**, the daemon cannot just read a pad: a
+grabbed pad would vanish from Android.  Each external pad is therefore
+`EVIOCGRAB`ed and re-published through a per-pad pass-through uinput device,
+its **shadow** (`shadow.c`):
+
+* the shadow mirrors the physical pad's name, bustype and
+  vendor/product/version identity and its key/abs capabilities, so Android
+  applies exactly the keylayout the physical pad would have had;
+* advertised ranges are the daemon's canonical ones (`uinput_dev_axis_range()`
+  through the slot the code feeds - an HID pad's `ABS_Z` trigger keeps the
+  trigger range, it does not become a right-stick-shaped axis), and events
+  are rescaled with the fusion rescale helper (`fusion_pad_rescale()`), so
+  there is no second normalisation convention;
+* codes that feed no fusion slot keep the pad's own range and pass through
+  unchanged;
+* the shadow carries every event except the pointer-owned inputs: right
+  stick, left stick and the analog R2 are reported at rest, R1 is
+  suppressed.  An input only *becomes* owned mid-session when the pointer
+  device is torn down and recreated, and the shadow reports rest exactly
+  once in that case instead of sticking at a stale value;
+* **force feedback is not relayed through a shadow**, and the shadow does not
+  advertise `EV_FF`: rumble stays a GamepadFusion feature.  No silent rumble
+  promise.
+
+A pad that cannot be grabbed, or whose shadow cannot be created (including
+"its own event node did not show up"), is left alone for the next scan: an
+ungrabbed pad visible to Android beats an invisible one.  The shadow's own
+event node is excluded from the scans - it looks exactly like the pad it
+re-publishes, and reading it back would feed the daemon's own output into the
+next shadow.
+
+With **fusion on and the pointer on**, there is no shadow: the pads are
+already grabbed and merged, and the pointer-owned inputs are consumed **per
+source before the merge**.  The pointer state is fed from the same rescaled
+values (`fusion_pad_rescale()`), so every merged pad can drive the cursor
+while the merged gamepad never sees a consumed input from any pad.
+
+**Per-source pointer state.**  Each source - the MCU and every pad slot -
+keeps its own `struct pointer_state`, so two pads share no buttons, velocity,
+fractional-pixel or scroll-repeat state.  They all write the single
+`AshFall RP5 Pointer` device, so `BTN_LEFT`/`BTN_RIGHT` transitions are
+de-duplicated in the emit path (the shared bus in `pointer.c`): a second pad
+pressing a button that is already down does not emit a second press, and the
+button is only released when the last holding source lets go - including
+across a pad unplug.
+
+The internal pad's mapping is unchanged: it keeps the calibrated `stick_map` +
+`stick_apply_deadzone()` feed, and the user deadzone is not applied twice.
+External pads feed the pointer with the fusion-normalised values and the
+pointer's own fixed 5 % deadzone/expo - no second user deadzone.
+
+**Lifecycle.**  Turning the pointer off releases everything the pointer held
+(from every source, through the shared bus), destroys the shadows, ungrabs
+and closes the pads fusion is not merging, and re-seeds the merged pads'
+consumed inputs from the pads' current state (`EVIOCGABS`/`EVIOCGKEY` work
+through a grab).  Turning it on zeroes the merged pads' consumed inputs in
+the registry and attaches shadow pads.  A property change is never suppressed
+by GRAB: while grabbed, devices are created/destroyed and state is cleared
+silently, and everything resumes correctly on `GRAB OFF`.  A pad hotplug
+(USB unplug, BT drop) destroys that pad's shadow, releases its pointer
+buttons through the shared bus and clears its state.
+
+A pad attached **mid-press** keeps what the user is already holding: the
+pointer state (and the shadow's output) are seeded from the kernel's current
+key/axis state, readable through the grab.  Pads are change-only sources, so
+the MCU's 2 s stale-frame rule does not apply to them - a held button sends
+nothing while held, and their disappearance is handled by the pad drop paths
+(POLLHUP, read error, node gone) instead.  Only the MCU, which streams every
+frame, ages held state out after 2 s.  The pointer device itself is recreated
+by `pointer_retry` if `/dev/uinput` reappears, and the consume gate follows
+it.
+
+### Implementation choices
 
 * **L2 hysteresis**: press at >= 50 % (128/255), release at <= 37.5 %
   (96/255), so a trigger resting on the threshold cannot chatter.
@@ -775,6 +864,10 @@ Implementation choices:
 * **Per-axis scroll deadzone**: 5 % of travel on each axis independently, so a
   diagonal push does not need both axes past the threshold to scroll.
 * Left stick never moves the cursor and right stick never scrolls.
+* **External pads** use the pointer's own fixed 5 % deadzone/expo on the
+  fusion-normalised values; the user deadzone is not applied to them, and
+  there is no second scaling step anywhere (`fusion_pad_rescale()` is the one
+  rescale the merge and the shadows share).
 
 ### Curve and rate
 
@@ -793,9 +886,12 @@ mode keeps its 250 ms / 500 ms idle wakeup.
 | fractional pixels | the sub-pixel remainder is accumulated across ticks, so a slow stick still moves the exact distance instead of rounding to a standstill |
 | longest step | 50 ms: a stalled loop must not teleport the cursor |
 
-Right- and left-stick values reach the pointer after calibration (`stick_map`),
-so the ADC inversion, stick centring and factory/user calibration all apply
-exactly as they do to the gamepad.
+Right- and left-stick values reach the pointer after calibration (`stick_map`)
+on the internal pad, so the ADC inversion, stick centring and factory/user
+calibration all apply exactly as they do to the gamepad.  External pads reach
+it with the fusion-normalised values instead (`fusion_pad_rescale()`), already
+in the canonical ranges, with the pointer's own fixed 5 % deadzone/expo on
+top.
 
 ### GRAB and RAW
 
@@ -814,19 +910,38 @@ exactly as they do to the gamepad.
   button, including A/B/R3/L1/R1/L2/R2, in the 100 Hz RAW frames;
 * `GRAB OFF` clears the pointer state and resumes on the next 125 Hz tick from
   the last MCU frame tracked during GRAB; the gamepad does its usual full
-  re-report on the next frame.
+  re-report on the next frame.  Every source is covered (#250): the pad
+  states are cleared the same way, the merged pads' consumed inputs stay
+  consumed (the gamepad must not see them with the pointer on), and the
+  shadows keep reporting them at rest.  The shadows themselves are **not**
+  suppressed: they are the pass-through of the physical pad - what a tester
+  holding GRAB is actually poking - and silencing them would make the pad
+  vanish from Android for the whole grab.  What stays silenced is the
+  daemon's own output: the merged gamepad and the pointer device.
 
 ### Files
 
 * `pointer.c` / `pointer.h` - switch parsing, curve, 125 Hz tick, the two
-  buttons, left-stick scroll repeat, release/clear.  Free of evdev/uinput, so
-  the host tests cover it.
-* `uinput_dev.c` / `uinput_dev.h` - relative axes and `INPUT_PROP_*` support.
-* `ashfall_rp5_input.c` - pointer device lifecycle, input routing (the consumed
-  keys/axes), GRAB/MCU release integration, 125 Hz poll timeout.
+  buttons, left-stick scroll repeat, release/clear, and the shared
+  `BTN_LEFT`/`BTN_RIGHT` bus that de-duplicates the one pointer device across
+  sources (#250).  Free of evdev/uinput, so the host tests cover it.
+* `shadow.c` / `shadow.h` - the per-pad pass-through shadow: spec
+  construction (mirrored identity and capabilities, canonical slot ranges)
+  and event routing (rescale via the fusion helper, owned inputs at rest).
+  Free of file descriptors, so the host tests drive it through
+  `struct uinput_dev_ops` (#250).
+* `uinput_dev.c` / `uinput_dev.h` - relative axes, `INPUT_PROP_*` support and
+  the optional per-axis range override the shadows advertise through.
+* `ashfall_rp5_input.c` - pointer device lifecycle, per-source input routing
+  and consume, the scan/open policy (`fusion.enabled || pointer.on`),
+  GRAB/MCU release integration, the consume-gate reconcile and the 125 Hz
+  poll timeout.
 * `tests/test_input.c` - switch parsing/latching, off-mode silence, deadzone,
-  fraction, cap, buttons, scroll repeat, no chord, release, stale-frame timeout
-  and the pointer capability sequence.
+  fraction, cap, buttons, scroll repeat, no chord, release, stale-frame
+  timeout, the pointer capability sequence, and since #250: the owned-slot
+  predicate, the shared rescale helper, the consume rules, the shared button
+  bus, per-source state, the shadow capability sequence and the shadow's
+  gate-off/gate-on release behaviour.
 
 ### Verification without a device
 
@@ -861,26 +976,40 @@ device pass; nothing below runs on the internal panel.
    reach the gamepad device (`getevent -l` on both nodes) and **R1/R2/sticks do
    not** appear on the gamepad node while the pointer is on.  With the pointer
    off the same buttons and both sticks are back on the gamepad node.
-6. Start a game with the pointer on: no cursor movement from the right stick in
+6. With only a USB pad connected and fusion off (#250): the log shows
+   `pointer: pad <key> "<name>" grabbed (shadow)` and `getevent -pl` shows the
+   pad's shadow - same name/VID/PID as the pad, no `EV_FF` - next to
+   `AshFall RP5 Pointer`.  The pad's right stick moves the cursor, R1 = left
+   click, R2 = right click, left stick scrolls; A/B/X/Y/L1/L2/D-pad/
+   Start/Select still reach the shadow node, and its R1/R2/stick events never
+   do.  Unplug the pad: `pointer: shadow for <key> removed` and the raw pad
+   node works again ungrabbed.  Turn the pointer off: shadows and grabs go
+   away (`pointer: scan` stops attaching), the pointer device is destroyed.
+7. Fusion on + pointer on (#250): every merged pad can drive the cursor, and
+   the merged gamepad never reports R1, R2 or a stick deflection from *any*
+   pad (`getevent -l` on the fusion node); with the pointer off the full
+   merged pad returns.  Fusion toggling with the pointer on re-grabs the pads
+   without leaving a stuck button or a stuck cursor.
+8. Start a game with the pointer on: no cursor movement from the right stick in
    the game, no R1 click, no stick input from the internal pad; the other
    buttons still work.  Turn the pointer off and confirm the full pad returns
    without a reboot and with no stuck key.
-7. Unplug the external display (or turn it off) **with the dialog closed**: the
+9. Unplug the external display (or turn it off) **with the dialog closed**: the
    `PointerService` notification appears while the pointer is on, disappears,
    `persist.ashfall.pad.pointer` becomes `0` and `getevent -pl` stops listing
    `AshFall RP5 Pointer` without reopening the dialog (#238).  Reopen the
    dialog: the switch is disabled.  The notification's **Stop** action also
    clears the property; no notification is left behind and
    `dumpsys activity services org.ashfall.parts` shows no `PointerService`.
-8. `GRAB ON`: cursor freezes, clicks/scroll do nothing, every button still
-   appears in the RAW stream; `GRAB OFF` restores the pointer.
-9. Screen off/on: cursor stops after the MCU quiet timeout and resumes with the
-   next frame; no button stays pressed.
-10. Fusion on + pointer on: the merged pad still appears, the pointer is a
+10. `GRAB ON`: cursor freezes, clicks/scroll do nothing from any source, every
+    button still appears in the RAW stream; `GRAB OFF` restores the pointer.
+11. Screen off/on: cursor stops after the MCU quiet timeout and resumes with the
+    next frame; no button stays pressed.
+12. Fusion on + pointer off: the merged pad still appears, the pointer is a
     separate device and is never merged (it has no `EV_ABS`, so fusion's
     classification skips it), and an external pad merged into the fusion pad
     keeps all of its buttons and sticks.
-11. Enforcing build: `dmesg | grep avc` is clean after all of the above.
+13. Enforcing build: `dmesg | grep avc` is clean after all of the above.
 
 ## Phase 5 test checklist (in addition to the one below)
 

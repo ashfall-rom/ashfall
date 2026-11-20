@@ -12,6 +12,7 @@
 #include "plat.h"
 #include "pointer.h"
 #include "session.h"
+#include "shadow.h"
 #include "uinput_dev.h"
 
 #include <errno.h>
@@ -1049,6 +1050,156 @@ static void test_fusion_axis_scaling(void)
     CHECK(fs.pads[pad].last_seen_ms > 0);
 }
 
+/* --- #250: the desktop pointer owns the same inputs on every source -------- */
+
+static void test_fusion_pointer_owned(void)
+{
+    CHECK(fusion_slot_pointer_owned(FUSION_AXIS_LX));
+    CHECK(fusion_slot_pointer_owned(FUSION_AXIS_LY));
+    CHECK(fusion_slot_pointer_owned(FUSION_AXIS_RX));
+    CHECK(fusion_slot_pointer_owned(FUSION_AXIS_RY));
+    CHECK(fusion_slot_pointer_owned(FUSION_AXIS_R2));
+    CHECK(!fusion_slot_pointer_owned(FUSION_AXIS_L2));
+    CHECK(!fusion_slot_pointer_owned(FUSION_AXIS_HATX));
+    CHECK(!fusion_slot_pointer_owned(FUSION_AXIS_HATY));
+    CHECK(!fusion_slot_pointer_owned(-1));
+    CHECK(!fusion_slot_pointer_owned(FUSION_AXIS_COUNT));
+
+    CHECK(fusion_event_pointer_owned(EV_KEY, BTN_TR, -1));
+    CHECK(!fusion_event_pointer_owned(EV_KEY, BTN_A, -1));
+    CHECK(!fusion_event_pointer_owned(EV_KEY, BTN_TR2, -1));
+    CHECK(fusion_event_pointer_owned(EV_ABS, ABS_X, FUSION_AXIS_LX));
+    CHECK(fusion_event_pointer_owned(EV_ABS, ABS_GAS, FUSION_AXIS_R2));
+    CHECK(!fusion_event_pointer_owned(EV_ABS, ABS_BRAKE, FUSION_AXIS_L2));
+    CHECK(!fusion_event_pointer_owned(EV_ABS, ABS_HAT0X, FUSION_AXIS_HATX));
+    CHECK(!fusion_event_pointer_owned(EV_ABS, ABS_MISC, -1));
+    CHECK(!fusion_event_pointer_owned(EV_SYN, SYN_REPORT, -1));
+}
+
+static void test_fusion_rescale(void)
+{
+    struct fusion_absinfo src;
+
+    /* HID-Xbox style trigger: 0..1023 unipolar -> the canonical 0..255,
+     * linear exactly like the merge scales it. */
+    src.present = true;
+    src.minimum = 0;
+    src.maximum = 1023;
+    CHECK_EQ(fusion_pad_rescale(&src, FUSION_AXIS_R2, 0), 0);
+    CHECK_EQ(fusion_pad_rescale(&src, FUSION_AXIS_R2, 1023), 255);
+    CHECK_EQ(fusion_pad_rescale(&src, FUSION_AXIS_R2, 512), 127);
+
+    /* Bluetooth stick: -127..127 centred -> the canonical full range, rest
+     * maps to rest. */
+    src.minimum = -127;
+    src.maximum = 127;
+    CHECK_EQ(fusion_pad_rescale(&src, FUSION_AXIS_LX, -127), -32768);
+    CHECK_EQ(fusion_pad_rescale(&src, FUSION_AXIS_LX, 0), 0);
+    CHECK_EQ(fusion_pad_rescale(&src, FUSION_AXIS_LX, 127), 32767);
+
+    /* Already canonical: identity, only clamped. */
+    src.minimum = -32768;
+    src.maximum = 32767;
+    CHECK_EQ(fusion_pad_rescale(&src, FUSION_AXIS_RX, 12345), 12345);
+    CHECK_EQ(fusion_pad_rescale(&src, FUSION_AXIS_RX, -40000), -32768);
+    CHECK_EQ(fusion_pad_rescale(&src, FUSION_AXIS_RX, 40000), 32767);
+
+    /* Hats keep -1..1; an unknown source range is identity. */
+    src.minimum = -1;
+    src.maximum = 1;
+    CHECK_EQ(fusion_pad_rescale(&src, FUSION_AXIS_HATX, -1), -1);
+    src.present = false;
+    CHECK_EQ(fusion_pad_rescale(&src, FUSION_AXIS_RX, 777), 777);
+}
+
+static void test_fusion_consume(void)
+{
+    struct fusion_state fs;
+    struct captured cap;
+    struct fusion_pad *added;
+    int pad;
+
+    fusion_defaults(&fs);
+    added = fusion_pad_add(&fs, "045e:0b12:usb", "Xbox pad", FUSION_CONN_USB,
+                           1000);
+    CHECK(added != NULL);
+    pad = fusion_pad_index(&fs, added->key);
+    CHECK(pad >= 0);
+
+    /* Physical: R1 held, sticks deflected, R2 pulled, A held. */
+    fusion_key_event(&fs, pad, BTN_TR, 1);
+    fusion_key_event(&fs, pad, BTN_A, 1);
+    fusion_abs_event(&fs, pad, FUSION_AXIS_RX, 20000, 1000);
+    fusion_abs_event(&fs, pad, FUSION_AXIS_R2, 200, 1000);
+    fusion_abs_event(&fs, pad, FUSION_AXIS_L2, 100, 1000);
+    flush_prime(&fs);
+
+    /* The pointer starts consuming: the registry loses the owned inputs and
+     * the next flush reports them gone (#250). */
+    fusion_pad_consume_pointer_inputs(&fs, pad);
+    flush_into(&fs, &cap);
+    CHECK(has_event(&cap, EV_KEY, BTN_TR, 0));
+    CHECK(has_event(&cap, EV_ABS, ABS_Z, 0));   /* right stick slot */
+    CHECK(has_event(&cap, EV_ABS, ABS_GAS, 0)); /* analog R2 slot */
+    CHECK(!has_event(&cap, EV_KEY, BTN_A, 0));
+    CHECK(has_event(&cap, EV_ABS, ABS_BRAKE, 100)); /* L2 is not owned */
+    CHECK_EQ(fs.pads[pad].abs[FUSION_AXIS_RX], 0);
+    CHECK_EQ(fs.pads[pad].abs[FUSION_AXIS_R2], 0);
+    CHECK_EQ(fs.pads[pad].abs[FUSION_AXIS_L2], 100);
+    CHECK_EQ((fs.pads[pad].keys[BTN_TR / 32] >> (BTN_TR % 32)) & 1, 0);
+    CHECK_EQ((fs.pads[pad].keys[BTN_A / 32] >> (BTN_A % 32)) & 1, 1);
+
+    /* Repeat consume is a no-op: nothing re-reports. */
+    flush_into(&fs, &cap);
+    fusion_pad_consume_pointer_inputs(&fs, pad);
+    flush_into(&fs, &cap);
+    CHECK_EQ(cap.count, 0);
+
+    /* An unregistered index is ignored, not crashed on. */
+    fusion_pad_consume_pointer_inputs(&fs, -1);
+    fusion_pad_consume_pointer_inputs(&fs, FUSION_MAX_PADS);
+}
+
+/*
+ * The consume rules the daemon applies per event, expressed as a merge
+ * contract: while the pointer consumes, owned inputs never enter the merge
+ * from any pad, and after it stops (re-seed) they re-report.
+ */
+static void test_fusion_consume_rules(void)
+{
+    struct fusion_state fs;
+    struct captured cap;
+    int a;
+    int b;
+
+    fusion_defaults(&fs);
+    fusion_pad_add(&fs, "045e:0b12:usb", "pad A", FUSION_CONN_USB, 1000);
+    fusion_pad_add(&fs, "054c:05c4:bt", "pad B", FUSION_CONN_BT, 1001);
+    a = fusion_pad_index(&fs, "045e:0b12:usb");
+    b = fusion_pad_index(&fs, "054c:05c4:bt");
+    CHECK(a >= 0 && b >= 0);
+
+    /* The daemon feeds only the inputs the pointer does not own. */
+    fusion_key_event(&fs, a, BTN_A, 1);
+    fusion_abs_event(&fs, a, FUSION_AXIS_L2, 255, 2000);
+    fusion_key_event(&fs, b, BTN_X, 1);
+    fusion_abs_event(&fs, b, FUSION_AXIS_HATX, 1, 2001);
+    flush_into(&fs, &cap);
+    CHECK(has_event(&cap, EV_KEY, BTN_A, 1));
+    CHECK(has_event(&cap, EV_KEY, BTN_X, 1));
+    CHECK(has_event(&cap, EV_ABS, ABS_BRAKE, 255));
+    CHECK(has_event(&cap, EV_ABS, ABS_HAT0X, 1));
+    CHECK(!has_event(&cap, EV_KEY, BTN_TR, 1));
+    CHECK(!has_event(&cap, EV_ABS, ABS_Z, 20000));
+
+    /* Same values when the pointer stops owning them: they re-report. */
+    fusion_key_event(&fs, a, BTN_TR, 1);
+    fusion_abs_event(&fs, a, FUSION_AXIS_RX, 20000, 2002);
+    flush_into(&fs, &cap);
+    CHECK(has_event(&cap, EV_KEY, BTN_TR, 1));
+    CHECK(has_event(&cap, EV_ABS, ABS_Z, 20000));
+}
+
 static void test_fusion_remap(void)
 {
     struct fusion_state fs;
@@ -1345,6 +1496,8 @@ struct uinput_fake {
     int call_count;
     struct uinput_setup setup;
     int creates;
+    struct uinput_abs_setup abs_setups[ABS_MAX + 1];
+    int abs_setup_count;
 };
 
 static int fake_open(void *ctx)
@@ -1394,6 +1547,12 @@ static int fake_ioctl(void *ctx, int fd, unsigned long request,
     case UI_DEV_SETUP:
         memcpy(&fake->setup, (const void *)(uintptr_t)arg,
                sizeof(fake->setup));
+        return 0;
+    case UI_ABS_SETUP:
+        if (fake->abs_setup_count <= ABS_MAX) {
+            memcpy(&fake->abs_setups[fake->abs_setup_count++],
+                   (const void *)(uintptr_t)arg, sizeof(struct uinput_abs_setup));
+        }
         return 0;
     case UI_DEV_CREATE:
         fake->creates++;
@@ -1455,6 +1614,17 @@ static int call_count_of(const struct uinput_fake *fake, unsigned long request,
             count++;
     }
     return count;
+}
+
+/* The UI_ABS_SETUP record for one axis code, or NULL. */
+static const struct uinput_abs_setup *abs_setup_of(
+    const struct uinput_fake *fake, uint16_t code)
+{
+    for (int i = 0; i < fake->abs_setup_count; i++) {
+        if (fake->abs_setups[i].code == code)
+            return &fake->abs_setups[i];
+    }
+    return NULL;
 }
 
 static void fake_init(struct uinput_fake *fake, struct uinput_dev_ops *ops)
@@ -1624,6 +1794,47 @@ static void test_uinput_axis_range(void)
     CHECK_EQ(max, 32767);
     uinput_dev_axis_range(ABS_RZ, &min, &max);
     CHECK_EQ(max, 32767);
+}
+
+/* The #250 shadows carry per-axis ranges: an HID pad's ABS_Z trigger must
+ * stay a trigger even though uinput_dev_axis_range(ABS_Z) is a stick's. */
+static void test_uinput_absinfo_override(void)
+{
+    struct uinput_dev_spec spec;
+    struct uinput_dev_ops ops;
+    struct uinput_fake fake;
+    struct input_absinfo ranges[2] = {
+        { .minimum = 0, .maximum = 255 },
+        { .minimum = -32768, .maximum = 32767 },
+    };
+    uint16_t axes[2] = { ABS_Z, ABS_X };
+    bool rumble = true;
+    const struct uinput_abs_setup *setup;
+    int fd;
+
+    fake_init(&fake, &ops);
+    memset(&spec, 0, sizeof(spec));
+    spec.name = "override";
+    spec.bustype = BUS_USB;
+    spec.axes = axes;
+    spec.axis_count = 2;
+    spec.absinfo = ranges;
+
+    fd = uinput_dev_create(&ops, &spec, &rumble);
+    CHECK(fd >= 0);
+    CHECK_EQ(fake.abs_setup_count, 2);
+    setup = abs_setup_of(&fake, ABS_Z);
+    CHECK(setup != NULL);
+    if (setup) {
+        CHECK_EQ(setup->absinfo.minimum, 0);
+        CHECK_EQ(setup->absinfo.maximum, 255);
+    }
+    setup = abs_setup_of(&fake, ABS_X);
+    CHECK(setup != NULL);
+    if (setup) {
+        CHECK_EQ(setup->absinfo.minimum, -32768);
+        CHECK_EQ(setup->absinfo.maximum, 32767);
+    }
 }
 
 /* --- #156: external pad detection and hotplug ---------------------------- */
@@ -1859,7 +2070,7 @@ static void test_pointer_movement(void)
     memset(&cap, 0, sizeof(cap));
     pointer_frame(&ps, POINTER_KEY_R1, 0, 0, 32767, 32767, 255, t);
     for (int i = 0; i < 20; i++)
-        pointer_tick(&ps, t + (int64_t)i * POINTER_TICK_MS, capture_emit, &cap);
+        pointer_tick(&ps, t + (int64_t)i * POINTER_TICK_MS, capture_emit, &cap, NULL);
     CHECK_EQ(cap.count, 0);
     CHECK(!ps.btn_left);
     CHECK(!ps.btn_right);
@@ -1868,11 +2079,11 @@ static void test_pointer_movement(void)
      * exceeds it.  125 ticks is one second of motion. */
     CHECK(pointer_set_enabled(&ps, true));
     pointer_frame(&ps, 0, 0, 0, 32767, 0, 0, t);
-    pointer_release(&ps, NULL, NULL);
+    pointer_release(&ps, NULL, NULL, NULL);
     memset(&cap, 0, sizeof(cap));
-    pointer_tick(&ps, t, capture_emit, &cap); /* prime the dt */
+    pointer_tick(&ps, t, capture_emit, &cap, NULL); /* prime the dt */
     for (int i = 1; i <= 125; i++)
-        pointer_tick(&ps, t + (int64_t)i * POINTER_TICK_MS, capture_emit, &cap);
+        pointer_tick(&ps, t + (int64_t)i * POINTER_TICK_MS, capture_emit, &cap, NULL);
     total = capture_sum(&cap, EV_REL, REL_X);
     CHECK(total > 1000);
     CHECK(total <= 1200);
@@ -1880,21 +2091,21 @@ static void test_pointer_movement(void)
     CHECK_EQ(capture_sum(&cap, EV_REL, REL_Y), 0);
 
     /* Left deflection moves left. */
-    pointer_release(&ps, NULL, NULL);
+    pointer_release(&ps, NULL, NULL, NULL);
     pointer_frame(&ps, 0, 0, 0, -32767, 0, 0, t);
     memset(&cap, 0, sizeof(cap));
-    pointer_tick(&ps, t, capture_emit, &cap);
+    pointer_tick(&ps, t, capture_emit, &cap, NULL);
     for (int i = 1; i <= 40; i++)
-        pointer_tick(&ps, t + (int64_t)i * POINTER_TICK_MS, capture_emit, &cap);
+        pointer_tick(&ps, t + (int64_t)i * POINTER_TICK_MS, capture_emit, &cap, NULL);
     CHECK(capture_sum(&cap, EV_REL, REL_X) < 0);
 
     /* The left stick scrolls, it never moves the cursor. */
-    pointer_release(&ps, NULL, NULL);
+    pointer_release(&ps, NULL, NULL, NULL);
     pointer_frame(&ps, 0, 32767, 0, 0, 0, 0, t);
     memset(&cap, 0, sizeof(cap));
-    pointer_tick(&ps, t, capture_emit, &cap);
+    pointer_tick(&ps, t, capture_emit, &cap, NULL);
     for (int i = 1; i <= 40; i++)
-        pointer_tick(&ps, t + (int64_t)i * POINTER_TICK_MS, capture_emit, &cap);
+        pointer_tick(&ps, t + (int64_t)i * POINTER_TICK_MS, capture_emit, &cap, NULL);
     CHECK_EQ(capture_sum(&cap, EV_REL, REL_X), 0);
     CHECK_EQ(capture_sum(&cap, EV_REL, REL_Y), 0);
 }
@@ -1912,32 +2123,32 @@ static void test_pointer_deadzone_and_fraction(void)
 
     /* 4.9 % of travel: inside the fixed 5 % deadzone, no motion at all. */
     pointer_frame(&ps, 0, 0, 0, 1600, 0, 0, t);
-    pointer_tick(&ps, t, capture_emit, &cap);
+    pointer_tick(&ps, t, capture_emit, &cap, NULL);
     for (int i = 1; i <= 50; i++)
-        pointer_tick(&ps, t + (int64_t)i * POINTER_TICK_MS, capture_emit, &cap);
+        pointer_tick(&ps, t + (int64_t)i * POINTER_TICK_MS, capture_emit, &cap, NULL);
     CHECK_EQ(capture_sum(&cap, EV_REL, REL_X), 0);
 
     /* Just above the deadzone the speed is far below 1 px/tick.  Without
      * fractional accumulation every tick would round to zero and the pointer
      * would never move. */
-    pointer_release(&ps, NULL, NULL);
+    pointer_release(&ps, NULL, NULL, NULL);
     pointer_frame(&ps, 0, 0, 0, 4000, 0, 0, t);
     memset(&cap, 0, sizeof(cap));
-    pointer_tick(&ps, t, capture_emit, &cap);
+    pointer_tick(&ps, t, capture_emit, &cap, NULL);
     for (int i = 1; i <= 100; i++)
-        pointer_tick(&ps, t + (int64_t)i * POINTER_TICK_MS, capture_emit, &cap);
+        pointer_tick(&ps, t + (int64_t)i * POINTER_TICK_MS, capture_emit, &cap, NULL);
     total = capture_sum(&cap, EV_REL, REL_X);
     CHECK(total >= 4);
     CHECK(total <= 30);
     CHECK_EQ(capture_max_abs(&cap, EV_REL, REL_X), 1);
 
     /* The scroll deadzone is per axis, not radial. */
-    pointer_release(&ps, NULL, NULL);
+    pointer_release(&ps, NULL, NULL, NULL);
     pointer_frame(&ps, 0, 1600, 1600, 0, 0, 0, t);
     memset(&cap, 0, sizeof(cap));
-    pointer_tick(&ps, t, capture_emit, &cap);
+    pointer_tick(&ps, t, capture_emit, &cap, NULL);
     for (int i = 1; i <= 50; i++)
-        pointer_tick(&ps, t + (int64_t)i * POINTER_TICK_MS, capture_emit, &cap);
+        pointer_tick(&ps, t + (int64_t)i * POINTER_TICK_MS, capture_emit, &cap, NULL);
     CHECK_EQ(capture_sum(&cap, EV_REL, REL_WHEEL), 0);
     CHECK_EQ(capture_sum(&cap, EV_REL, REL_HWHEEL), 0);
 }
@@ -1954,39 +2165,39 @@ static void test_pointer_buttons(void)
 
     /* R1 = left button; holding it is the drag gesture. */
     pointer_frame(&ps, POINTER_KEY_R1, 0, 0, 0, 0, 0, t);
-    pointer_tick(&ps, t, capture_emit, &cap);
+    pointer_tick(&ps, t, capture_emit, &cap, NULL);
     CHECK(ps.btn_left);
     CHECK_EQ(capture_count(&cap, EV_KEY, BTN_LEFT, 1), 1);
 
     /* Still held: one press, no repeats. */
     pointer_frame(&ps, POINTER_KEY_R1, 0, 0, 0, 0, 0, t + 8);
-    pointer_tick(&ps, t + 8, capture_emit, &cap);
+    pointer_tick(&ps, t + 8, capture_emit, &cap, NULL);
     CHECK(ps.btn_left);
     CHECK_EQ(capture_count(&cap, EV_KEY, BTN_LEFT, 1), 1);
     CHECK_EQ(capture_count(&cap, EV_KEY, BTN_LEFT, 0), 0);
 
     /* A, R3, L1 and L2 stay gamepad buttons: they must not click. */
     pointer_frame(&ps, POINTER_KEY_A | POINTER_KEY_R3, 0, 0, 0, 0, 0, t + 16);
-    pointer_tick(&ps, t + 16, capture_emit, &cap);
+    pointer_tick(&ps, t + 16, capture_emit, &cap, NULL);
     CHECK(!ps.btn_left);
     CHECK_EQ(capture_count(&cap, EV_KEY, BTN_LEFT, 0), 1);
 
     /* R2 = right button, with 50 %/37.5 % hysteresis. */
     pointer_frame(&ps, 0, 0, 0, 0, 0, 255, t + 24);
-    pointer_tick(&ps, t + 24, capture_emit, &cap);
+    pointer_tick(&ps, t + 24, capture_emit, &cap, NULL);
     CHECK(ps.btn_right);
     CHECK_EQ(capture_count(&cap, EV_KEY, BTN_RIGHT, 1), 1);
     pointer_frame(&ps, 0, 0, 0, 0, 0, 100, t + 32);
-    pointer_tick(&ps, t + 32, capture_emit, &cap);
+    pointer_tick(&ps, t + 32, capture_emit, &cap, NULL);
     CHECK(ps.btn_right);
     pointer_frame(&ps, 0, 0, 0, 0, 0, 90, t + 40);
-    pointer_tick(&ps, t + 40, capture_emit, &cap);
+    pointer_tick(&ps, t + 40, capture_emit, &cap, NULL);
     CHECK(!ps.btn_right);
     CHECK_EQ(capture_count(&cap, EV_KEY, BTN_RIGHT, 0), 1);
 
     /* Right stick button / L1 stay gamepad buttons too. */
     pointer_frame(&ps, POINTER_KEY_L1, 0, 0, 0, 0, 0, t + 48);
-    pointer_tick(&ps, t + 48, capture_emit, &cap);
+    pointer_tick(&ps, t + 48, capture_emit, &cap, NULL);
     CHECK(!ps.btn_left);
     CHECK(!ps.btn_right);
 
@@ -2001,7 +2212,7 @@ static void advance(struct pointer_state *ps, struct pointer_capture *cap,
 {
     while (*now_ms + POINTER_TICK_MS <= until_ms) {
         *now_ms += POINTER_TICK_MS;
-        pointer_tick(ps, *now_ms, capture_emit, cap);
+        pointer_tick(ps, *now_ms, capture_emit, cap, NULL);
     }
 }
 
@@ -2019,7 +2230,7 @@ static void test_pointer_scroll(void)
      * then 60 ms repeats at full deflection. */
     memset(&cap, 0, sizeof(cap));
     pointer_frame(&ps, 0, 0, -32767, 0, 0, 0, now);
-    pointer_tick(&ps, now, capture_emit, &cap);
+    pointer_tick(&ps, now, capture_emit, &cap, NULL);
     CHECK_EQ(capture_count(&cap, EV_REL, REL_WHEEL, 1), 1);
     advance(&ps, &cap, &now, t + 56);
     CHECK_EQ(capture_count(&cap, EV_REL, REL_WHEEL, 1), 1);
@@ -2076,9 +2287,9 @@ static void test_pointer_no_chord(void)
     pointer_set_enabled(&ps, true);
     pointer_frame(&ps, POINTER_KEY_L1 | POINTER_KEY_R1 | POINTER_KEY_START, 0, 0,
                   0, 0, 0, t);
-    pointer_tick(&ps, t, capture_emit, &cap);
+    pointer_tick(&ps, t, capture_emit, &cap, NULL);
     for (int i = 1; i <= 250; i++)
-        pointer_tick(&ps, t + (int64_t)i * POINTER_TICK_MS, capture_emit, &cap);
+        pointer_tick(&ps, t + (int64_t)i * POINTER_TICK_MS, capture_emit, &cap, NULL);
     CHECK(ps.on);
     CHECK(ps.btn_left);
     CHECK_EQ(capture_count(&cap, EV_KEY, BTN_LEFT, 1), 1);
@@ -2098,12 +2309,12 @@ static void test_pointer_release(void)
 
     /* R1 + R2 pulled: both buttons down, plus a scroll in flight. */
     pointer_frame(&ps, POINTER_KEY_R1, 0, -32767, 0, 0, 255, t);
-    pointer_tick(&ps, t, capture_emit, &cap);
+    pointer_tick(&ps, t, capture_emit, &cap, NULL);
     CHECK(ps.btn_left);
     CHECK(ps.btn_right);
     CHECK_EQ(capture_count(&cap, EV_REL, REL_WHEEL, 1), 1);
 
-    emitted = pointer_release(&ps, capture_emit, &cap);
+    emitted = pointer_release(&ps, capture_emit, &cap, NULL);
     CHECK_EQ(emitted, 2);
     CHECK_EQ(capture_count(&cap, EV_KEY, BTN_LEFT, 0), 1);
     CHECK_EQ(capture_count(&cap, EV_KEY, BTN_RIGHT, 0), 1);
@@ -2115,13 +2326,13 @@ static void test_pointer_release(void)
     CHECK(!ps.scroll_y.held);
 
     /* Nothing held: no second release. */
-    CHECK_EQ(pointer_release(&ps, capture_emit, &cap), 0);
+    CHECK_EQ(pointer_release(&ps, capture_emit, &cap, NULL), 0);
 
     /* Silent release still clears the state (GRAB ON / shutdown path). */
     pointer_frame(&ps, POINTER_KEY_R1, 0, 0, 0, 0, 0, t + 8);
-    pointer_tick(&ps, t + 8, capture_emit, &cap);
+    pointer_tick(&ps, t + 8, capture_emit, &cap, NULL);
     CHECK(ps.btn_left);
-    CHECK_EQ(pointer_release(&ps, NULL, NULL), 0);
+    CHECK_EQ(pointer_release(&ps, NULL, NULL, NULL), 0);
     CHECK(!ps.btn_left);
 }
 
@@ -2135,12 +2346,12 @@ static void test_pointer_stale_frame(void)
     pointer_defaults(&ps);
     pointer_set_enabled(&ps, true);
     pointer_frame(&ps, POINTER_KEY_R1, 0, 0, 32767, 0, 0, t);
-    pointer_tick(&ps, t, capture_emit, &cap);
+    pointer_tick(&ps, t, capture_emit, &cap, NULL);
     CHECK(ps.btn_left);
 
     /* The MCU went quiet for >2 s: the held click must not stay down and the
      * stick must stop. */
-    pointer_tick(&ps, t + POINTER_FRAME_TIMEOUT_MS + 1, capture_emit, &cap);
+    pointer_tick(&ps, t + POINTER_FRAME_TIMEOUT_MS + 1, capture_emit, &cap, NULL);
     CHECK(!ps.btn_left);
     CHECK_EQ(capture_count(&cap, EV_KEY, BTN_LEFT, 0), 1);
     CHECK_EQ(capture_sum(&cap, EV_REL, REL_X), 0);
@@ -2155,7 +2366,7 @@ static void test_pointer_timeout(void)
 
     pointer_set_enabled(&ps, true);
     CHECK_EQ(pointer_timeout_ms(&ps, 1000), 1);
-    pointer_release(&ps, NULL, NULL);
+    pointer_release(&ps, NULL, NULL, NULL);
     /* pointer_release() resets the tick reference: the first tick primes it. */
     CHECK_EQ(pointer_timeout_ms(&ps, 1000), 1);
 
@@ -2222,6 +2433,483 @@ static void test_uinput_pointer_device(void)
     }
 }
 
+/* --- #250: shared buttons, per-source state, per-pad shadows --------------- */
+
+#define SHADOW_VID 0x045e
+#define SHADOW_PID 0x0b12
+
+static void absinfo_set(struct fusion_absinfo *info, uint16_t code, int min,
+                        int max)
+{
+    info[code].present = true;
+    info[code].minimum = min;
+    info[code].maximum = max;
+}
+
+struct shadow_fix {
+    struct shadow_source src;
+    struct fusion_absinfo absinfo[FUSION_ABS_MAX];
+    uint8_t keybits[FUSION_BITS_BYTES(KEY_MAX + 1)];
+    uint8_t absbits[FUSION_BITS_BYTES(ABS_MAX + 1)];
+    uint16_t axis_src[FUSION_AXIS_COUNT];
+};
+
+static void shadow_fix_bits(uint8_t *bits, size_t len, const uint16_t *codes,
+                            int count)
+{
+    memset(bits, 0, len);
+    for (int i = 0; i < count; i++)
+        fusion_bits_set(bits, codes[i]);
+}
+
+/* Android/VirtualGamepad convention: triggers on ABS_BRAKE/ABS_GAS, right
+ * stick on ABS_Z/ABS_RZ.  The trigger range is 0..1023 to prove the rescale. */
+static void shadow_fix_android(struct shadow_fix *fix)
+{
+    static const uint16_t keys[] = {
+        BTN_A, BTN_B, BTN_X, BTN_Y, BTN_TL, BTN_TR, BTN_START, BTN_SELECT,
+    };
+    static const uint16_t abs[] = {
+        ABS_X, ABS_Y, ABS_Z, ABS_RZ, ABS_BRAKE, ABS_GAS, ABS_HAT0X, ABS_HAT0Y,
+    };
+    static char name[] = "Generic USB Pad";
+
+    memset(fix, 0, sizeof(*fix));
+    fix->src.name = name;
+    fix->src.id.bustype = BUS_USB;
+    fix->src.id.vendor = SHADOW_VID;
+    fix->src.id.product = SHADOW_PID;
+    fix->src.id.version = 0x0900;
+    shadow_fix_bits(fix->keybits, sizeof(fix->keybits), keys,
+                    (int)(sizeof(keys) / sizeof(keys[0])));
+    shadow_fix_bits(fix->absbits, sizeof(fix->absbits), abs,
+                    (int)(sizeof(abs) / sizeof(abs[0])));
+    absinfo_set(fix->absinfo, ABS_X, -32768, 32767);
+    absinfo_set(fix->absinfo, ABS_Y, -32768, 32767);
+    absinfo_set(fix->absinfo, ABS_Z, -32768, 32767);
+    absinfo_set(fix->absinfo, ABS_RZ, -32768, 32767);
+    absinfo_set(fix->absinfo, ABS_BRAKE, 0, 1023);
+    absinfo_set(fix->absinfo, ABS_GAS, 0, 1023);
+    absinfo_set(fix->absinfo, ABS_HAT0X, -1, 1);
+    absinfo_set(fix->absinfo, ABS_HAT0Y, -1, 1);
+    fusion_axis_sources(fix->absinfo, fix->axis_src);
+    fix->src.keybits = fix->keybits;
+    fix->src.keybits_len = sizeof(fix->keybits);
+    fix->src.absbits = fix->absbits;
+    fix->src.absbits_len = sizeof(fix->absbits);
+    fix->src.absinfo = fix->absinfo;
+    fix->src.axis_src = fix->axis_src;
+}
+
+/* HID Xbox convention: triggers on ABS_Z/ABS_RZ (small unipolar), right stick
+ * on ABS_RX/ABS_RY.  The shadow must keep the trigger a trigger. */
+static void shadow_fix_hid(struct shadow_fix *fix)
+{
+    static const uint16_t keys[] = { BTN_SOUTH, BTN_EAST, BTN_TR };
+    static const uint16_t abs[] = {
+        ABS_X, ABS_Y, ABS_Z, ABS_RZ, ABS_RX, ABS_RY, ABS_HAT0X,
+    };
+    static char name[] = "Xbox Wireless Controller";
+
+    memset(fix, 0, sizeof(*fix));
+    fix->src.name = name;
+    fix->src.id.bustype = BUS_USB;
+    fix->src.id.vendor = SHADOW_VID;
+    fix->src.id.product = SHADOW_PID;
+    fix->src.id.version = 0x0e00;
+    shadow_fix_bits(fix->keybits, sizeof(fix->keybits), keys,
+                    (int)(sizeof(keys) / sizeof(keys[0])));
+    shadow_fix_bits(fix->absbits, sizeof(fix->absbits), abs,
+                    (int)(sizeof(abs) / sizeof(abs[0])));
+    absinfo_set(fix->absinfo, ABS_X, -32768, 32767);
+    absinfo_set(fix->absinfo, ABS_Y, -32768, 32767);
+    absinfo_set(fix->absinfo, ABS_Z, 0, 255);
+    absinfo_set(fix->absinfo, ABS_RZ, 0, 255);
+    absinfo_set(fix->absinfo, ABS_RX, -32768, 32767);
+    absinfo_set(fix->absinfo, ABS_RY, -32768, 32767);
+    absinfo_set(fix->absinfo, ABS_HAT0X, -1, 1);
+    fusion_axis_sources(fix->absinfo, fix->axis_src);
+    fix->src.keybits = fix->keybits;
+    fix->src.keybits_len = sizeof(fix->keybits);
+    fix->src.absbits = fix->absbits;
+    fix->src.absbits_len = sizeof(fix->absbits);
+    fix->src.absinfo = fix->absinfo;
+    fix->src.axis_src = fix->axis_src;
+}
+
+static void test_pointer_shared_buttons(void)
+{
+    struct pointer_shared sh;
+    struct pointer_capture cap;
+
+    pointer_shared_init(&sh);
+    memset(&cap, 0, sizeof(cap));
+
+    /* The first source's press reaches the device. */
+    CHECK_EQ(pointer_shared_button(&sh, true, true, capture_emit, &cap), 1);
+    CHECK_EQ(capture_count(&cap, EV_KEY, BTN_LEFT, 1), 1);
+    /* A second source pressing the same button: the device sees nothing. */
+    CHECK_EQ(pointer_shared_button(&sh, true, true, capture_emit, &cap), 0);
+    /* The first source letting go must not release under the second. */
+    CHECK_EQ(pointer_shared_button(&sh, true, false, capture_emit, &cap), 0);
+    /* The last holder does. */
+    CHECK_EQ(pointer_shared_button(&sh, true, false, capture_emit, &cap), 1);
+    CHECK_EQ(capture_count(&cap, EV_KEY, BTN_LEFT, 0), 1);
+
+    /* The right button is tracked independently. */
+    CHECK_EQ(pointer_shared_button(&sh, false, true, capture_emit, &cap), 1);
+    CHECK_EQ(pointer_shared_button(&sh, false, true, capture_emit, &cap), 0);
+    /* One claim dropping under another: no release yet. */
+    CHECK_EQ(pointer_shared_button(&sh, false, false, capture_emit, &cap), 0);
+    /* The last holder does. */
+    CHECK_EQ(pointer_shared_button(&sh, false, false, capture_emit, &cap), 1);
+    CHECK_EQ(capture_count(&cap, EV_KEY, BTN_RIGHT, 0), 1);
+    /* A silent claim drop (emit NULL) still frees the button for the next
+     * press. */
+    CHECK_EQ(pointer_shared_button(&sh, false, true, capture_emit, &cap), 1);
+    CHECK_EQ(pointer_shared_button(&sh, false, false, NULL, NULL), 0);
+    CHECK_EQ(pointer_shared_button(&sh, false, true, capture_emit, &cap), 1);
+
+    /* Clearing forgets claims held without a release. */
+    CHECK_EQ(pointer_shared_button(&sh, true, true, capture_emit, &cap), 1);
+    pointer_shared_clear(&sh);
+    memset(&cap, 0, sizeof(cap));
+    CHECK_EQ(pointer_shared_button(&sh, true, true, capture_emit, &cap), 1);
+}
+
+static void test_pointer_tick_shared(void)
+{
+    struct pointer_state a;
+    struct pointer_state b;
+    struct pointer_shared sh;
+    struct pointer_capture cap;
+
+    pointer_defaults(&a);
+    pointer_defaults(&b);
+    pointer_shared_init(&sh);
+    pointer_set_enabled(&a, true);
+    pointer_set_enabled(&b, true);
+    memset(&cap, 0, sizeof(cap));
+
+    /* Two sources press R1 within the same tick: exactly one press. */
+    pointer_frame(&a, POINTER_KEY_R1, 0, 0, 0, 0, 0, 1000);
+    pointer_frame(&b, POINTER_KEY_R1, 0, 0, 0, 0, 0, 1000);
+    pointer_tick(&a, 1000, capture_emit, &cap, &sh);
+    pointer_tick(&b, 1000, capture_emit, &cap, &sh);
+    CHECK_EQ(capture_count(&cap, EV_KEY, BTN_LEFT, 1), 1);
+    CHECK_EQ(capture_count(&cap, EV_KEY, BTN_LEFT, 0), 0);
+
+    /* The first source releases: the button stays down for the second. */
+    pointer_frame(&a, 0, 0, 0, 0, 0, 0, 1016);
+    pointer_tick(&a, 1016, capture_emit, &cap, &sh);
+    CHECK_EQ(capture_count(&cap, EV_KEY, BTN_LEFT, 0), 0);
+    pointer_frame(&b, 0, 0, 0, 0, 0, 0, 1032);
+    pointer_tick(&b, 1032, capture_emit, &cap, &sh);
+    CHECK_EQ(capture_count(&cap, EV_KEY, BTN_LEFT, 0), 1);
+}
+
+static void test_pointer_release_shared(void)
+{
+    struct pointer_state mcu;
+    struct pointer_state pad;
+    struct pointer_shared sh;
+    struct pointer_capture cap;
+
+    pointer_defaults(&mcu);
+    pointer_defaults(&pad);
+    pointer_shared_init(&sh);
+    pointer_set_enabled(&mcu, true);
+    pointer_set_enabled(&pad, true);
+    memset(&cap, 0, sizeof(cap));
+
+    /* MCU and pad both hold R1: one press. */
+    pointer_frame(&mcu, POINTER_KEY_R1, 0, 0, 0, 0, 0, 1000);
+    pointer_frame(&pad, POINTER_KEY_R1, 0, 0, 0, 0, 0, 1000);
+    pointer_tick(&mcu, 1000, capture_emit, &cap, &sh);
+    pointer_tick(&pad, 1000, capture_emit, &cap, &sh);
+    CHECK_EQ(capture_count(&cap, EV_KEY, BTN_LEFT, 1), 1);
+
+    /* The pad is unplugged mid-press (pad_drop's release path): the button
+     * stays down, the pad's claim is gone. */
+    CHECK_EQ(pointer_release(&pad, capture_emit, &cap, &sh), 0);
+    CHECK_EQ(capture_count(&cap, EV_KEY, BTN_LEFT, 0), 0);
+    pointer_frame(&pad, 0, 0, 0, 0, 0, 0, 1016);
+    CHECK_EQ(pointer_tick(&pad, 1016, capture_emit, &cap, &sh), 0);
+    CHECK_EQ(capture_count(&cap, EV_KEY, BTN_LEFT, 0), 0);
+
+    /* The MCU source releases: the device sees exactly one release. */
+    pointer_frame(&mcu, 0, 0, 0, 0, 0, 0, 1016);
+    pointer_tick(&mcu, 1016, capture_emit, &cap, &sh);
+    CHECK_EQ(capture_count(&cap, EV_KEY, BTN_LEFT, 0), 1);
+}
+
+static void test_pointer_per_source(void)
+{
+    struct pointer_state a;
+    struct pointer_state b;
+    struct pointer_capture cap;
+    struct pointer_capture cap_b;
+
+    pointer_defaults(&a);
+    pointer_defaults(&b);
+    pointer_set_enabled(&a, true);
+    pointer_set_enabled(&b, true);
+
+    /* A scrolls with its left stick while B sits in the deadzone: B emits
+     * nothing and A's repeat cadence is its own.  Stick up (negative ABS_Y)
+     * is REL_WHEEL +1. */
+    pointer_frame(&a, 0, 0, -20000, 0, 0, 0, 1000);
+    pointer_frame(&b, 0, 0, 0, 0, 0, 0, 1000);
+    memset(&cap, 0, sizeof(cap));
+    pointer_tick(&a, 1000, capture_emit, &cap, NULL);
+    pointer_tick(&b, 1000, capture_emit, &cap, NULL);
+    CHECK_EQ(capture_count(&cap, EV_REL, REL_WHEEL, 1), 1);
+    for (int i = 1; i <= 40; i++) {
+        int64_t t = 1000 + (int64_t)i * 8;
+
+        pointer_frame(&a, 0, 0, -32767, 0, 0, 0, t);
+        pointer_tick(&a, t, capture_emit, &cap, NULL);
+        pointer_tick(&b, t, capture_emit, &cap, NULL);
+    }
+    CHECK(capture_count(&cap, EV_REL, REL_WHEEL, 1) > 3);
+    CHECK_EQ(capture_count(&cap, EV_REL, REL_WHEEL, -1), 0);
+
+    /* B's own stick scrolls the other way without A's state moving. */
+    pointer_frame(&a, 0, 0, 0, 0, 0, 0, 1332);
+    pointer_frame(&b, 0, 0, 20000, 0, 0, 0, 1332);
+    pointer_tick(&a, 1332, capture_emit, &cap, NULL);
+    pointer_tick(&b, 1332, capture_emit, &cap, NULL);
+    CHECK(capture_count(&cap, EV_REL, REL_WHEEL, -1) >= 1);
+
+    /* Velocity and fraction are per source: A's right stick moves the
+     * cursor, B's idle state contributes nothing. */
+    memset(&cap, 0, sizeof(cap));
+    memset(&cap_b, 0, sizeof(cap_b));
+    pointer_frame(&a, 0, 0, 0, 32767, 0, 0, 2000);
+    pointer_frame(&b, 0, 0, 0, 0, 0, 0, 2000);
+    pointer_tick(&a, 2000, capture_emit, &cap, NULL);
+    pointer_tick(&b, 2000, capture_emit, &cap_b, NULL);
+    for (int i = 1; i <= 40; i++) {
+        int64_t t = 2000 + (int64_t)i * 8;
+
+        pointer_frame(&a, 0, 0, 0, 32767, 0, 0, t);
+        pointer_frame(&b, 0, 0, 0, 0, 0, 0, t);
+        pointer_tick(&a, t, capture_emit, &cap, NULL);
+        pointer_tick(&b, t, capture_emit, &cap_b, NULL);
+    }
+    CHECK(capture_sum(&cap, EV_REL, REL_X) > 0);
+    CHECK_EQ(capture_sum(&cap_b, EV_REL, REL_X), 0);
+    CHECK_EQ(capture_sum(&cap_b, EV_REL, REL_Y), 0);
+}
+
+/* The spec constructor must own every field: poison first, then build. */
+static void spec_poison(struct uinput_dev_spec *spec)
+{
+    memset(spec, 0xAA, sizeof(*spec));
+}
+
+static void test_shadow_spec_caps(void)
+{
+    struct shadow_fix fix;
+    struct shadow_spec_buf buf;
+    struct uinput_dev_spec spec;
+    struct uinput_dev_ops ops;
+    struct uinput_fake fake;
+    const struct uinput_abs_setup *setup;
+    bool rumble = true;
+    int fd;
+
+    shadow_fix_android(&fix);
+    shadow_spec(&fix.src, &buf, &spec);
+    /* Poisoned storage: the constructor must have zeroed every field it
+     * does not set itself, or build() walks wild rel/prop lists. */
+    spec_poison(&spec);
+    shadow_spec(&fix.src, &buf, &spec);
+    CHECK_EQ(spec.rel_count, 0);
+    CHECK_EQ(spec.prop_count, 0);
+    CHECK(spec.rels == NULL);
+    CHECK(spec.props == NULL);
+    CHECK_EQ(spec.rumble, false);
+    fake_init(&fake, &ops);
+    fd = uinput_dev_create(&ops, &spec, &rumble);
+    CHECK(fd >= 0);
+    CHECK(!rumble);
+    CHECK_EQ(fake.creates, 1);
+    CHECK(strcmp(fake.setup.name, "Generic USB Pad") == 0);
+    CHECK_EQ(fake.setup.id.vendor, SHADOW_VID);
+    CHECK_EQ(fake.setup.id.product, SHADOW_PID);
+    CHECK_EQ(fake.setup.id.bustype, BUS_USB);
+    CHECK_EQ(fake.setup.id.version, 0x0900);
+    /* Never rumble: a shadow does not relay force feedback. */
+    CHECK_EQ(fake.setup.ff_effects_max, 0);
+    CHECK_EQ(call_count_of(&fake, UI_SET_EVBIT, EV_FF), 0);
+    CHECK_EQ(call_count_of(&fake, UI_SET_FFBIT, FF_RUMBLE), 0);
+    /* A gamepad pass-through: no relative axes, no pointer props. */
+    CHECK_EQ(call_count_of(&fake, UI_SET_EVBIT, EV_KEY), 1);
+    CHECK_EQ(call_count_of(&fake, UI_SET_EVBIT, EV_ABS), 1);
+    CHECK_EQ(call_count_of(&fake, UI_SET_EVBIT, EV_SYN), 1);
+    CHECK_EQ(call_count_of(&fake, UI_SET_EVBIT, EV_REL), 0);
+    CHECK_EQ(call_count_of(&fake, UI_SET_RELBIT, REL_X), 0);
+    CHECK_EQ(call_count_of(&fake, UI_SET_PROPBIT, INPUT_PROP_POINTER), 0);
+    /* Every key and axis the pad advertises is mirrored. */
+    for (int code = 1; code <= KEY_MAX; code++) {
+        bool set = (bool)((fix.keybits[code / 8] >> (code % 8)) & 1);
+
+        CHECK_EQ(call_count_of(&fake, UI_SET_KEYBIT, (unsigned long)code) > 0,
+                 set);
+    }
+    for (int code = 0; code <= ABS_MAX; code++) {
+        bool set = (bool)((fix.absbits[code / 8] >> (code % 8)) & 1);
+
+        CHECK_EQ(call_count_of(&fake, UI_SET_ABSBIT, (unsigned long)code) > 0,
+                 set);
+    }
+    /* Canonical ranges for the codes that feed a slot. */
+    setup = abs_setup_of(&fake, ABS_X);
+    CHECK(setup != NULL);
+    if (setup) {
+        CHECK_EQ(setup->absinfo.minimum, -32768);
+        CHECK_EQ(setup->absinfo.maximum, 32767);
+    }
+    setup = abs_setup_of(&fake, ABS_GAS); /* the R2 slot: trigger range */
+    CHECK(setup != NULL);
+    if (setup) {
+        CHECK_EQ(setup->absinfo.minimum, 0);
+        CHECK_EQ(setup->absinfo.maximum, 255);
+    }
+    setup = abs_setup_of(&fake, ABS_HAT0X);
+    CHECK(setup != NULL);
+    if (setup) {
+        CHECK_EQ(setup->absinfo.minimum, -1);
+        CHECK_EQ(setup->absinfo.maximum, 1);
+    }
+}
+
+static void test_shadow_spec_hid(void)
+{
+    struct shadow_fix fix;
+    struct shadow_spec_buf buf;
+    struct uinput_dev_spec spec;
+    struct uinput_dev_ops ops;
+    struct uinput_fake fake;
+    const struct uinput_abs_setup *setup;
+    bool rumble = false;
+
+    shadow_fix_hid(&fix);
+    CHECK_EQ(shadow_axis_slot(&fix.src, ABS_Z), FUSION_AXIS_L2);
+    CHECK_EQ(shadow_axis_slot(&fix.src, ABS_RX), FUSION_AXIS_RX);
+    CHECK_EQ(shadow_axis_slot(&fix.src, ABS_BRAKE), -1);
+
+    spec_poison(&spec);
+    shadow_spec(&fix.src, &buf, &spec);
+    CHECK_EQ(spec.rel_count, 0);
+    CHECK_EQ(spec.prop_count, 0);
+    fake_init(&fake, &ops);
+    CHECK(uinput_dev_create(&ops, &spec, &rumble) >= 0);
+    /* ABS_Z is this pad's left trigger: the canonical trigger range, not the
+     * right-stick range the code itself would suggest. */
+    setup = abs_setup_of(&fake, ABS_Z);
+    CHECK(setup != NULL);
+    if (setup) {
+        CHECK_EQ(setup->absinfo.minimum, 0);
+        CHECK_EQ(setup->absinfo.maximum, 255);
+    }
+    setup = abs_setup_of(&fake, ABS_RX);
+    CHECK(setup != NULL);
+    if (setup) {
+        CHECK_EQ(setup->absinfo.minimum, -32768);
+        CHECK_EQ(setup->absinfo.maximum, 32767);
+    }
+    /* Codes that feed no slot keep the pad's own range. */
+    CHECK_EQ(fusion_slot_pointer_owned(FUSION_AXIS_L2), false);
+}
+
+static void test_shadow_route(void)
+{
+    struct shadow_fix fix;
+    struct shadow_state ss;
+    struct pointer_capture cap;
+
+    shadow_fix_android(&fix);
+    shadow_state_init(&ss);
+
+    /* While the pointer consumes, the owned inputs never reach the shadow:
+     * R1 suppressed, sticks and R2 at rest. */
+    memset(&cap, 0, sizeof(cap));
+    CHECK_EQ(shadow_route_event(&fix.src, &ss, true, EV_KEY, BTN_TR, 1,
+                                capture_emit, &cap), 0);
+    CHECK_EQ(shadow_route_event(&fix.src, &ss, true, EV_ABS, ABS_GAS, 800,
+                                capture_emit, &cap), 0);
+    CHECK_EQ(shadow_route_event(&fix.src, &ss, true, EV_ABS, ABS_X, 12345,
+                                capture_emit, &cap), 0);
+    CHECK_EQ(shadow_route_event(&fix.src, &ss, true, EV_ABS, ABS_Z, -20000,
+                                capture_emit, &cap), 0);
+    CHECK_EQ(cap.count, 0);
+    /* Every other button still reaches the app. */
+    CHECK_EQ(shadow_route_event(&fix.src, &ss, true, EV_KEY, BTN_A, 1,
+                                capture_emit, &cap), 1);
+    CHECK_EQ(capture_count(&cap, EV_KEY, BTN_A, 1), 1);
+    /* Non-owned axes are rescaled into the canonical range: 0..1023 -> 0..255. */
+    CHECK_EQ(shadow_route_event(&fix.src, &ss, true, EV_ABS, ABS_BRAKE, 1023,
+                                capture_emit, &cap), 1);
+    CHECK_EQ(capture_count(&cap, EV_ABS, ABS_BRAKE, 255), 1);
+    /* Everything else passes through; SYN only ends a forwarded report. */
+    CHECK_EQ(shadow_route_event(&fix.src, &ss, true, EV_MSC, MSC_SCAN, 4,
+                                capture_emit, &cap), 1);
+    CHECK_EQ(shadow_route_event(&fix.src, &ss, true, EV_SYN, SYN_REPORT, 0,
+                                capture_emit, &cap), 1);
+    CHECK_EQ(shadow_route_event(&fix.src, &ss, true, EV_SYN, SYN_REPORT, 0,
+                                capture_emit, &cap), 0);
+    /* An FF event is never forwarded: the shadow has no EV_FF. */
+    CHECK_EQ(shadow_route_event(&fix.src, &ss, true, EV_FF, 0, 1,
+                                capture_emit, &cap), 0);
+
+    /* Gate off (the pointer device went away): everything flows again. */
+    memset(&cap, 0, sizeof(cap));
+    shadow_state_init(&ss);
+    CHECK_EQ(shadow_route_event(&fix.src, &ss, false, EV_ABS, ABS_GAS, 1023,
+                                capture_emit, &cap), 1);
+    CHECK_EQ(capture_count(&cap, EV_ABS, ABS_GAS, 255), 1);
+    CHECK_EQ(shadow_route_event(&fix.src, &ss, false, EV_KEY, BTN_TR, 1,
+                                capture_emit, &cap), 1);
+    CHECK_EQ(capture_count(&cap, EV_KEY, BTN_TR, 1), 1);
+
+    /* Gate back on: the stale nonzero values go to rest exactly once. */
+    CHECK_EQ(shadow_route_event(&fix.src, &ss, true, EV_ABS, ABS_GAS, 500,
+                                capture_emit, &cap), 1);
+    CHECK_EQ(capture_count(&cap, EV_ABS, ABS_GAS, 0), 1);
+    CHECK_EQ(shadow_route_event(&fix.src, &ss, true, EV_ABS, ABS_GAS, 600,
+                                capture_emit, &cap), 0);
+    CHECK_EQ(shadow_route_event(&fix.src, &ss, true, EV_KEY, BTN_TR, 0,
+                                capture_emit, &cap), 1);
+    CHECK_EQ(capture_count(&cap, EV_KEY, BTN_TR, 0), 1);
+    CHECK_EQ(shadow_route_event(&fix.src, &ss, true, EV_KEY, BTN_TR, 1,
+                                capture_emit, &cap), 0);
+    CHECK_EQ(capture_count(&cap, EV_KEY, BTN_TR, 1), 1); /* still one */
+
+    /* Identity rescale: an already-canonical axis passes unchanged. */
+    memset(&cap, 0, sizeof(cap));
+    shadow_state_init(&ss);
+    CHECK_EQ(shadow_route_event(&fix.src, &ss, false, EV_ABS, ABS_Z, -9000,
+                                capture_emit, &cap), 1);
+    CHECK_EQ(capture_count(&cap, EV_ABS, ABS_Z, -9000), 1);
+    /* The HID fixture's ABS_Z trigger rescales to the trigger range. */
+    shadow_fix_hid(&fix);
+    shadow_state_init(&ss);
+    memset(&cap, 0, sizeof(cap));
+    CHECK_EQ(shadow_route_event(&fix.src, &ss, false, EV_ABS, ABS_Z, 128,
+                                capture_emit, &cap), 1);
+    CHECK_EQ(capture_count(&cap, EV_ABS, ABS_Z, 128), 1);
+    /* The left trigger (ABS_Z here) is not pointer-owned: it flows even with
+     * the pointer consuming. */
+    CHECK_EQ(shadow_route_event(&fix.src, &ss, true, EV_ABS, ABS_Z, 128,
+                                capture_emit, &cap), 1);
+    CHECK_EQ(capture_count(&cap, EV_ABS, ABS_Z, 128), 2);
+    /* The right trigger (ABS_RZ here) is owned: at rest while consuming. */
+    CHECK_EQ(shadow_route_event(&fix.src, &ss, true, EV_ABS, ABS_RZ, 128,
+                                capture_emit, &cap), 0);
+}
+
 int main(void)
 {
     make_dir();
@@ -2253,6 +2941,11 @@ int main(void)
     test_uinput_phase5_device();
     test_uinput_ff_refused();
     test_uinput_axis_range();
+    test_uinput_absinfo_override();
+    test_fusion_pointer_owned();
+    test_fusion_rescale();
+    test_fusion_consume();
+    test_fusion_consume_rules();
     test_pointer_switch();
     test_pointer_movement();
     test_pointer_deadzone_and_fraction();
@@ -2263,6 +2956,13 @@ int main(void)
     test_pointer_stale_frame();
     test_pointer_timeout();
     test_uinput_pointer_device();
+    test_pointer_shared_buttons();
+    test_pointer_tick_shared();
+    test_pointer_release_shared();
+    test_pointer_per_source();
+    test_shadow_spec_caps();
+    test_shadow_spec_hid();
+    test_shadow_route();
     test_fusion_node_mergeable();
     test_fusion_hotplug();
 

@@ -32,6 +32,8 @@
 #ifndef ASHFALL_UINPUT_DEV_H
 #define ASHFALL_UINPUT_DEV_H
 
+#include <linux/input.h>
+
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -54,6 +56,12 @@ struct uinput_dev_spec {
     int key_count;
     const uint16_t *axes; /* EV_ABS codes, advertised in this order */
     int axis_count;
+    /* Optional per-axis ranges, parallel to `axes`.  NULL means the daemon's
+     * canonical uinput_dev_axis_range() for each code.  The #250 shadows set
+     * it: a code feeds a fusion slot, so an HID pad's ABS_Z trigger carries
+     * the trigger range even though uinput_dev_axis_range(ABS_Z) is a stick's.
+     */
+    const struct input_absinfo *absinfo;
     const uint16_t *rels; /* EV_REL codes (external-display pointer, #131) */
     int rel_count;
     const uint16_t *props; /* INPUT_PROP_* bits (UI_SET_PROPBIT) */

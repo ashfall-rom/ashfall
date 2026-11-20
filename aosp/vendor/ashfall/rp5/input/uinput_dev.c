@@ -92,7 +92,12 @@ static int build(const struct uinput_dev_ops *ops,
     for (int i = 0; i < spec->axis_count; i++) {
         struct input_absinfo absinfo;
 
-        absinfo_for(spec->axes[i], &absinfo);
+        if (spec->absinfo) {
+            /* Caller-supplied range, parallel to the code list (#250). */
+            absinfo = spec->absinfo[i];
+        } else {
+            absinfo_for(spec->axes[i], &absinfo);
+        }
         if (set_bit(ops, fd, UI_SET_ABSBIT, spec->axes[i]) < 0)
             continue; /* an axis the kernel refuses is simply not advertised */
 #ifdef UI_ABS_SETUP
@@ -151,7 +156,13 @@ static int build(const struct uinput_dev_ops *ops,
 
             if (code > ABS_MAX)
                 continue;
-            uinput_dev_axis_range(code, &dev.absmin[code], &dev.absmax[code]);
+            if (spec->absinfo) {
+                dev.absmin[code] = spec->absinfo[i].minimum;
+                dev.absmax[code] = spec->absinfo[i].maximum;
+            } else {
+                uinput_dev_axis_range(code, &dev.absmin[code],
+                                      &dev.absmax[code]);
+            }
         }
         if (ops->write && ops->write(ops->ctx, fd, &dev, sizeof(dev)) < 0)
             goto fail;

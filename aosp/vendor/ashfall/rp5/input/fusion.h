@@ -306,6 +306,39 @@ int fusion_release(struct fusion_state *fs, session_emit_fn emit, void *ctx);
 /* Forget every pad without emitting (fusion off). */
 void fusion_clear_pads(struct fusion_state *fs);
 
+/* --- pointer-owned inputs (#250.1) ---------------------------------------- */
+
+/* The desktop pointer consumes these inputs on *every* source while the
+ * pointer device exists: both sticks and the analog R2.  The merged gamepad
+ * never sees them from any pad, and the shadow reports them at rest. */
+bool fusion_slot_pointer_owned(int slot);
+
+/* The key code the pointer owns on every source: R1, the MCU's BTN_TR. */
+#define FUSION_POINTER_OWNED_KEY BTN_TR
+
+/* True when the pointer owns this input from a pad: the R1 key, or an axis
+ * that feeds one of the pointer's slots.  The daemon drops such events from
+ * every pad before they reach the merge (#250). */
+bool fusion_event_pointer_owned(uint16_t type, uint16_t code, int axis_slot);
+
+/* The canonical range the daemon's uinput devices advertise for a slot: the
+ * same uinput_dev_axis_range() the device construction uses (#250 shadows
+ * advertise it for the pad codes that feed a slot). */
+void fusion_slot_axis_range(int slot, int *minimum, int *maximum);
+
+/* One raw pad event rescaled to the canonical range of the slot it feeds -
+ * exactly the value fusion_abs_event() stores.  `src` is the range the pad
+ * reports for that code (present=false means identity).  Exported so the
+ * per-pad shadow rescales with the same helper and shape: no second
+ * normalisation convention (#250). */
+int32_t fusion_pad_rescale(const struct fusion_absinfo *src, int slot,
+                           int32_t value);
+
+/* Clear the pointer-owned inputs of one registry pad - both sticks, R2 and
+ * the R1 key - and dirty the merge so the next flush reports them gone.
+ * Called whenever the pointer starts consuming (#250). */
+void fusion_pad_consume_pointer_inputs(struct fusion_state *fs, int index);
+
 /* --- status -------------------------------------------------------------- */
 
 /* "OK FUSION <0|1> PADS <n>" plus one

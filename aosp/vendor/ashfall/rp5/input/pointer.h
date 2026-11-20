@@ -106,6 +106,30 @@ struct pointer_repeat {
     int64_t next_ms;
 };
 
+/*
+ * Shared mouse-button bus for the single pointer device (#250.1): every
+ * source writes the one "AshFall RP5 Pointer" device, so a second source
+ * pressing a button that is already down must not emit a second press, and a
+ * release only reaches the device when the last holding source lets go.
+ */
+struct pointer_shared {
+    int left;     /* sources currently holding BTN_LEFT */
+    int right;    /* sources currently holding BTN_RIGHT */
+    bool left_on; /* what the device was last told */
+    bool right_on;
+};
+
+void pointer_shared_init(struct pointer_shared *sh);
+
+/* Route one source's button transition through the bus.  Returns the number
+ * of events emitted (0 while another source already holds or still holds the
+ * button).  `emit` may be NULL to drop a claim silently. */
+int pointer_shared_button(struct pointer_shared *sh, bool is_left, bool down,
+                          session_emit_fn emit, void *ctx);
+
+/* Forget every claim without emitting: the pointer device is going away. */
+void pointer_shared_clear(struct pointer_shared *sh);
+
 struct pointer_state {
     /* persist.ashfall.pad.pointer, live.  The last text seen is kept so a
      * malformed value is logged once per distinct text, not every poll. */
@@ -120,6 +144,11 @@ struct pointer_state {
     int r2; /* calibrated 0..255, trigger hysteresis applied */
     int64_t last_frame_ms;
     bool have_frame;
+    /* True for a source that streams full frames (the internal MCU): only
+     * then does the 2 s frame timeout release held state.  External pads
+     * report changes only, so a held button sends nothing while held; their
+     * disappearance is handled by the pad drop paths instead (#250). */
+    bool streams_frames;
 
     /* Velocity in px/s and the sub-pixel remainder of the last tick. */
     double vx, vy;
@@ -172,19 +201,22 @@ void pointer_frame(struct pointer_state *ps, uint16_t keys, int lx, int ly,
 
 /* Release every held pointer button and clear velocity, fraction and scroll
  * repeat state.  `emit` may be NULL to clear silently (GRAB ON / shutdown
- * after the buttons were already released).  Returns the number of events
- * emitted, not counting the SYN. */
-int pointer_release(struct pointer_state *ps, session_emit_fn emit, void *ctx);
+ * after the buttons were already released).  `sh` routes the button events
+ * through the shared bus (#250); NULL keeps the single-source behaviour.
+ * Returns the number of events emitted, not counting the SYN. */
+int pointer_release(struct pointer_state *ps, session_emit_fn emit, void *ctx,
+                    struct pointer_shared *sh);
 
 /*
  * One fixed-rate tick.  With the pointer off this returns 0.  With it on it
  * emits the button changes, wheel notches and REL_X/REL_Y deltas for this tick
- * plus one SYN.
+ * plus one SYN.  `sh` routes the button events through the shared bus (#250);
+ * NULL keeps the single-source behaviour.
  *
  * Returns the number of events emitted, not counting the SYN.
  */
 int pointer_tick(struct pointer_state *ps, int64_t now_ms,
-                 session_emit_fn emit, void *ctx);
+                 session_emit_fn emit, void *ctx, struct pointer_shared *sh);
 
 /* Milliseconds until the next pointer tick (>= 1), or -1 when the pointer is
  * off: the caller keeps its normal poll timeout. */
