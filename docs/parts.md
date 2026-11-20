@@ -239,14 +239,15 @@ before the first unlock:
   `builtin.off`.  At most 32 presets and 32-character ids still hold.
 * `builtin.off` is the one fixed entry: it is the fan-stopped state the tile and
   the QS dialog rely on and cannot be renamed, deleted, duplicated or edited
-  (its mode stays `off`).  The editor shows only *Off is the fan state, not an
-  editable preset* for it.  Every other built-in (Quiet, Balanced, Performance,
+  (its mode stays `off`).  Its list row activates the fan-off state directly
+  and it has no editor.  Every other built-in (Quiet, Balanced, Performance,
   Manual, Smart) is fully editable, including its mode.
 * The **Performance** preset keeps the id `builtin.max` and the mode `max` for
   compatibility; only its display name changed from "Maximum" (issue #156
-  §10).  The built-in **Smart** curve is editable (it is the “Smart default”
-  curve); the built-in **Manual** keeps the last output set with the Fan page
-  slider; every other built-in has no curve to edit.
+  §10).  Every preset stores a manual % and a curve; the editor exposes the
+  manual % when the mode is Manual and the curve when it is Smart, and
+  switching modes keeps both values stored.  The stock Smart curve is the
+  "Smart default" curve; the stock Manual starts at 50 %.
 * A user preset is mode + `manual_pct` *or* `curve`; ids are
   `user.` + 8 hex characters (≤ 32 characters, matching the property limit).
 * The editor is the Power-editor shape (`PresetActivity`): a list of every
