@@ -908,6 +908,11 @@ int main(void)
             }
         }
         if (now >= next_status_ms) {
+            /* Keep the GPU at its clock between short bursts only while the
+             * Performance preset is active and no thermal override is on
+             * (docs/rp5/gpu.md section 4.3, issue #130). */
+            gpu_apply_idle_timer(&gpu, !throttle.active &&
+                                 !strcmp(cpu_settings.governor, "performance"));
             fan.rpm = fan_read_rpm();
             publish_status(&fan, last_temp, &status, &next_status_ms, now,
                            hwd_status_interval_ms(fan_live, power_live));

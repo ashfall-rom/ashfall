@@ -1400,6 +1400,37 @@ static void test_gpu(void)
     remove_rel(FAKE_KGSL_LEGACY);
 }
 
+/* --- issue #130: KGSL idle timer follows the Performance preset ---------- */
+
+static void test_gpu_idle_timer(void)
+{
+    const char *idle = FAKE_KGSL_DEV "/kgsl/kgsl-3d0/idle_timer";
+    gpu_state gpu;
+
+    mkdir_p(FAKE_KGSL_DEV "/kgsl/kgsl-3d0");
+    write_file(idle, "80\n");
+
+    gpu_state_init(&gpu);
+    CHECK_EQ(gpu_apply_idle_timer(&gpu, false), GPU_IDLE_STOCK_MS);
+    CHECK_EQ(read_int(idle), 80);
+    /* Written once per change: the stock value is a no-op the second time. */
+    CHECK_EQ(gpu_apply_idle_timer(&gpu, false), GPU_IDLE_STOCK_MS);
+    CHECK_EQ(read_int(idle), 80);
+
+    /* The Performance preset keeps the GPU at its clock between short bursts. */
+    CHECK_EQ(gpu_apply_idle_timer(&gpu, true), GPU_IDLE_PERFORMANCE_MS);
+    CHECK_EQ(read_int(idle), 10000);
+
+    /* Leaving the preset restores the stock timer. */
+    CHECK_EQ(gpu_apply_idle_timer(&gpu, false), GPU_IDLE_STOCK_MS);
+    CHECK_EQ(read_int(idle), 80);
+
+    /* A missing node is a logged no-op, not a crash. */
+    remove_rel(FAKE_KGSL_DEV "/kgsl/kgsl-3d0");
+    gpu_state_init(&gpu);
+    CHECK_EQ(gpu_apply_idle_timer(&gpu, true), -1);
+}
+
 /* --- phase 6: live GPU clock for the Power page graph (#124) ------------- */
 
 static void test_gpu_clock(void)
@@ -1846,6 +1877,7 @@ int main(void)
     test_thermal_watch();
     test_throttle();
     test_gpu();
+    test_gpu_idle_timer();
     test_gpu_clock();
     test_gpu_load();
     test_status_interval();

@@ -25,11 +25,13 @@ genfscon sysfs /class/gpio5_pwm2     u:object_r:ashfall_fan_sysfs:s0
 genfscon sysfs /devices/platform/soc/3d00000.qcom,kgsl-3d0/kgsl/kgsl-3d0/gpu_available_frequencies u:object_r:ashfall_gpu_sysfs:s0
 genfscon sysfs /devices/platform/soc/3d00000.qcom,kgsl-3d0/kgsl/kgsl-3d0/gpuclk u:object_r:ashfall_gpu_sysfs:s0
 genfscon sysfs /devices/platform/soc/3d00000.qcom,kgsl-3d0/kgsl/kgsl-3d0/gpu_busy_percentage u:object_r:ashfall_gpu_sysfs:s0
+genfscon sysfs /devices/platform/soc/3d00000.qcom,kgsl-3d0/kgsl/kgsl-3d0/idle_timer u:object_r:ashfall_gpu_sysfs:s0
 genfscon sysfs /devices/platform/soc/3d00000.qcom,kgsl-3d0/devfreq/3d00000.qcom,kgsl-3d0/max_freq u:object_r:ashfall_gpu_sysfs:s0
 genfscon sysfs /devices/platform/soc/3d00000.qcom,kgsl-3d0/devfreq/3d00000.qcom,kgsl-3d0/min_freq u:object_r:ashfall_gpu_sysfs:s0
 genfscon sysfs /devices/soc/3d00000.qcom,kgsl-3d0/kgsl/kgsl-3d0/gpu_available_frequencies u:object_r:ashfall_gpu_sysfs:s0
 genfscon sysfs /devices/soc/3d00000.qcom,kgsl-3d0/kgsl/kgsl-3d0/gpuclk u:object_r:ashfall_gpu_sysfs:s0
 genfscon sysfs /devices/soc/3d00000.qcom,kgsl-3d0/kgsl/kgsl-3d0/gpu_busy_percentage u:object_r:ashfall_gpu_sysfs:s0
+genfscon sysfs /devices/soc/3d00000.qcom,kgsl-3d0/kgsl/kgsl-3d0/idle_timer u:object_r:ashfall_gpu_sysfs:s0
 genfscon sysfs /devices/soc/3d00000.qcom,kgsl-3d0/devfreq/3d00000.qcom,kgsl-3d0/max_freq u:object_r:ashfall_gpu_sysfs:s0
 genfscon sysfs /devices/soc/3d00000.qcom,kgsl-3d0/devfreq/3d00000.qcom,kgsl-3d0/min_freq u:object_r:ashfall_gpu_sysfs:s0
 

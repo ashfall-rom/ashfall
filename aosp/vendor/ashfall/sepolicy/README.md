@@ -53,19 +53,20 @@ merged into the contexts the image build and libselinux use.  The old
   types, and the node's label is stored by userspace `restorecon` from
   `vendor_file_contexts` (which is loaded *after* `system_ext_file_contexts`),
   so a plain allow/genfscon is not enough.  `file_contexts` relabels exactly
-  `gpu_available_frequencies`, `gpuclk`, `gpu_busy_percentage`,
+  `gpu_available_frequencies`, `gpuclk`, `gpu_busy_percentage`, `idle_timer`,
   `devfreq/.../max_freq` and `devfreq/.../min_freq` with `ashfall_gpu_sysfs`,
   using **exact pathnames** (every dot escaped).  `gpuclk` (#124) and
-  `gpu_busy_percentage` (#156) are read-only telemetry for the Parts app.
+  `gpu_busy_percentage` (#156) are read-only telemetry for the Parts app;
+  `idle_timer` is written by the Performance preset (#130).
   libselinux `sort_specs()` moves exact pathnames behind
   all regex specifications, so they win over the vendor regexes regardless of
-  load order; `genfs_contexts` carries the same five paths as a fallback.
+  load order; `genfs_contexts` carries the same six paths as a fallback.
   Directory traversal needs no new rule: the stock vendor policy grants
   `search` on `vendor_sysfs_kgsl:dir` to all domains.  The daemon must open
   these **resolved** paths directly: following the `/sys/class/kgsl` symlinks
   needs `lnk_file read` on `vendor_sysfs_kgsl`, which system_ext cannot grant
   (issue #115).  Verify on the device after the system build with `ls -Z` on
-  the five files (docs/rp5/gpu.md §4.2/§7).
+  the six files (docs/rp5/gpu.md §4.2/§7).
 * **Vendor perf HAL exception (#116).**  The stock `min_freq`/`max_freq` label
   is `vendor_sysfs_kgsl`, and `vendor_hal_perf_default` (PERFD-SERVER) has
   `rw_file_perms` there.  The relabel therefore denies the vendor perf HAL in

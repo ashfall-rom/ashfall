@@ -158,7 +158,8 @@ governor change:
   fan.
 * The **governor selector offers `schedutil` / `conservative` / `powersave` /
   `performance`** (#156 §6).  `performance` holds every policy at its maximum
-  step; a per-cluster cap still applies, because the daemon never raises
+  step and also keeps the GPU at its clock for 10 s between short bursts
+  (`docs/rp5/gpu.md` §4.3, issue #130); a per-cluster cap still applies, because the daemon never raises
   `scaling_max_freq` above the cap - so "performance with a 1804 MHz silver
   cap" is a real, bounded setting.  `walt` stays hidden (no use case that does
   not break the preset model); an unknown governor read back from the property
