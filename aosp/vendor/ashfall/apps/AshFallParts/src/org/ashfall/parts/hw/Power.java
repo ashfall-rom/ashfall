@@ -244,7 +244,15 @@ public final class Power {
             return null;
         }
         final PowerPreset recorded = store.byId(presetId());
-        return recorded != null ? recorded : store.byId(PowerPresetStore.ID_BALANCED);
+        if (recorded != null) {
+            return recorded;
+        }
+        final PowerPreset balanced = store.byId(PowerPresetStore.ID_BALANCED);
+        if (balanced != null) {
+            return balanced;
+        }
+        final java.util.List<PowerPreset> all = store.all();
+        return all.isEmpty() ? null : all.get(0);
     }
 
     /** Applies a preset: the caps, the governor, the GPU cap, then its id. */

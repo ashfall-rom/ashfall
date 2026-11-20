@@ -36,6 +36,10 @@ import java.util.UUID;
  * <p>Device-protected storage mirrors the fan presets: the Power page, the
  * Quick Settings tile and the Handheld summary read them, and the tile can be
  * opened before the first unlock.
+ *
+ * <p>Storage is version 2 with a top-level {@code "seeded": true} flag: the
+ * stock defaults are inserted only once, on a fresh store.  See issue #250
+ * (finding 3).
  */
 public final class PowerPresetStore {
 
@@ -43,7 +47,8 @@ public final class PowerPresetStore {
     private static final String PREFS = "power_presets";
     private static final String KEY_PRESETS = "presets";
     private static final String KEY_VERSION = "version";
-    private static final int VERSION = 1;
+    private static final String KEY_SEEDED = "seeded";
+    private static final int VERSION = 2;
 
     public static final String ID_LOW_POWER = "builtin.low_power";
     public static final String ID_BALANCED = "builtin.balanced";
@@ -56,6 +61,7 @@ public final class PowerPresetStore {
     private final SharedPreferences mPreferences;
     private final List<PowerPreset> mPresets = new ArrayList<>();
     private final List<Runnable> mListeners = new ArrayList<>();
+    private boolean mSeeded;
 
     private PowerPresetStore(Context context) {
         mPreferences = context.getApplicationContext()
@@ -86,6 +92,9 @@ public final class PowerPresetStore {
     }
 
     public synchronized PowerPreset byId(String id) {
+        if (id == null) {
+            return null;
+        }
         for (PowerPreset preset : mPresets) {
             if (preset.id.equals(id)) {
                 return preset;
@@ -115,95 +124,118 @@ public final class PowerPresetStore {
     }
 
     public synchronized boolean rename(PowerPreset preset, String name) {
-        if (preset == null || preset.builtin || name == null || name.trim().isEmpty()) {
+        if (preset == null || preset.id == null || name == null || name.trim().isEmpty()) {
             return false;
         }
-        preset.name = name.trim();
+        final PowerPreset existing = byId(preset.id);
+        if (existing == null) {
+            return false;
+        }
+        existing.name = name.trim();
+        preset.name = existing.name;
         persist();
         return true;
     }
 
     public synchronized boolean delete(PowerPreset preset) {
-        if (preset == null || preset.builtin) {
+        if (preset == null || preset.id == null) {
             return false;
         }
-        final boolean removed = mPresets.remove(preset);
-        if (removed) {
-            persist();
-            remapActivePreset(preset.id);
+        int index = -1;
+        for (int i = 0; i < mPresets.size(); i++) {
+            if (mPresets.get(i).id.equals(preset.id)) {
+                index = i;
+                break;
+            }
         }
-        return removed;
+        if (index < 0) {
+            return false;
+        }
+        mPresets.remove(index);
+        final boolean wasActive = preset.id.equals(Power.presetId());
+        final boolean empty = mPresets.isEmpty();
+        if (empty) {
+            insertStockDefaults();
+        }
+        persist();
+        if (wasActive || empty) {
+            PowerPreset fallback = byId(ID_BALANCED);
+            if (fallback == null && !mPresets.isEmpty()) {
+                fallback = mPresets.get(0);
+            }
+            if (fallback != null) {
+                Power.apply(fallback);
+            }
+        }
+        return true;
     }
 
-    /** Saves an edited preset in place; built-in names stay fixed. */
+    /** Saves an edited preset in place. */
     public synchronized void save(PowerPreset preset) {
-        if (preset == null) {
+        if (preset == null || preset.id == null) {
             return;
         }
         preset.sanitize();
         for (int i = 0; i < mPresets.size(); i++) {
             if (mPresets.get(i).id.equals(preset.id)) {
                 final PowerPreset existing = mPresets.get(i);
-                if (existing.builtin) {
-                    preset.builtin = true;
-                    preset.name = existing.name;
-                }
+                preset.builtin = existing.builtin;
                 mPresets.set(i, preset);
                 persist();
                 return;
             }
         }
-        mPresets.add(preset);
-        persist();
+        if (mPresets.size() < MAX_PRESETS) {
+            preset.builtin = false;
+            mPresets.add(preset);
+            persist();
+        }
     }
 
     /**
      * Restores one preset to its factory values: a built-in returns to the
      * #124 table, a user preset cannot be reset (only renamed or deleted).
      * The active settings are untouched; the page applies the new values when
-     * the preset is selected (#156 §5).
+     * the preset is selected (#156 §5).  Re-creates a deleted stock id.
      */
     public synchronized boolean resetPreset(PowerPreset preset) {
-        if (preset == null) {
+        if (preset == null || preset.id == null) {
             return false;
         }
         final PowerPreset table = tablePreset(preset.id);
         if (table == null) {
             return false;
         }
-        preset.name = table.name;
-        preset.silverMhz = table.silverMhz;
-        preset.goldMhz = table.goldMhz;
-        preset.primeMhz = table.primeMhz;
-        preset.governor = table.governor;
-        preset.gpuMhz = table.gpuMhz;
-        preset.builtin = true;
+        final PowerPreset existing = byId(preset.id);
+        if (existing == null) {
+            mPresets.add(table);
+            sortPresets();
+            persist();
+            return true;
+        }
+        existing.name = table.name;
+        existing.silverMhz = table.silverMhz;
+        existing.goldMhz = table.goldMhz;
+        existing.primeMhz = table.primeMhz;
+        existing.governor = table.governor;
+        existing.gpuMhz = table.gpuMhz;
+        existing.builtin = true;
         persist();
         return true;
     }
 
     /**
-     * "Reset presets": the built-ins go back to the #124 table and every user
-     * preset is removed.  The active id is remapped when it named a user preset.
+     * "Reset presets": remove every preset, re-insert the three stock defaults,
+     * apply Balanced.
      */
     public synchronized void resetAll() {
-        final String activeId = Power.presetId();
-        resetBuiltin(ID_LOW_POWER);
-        resetBuiltin(ID_BALANCED);
-        resetBuiltin(ID_PERFORMANCE);
-        boolean activeRemoved = false;
-        for (int i = mPresets.size() - 1; i >= 0; i--) {
-            final PowerPreset preset = mPresets.get(i);
-            if (!preset.builtin) {
-                if (preset.id.equals(activeId)) {
-                    activeRemoved = true;
-                }
-                mPresets.remove(i);
-            }
-        }
+        mPresets.clear();
+        insertStockDefaults();
+        sortPresets();
         persist();
-        if (activeRemoved) {
-            Power.setPresetId(ID_BALANCED);
+        final PowerPreset balanced = byId(ID_BALANCED);
+        if (balanced != null) {
+            Power.apply(balanced);
         }
     }
 
@@ -257,13 +289,6 @@ public final class PowerPresetStore {
         }
     }
 
-    /** Re-derives the recorded id after the active preset went away. */
-    private static void remapActivePreset(String removedId) {
-        if (removedId != null && removedId.equals(Power.presetId())) {
-            Power.setPresetId(ID_BALANCED);
-        }
-    }
-
     private String uniqueName(String wanted) {
         String candidate = wanted;
         for (int suffix = 2; suffix < 1000; suffix++) {
@@ -284,34 +309,48 @@ public final class PowerPresetStore {
 
     private void load() {
         final String raw = mPreferences.getString(KEY_PRESETS, null);
+        mPresets.clear();
+        mSeeded = false;
+        boolean corrupt = false;
         if (raw != null) {
             try {
                 final JSONObject root = new JSONObject(raw);
+                final boolean hasSeeded = root.has(KEY_SEEDED);
+                mSeeded = root.optBoolean(KEY_SEEDED, false);
                 final JSONArray array = root.optJSONArray(KEY_PRESETS);
                 if (array != null) {
                     for (int i = 0; i < array.length(); i++) {
                         final PowerPreset preset = PowerPreset.fromJson(array.getJSONObject(i));
-                        if (preset.id.length() > PowerPreset.MAX_ID_LENGTH) {
+                        if (preset.id == null || preset.id.length() > PowerPreset.MAX_ID_LENGTH) {
                             continue;
                         }
                         mPresets.add(preset);
                     }
                 }
+                if (!hasSeeded) {
+                    // v1 migration
+                    mSeeded = true;
+                }
             } catch (JSONException e) {
                 Log.w(TAG, "power presets are corrupt, restoring the built-ins", e);
                 mPresets.clear();
+                corrupt = true;
+                mSeeded = false;
             }
         }
-        ensureBuiltins();
-        Collections.sort(mPresets, (a, b) -> {
-            final int ai = builtinOrder(a);
-            final int bi = builtinOrder(b);
-            if (ai != bi) {
-                return Integer.compare(ai, bi);
-            }
-            return a.name.compareToIgnoreCase(b.name);
-        });
+        if (!mSeeded) {
+            mPresets.clear();
+            insertStockDefaults();
+            mSeeded = true;
+        }
+        if (mPresets.isEmpty()) {
+            mPresets.clear();
+            insertStockDefaults();
+            mSeeded = true;
+        }
+        sortPresets();
         persist();
+        repairActive();
     }
 
     /** Built-ins are shown in a fixed order; user presets follow, by name. */
@@ -331,32 +370,51 @@ public final class PowerPresetStore {
         }
     }
 
-    /**
-     * Inserts any built-in that is missing and keeps its identity.  An existing
-     * built-in keeps the values the user gave it: only "Reset presets" restores
-     * the table.
-     */
-    private void ensureBuiltins() {
-        ensureBuiltin(lowPower());
-        ensureBuiltin(balanced());
-        ensureBuiltin(performance());
+    private void sortPresets() {
+        Collections.sort(mPresets, (a, b) -> {
+            final int ai = builtinOrder(a);
+            final int bi = builtinOrder(b);
+            if (ai != bi) {
+                return Integer.compare(ai, bi);
+            }
+            return a.name.compareToIgnoreCase(b.name);
+        });
     }
 
-    private void ensureBuiltin(PowerPreset table) {
-        final PowerPreset existing = byId(table.id);
-        if (existing == null) {
-            mPresets.add(table);
+    private void insertStockDefaults() {
+        mPresets.add(lowPower());
+        mPresets.add(balanced());
+        mPresets.add(performance());
+    }
+
+    private void repairActive() {
+        final String recorded = Power.presetId();
+        if (byId(recorded) != null) {
             return;
         }
-        existing.builtin = true;
-        existing.name = table.name;
-        existing.sanitize();
+        if (byId(ID_BALANCED) != null) {
+            return;
+        }
+        PowerPreset fallback = byId(ID_BALANCED);
+        if (fallback == null && !mPresets.isEmpty()) {
+            fallback = mPresets.get(0);
+        }
+        if (fallback == null) {
+            mPresets.clear();
+            insertStockDefaults();
+            sortPresets();
+            fallback = byId(ID_BALANCED);
+        }
+        if (fallback != null) {
+            Power.apply(fallback);
+        }
     }
 
     private void persist() {
         try {
             final JSONObject root = new JSONObject();
             root.put(KEY_VERSION, VERSION);
+            root.put(KEY_SEEDED, mSeeded);
             final JSONArray array = new JSONArray();
             for (PowerPreset preset : mPresets) {
                 array.put(preset.toJson());

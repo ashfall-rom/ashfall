@@ -175,6 +175,8 @@
     <string name="preset_reset_summary">Delete all user presets and restore the built-ins</string>
     <string name="preset_reset_confirm">Delete every user preset?</string>
     <string name="preset_delete_builtin">Built-in presets cannot be deleted</string>
+    <string name="preset_off_fixed">Off is the fan state, not an editable preset.</string>
+    <string name="preset_rename_failed">Could not rename preset</string>
     <string name="preset_name_empty">Enter a name</string>
     <string name="preset_limit">At most 32 presets</string>
 

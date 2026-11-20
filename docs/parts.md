@@ -219,7 +219,7 @@ limit).  They are stored as JSON in **device-protected storage**
 before the first unlock:
 
 ```json
-{"version":1,"presets":[
+{"version":2,"seeded":true,"presets":[
   {"id":"builtin.off",     "name":"Off",            "mode":"off",      "manual_pct":50, "curve":"45:0,...","builtin":true},
   {"id":"builtin.quiet",   "name":"Quiet",          "mode":"quiet",    ...},
   {"id":"builtin.balanced","name":"Balanced",       "mode":"balanced", ...},
@@ -230,33 +230,41 @@ before the first unlock:
 ]}
 ```
 
-* Built-ins are re-seeded on load and cannot be renamed or deleted.  The
-  **Performance** preset keeps the id `builtin.max` and the mode `max` for
+* The stock defaults are seeded **once**, on a fresh store (or corrupt/missing
+  data): a top-level `"seeded": true` flag records that.  A v1 file (no flag)
+  migrates in place, keeping its presets and setting the flag.  A v2 file with
+  the flag set inserts nothing, so a deleted built-in stays deleted; built-ins
+  can be renamed, edited, duplicated and deleted like any other preset.  The
+  `builtin` flag survives only for stable row ordering and for recognising
+  `builtin.off`.  At most 32 presets and 32-character ids still hold.
+* `builtin.off` is the one fixed entry: it is the fan-stopped state the tile and
+  the QS dialog rely on and cannot be renamed, deleted, duplicated or edited
+  (its mode stays `off`).  The editor shows only *Off is the fan state, not an
+  editable preset* for it.  Every other built-in (Quiet, Balanced, Performance,
+  Manual, Smart) is fully editable, including its mode.
+* The **Performance** preset keeps the id `builtin.max` and the mode `max` for
   compatibility; only its display name changed from "Maximum" (issue #156
-  §10), and the re-seed renames a preset stored under the old name on load.
-  Their **mode is fixed** by the contract
-  (Off/Quiet/Balanced/Performance/Manual/Smart), so the UI does not offer
-  “Change mode” for them and `PresetStore.save()` keeps
-  the re-seeded mode/name even if a future caller tries to change it.  The
-  built-in **Smart** curve is editable (it is the “Smart default” curve); the
-  built-in **Manual** keeps the last output set with the Fan page slider; every
-  other built-in has no curve to edit.
+  §10).  The built-in **Smart** curve is editable (it is the “Smart default”
+  curve); the built-in **Manual** keeps the last output set with the Fan page
+  slider; every other built-in has no curve to edit.
 * A user preset is mode + `manual_pct` *or* `curve`; ids are
   `user.` + 8 hex characters (≤ 32 characters, matching the property limit).
 * The editor offers Activate / Change mode / Curve (Smart only) / Rename /
-  Duplicate / Delete; built-ins get Activate / Curve (Smart only) /
-  Duplicate.  Duplicating a built-in creates a normal user preset whose mode is
-  editable, which is the supported way to customise a fixed mode.
+  Duplicate / Delete for every preset except Off; Off shows its mode read-only
+  with no Rename/Delete.  Duplicating a built-in creates a normal user preset
+  whose mode is editable.
 * The **active preset** is resolved in one place, `Fan.activePreset(store)`:
   use `persist.ashfall.fan.preset` when it still names a preset, otherwise map
   the daemon-visible `mode` to the matching built-in
-  (Off/Quiet/Balanced/Performance/Manual/Smart).  The Fan page, the AshFall
-  settings summary, the QS tile, the QS dialog and the curve editor all use
-  this helper, so an empty id on a fresh install (mode `smart`) shows Smart and
-  an ACTIVE tile instead of Off.
-* Deleting the active user preset, or “Reset presets”, clears/remaps
-  `persist.ashfall.fan.preset` to the built-in for the current mode
-  (`builtin.manual` for Manual), so the recorded id can never go stale.
+  (Off/Quiet/Balanced/Performance/Manual/Smart), and finally fall back to Off
+  (or the first preset) so the name always resolves for the QS tile, the QS
+  dialog and the Handheld summary.
+* Deleting the active preset applies `builtin.off` when present, otherwise the
+  first preset in list order, via `Fan.apply(...)`; deleting a non-active
+  preset leaves the active state untouched.  The fan list can never be empty
+  because Off is undeletable.
+* “Reset presets” removes every preset, re-inserts the six stock defaults and
+  applies Balanced.
 * Every curve change is saved immediately and, when the edited preset is the
   resolved active preset **and the current mode is Smart**, written to
   `persist.ashfall.fan.curve` **and** to `ashfall.ui.fan_preview_curve`, which

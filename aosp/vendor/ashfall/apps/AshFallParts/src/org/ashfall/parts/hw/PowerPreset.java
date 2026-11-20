@@ -85,11 +85,14 @@ public final class PowerPreset {
     public String displayName(Context context) {
         switch (id) {
             case PowerPresetStore.ID_LOW_POWER:
-                return context.getString(R.string.power_preset_low);
+                return "Low power".equals(name)
+                        ? context.getString(R.string.power_preset_low) : name;
             case PowerPresetStore.ID_BALANCED:
-                return context.getString(R.string.power_preset_balanced);
+                return "Balanced".equals(name)
+                        ? context.getString(R.string.power_preset_balanced) : name;
             case PowerPresetStore.ID_PERFORMANCE:
-                return context.getString(R.string.power_preset_performance);
+                return "Performance".equals(name)
+                        ? context.getString(R.string.power_preset_performance) : name;
             default:
                 return name;
         }

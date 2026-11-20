@@ -103,7 +103,7 @@ governor change:
   the first unlock:
 
 ```json
-{"version":1,"presets":[
+{"version":2,"seeded":true,"presets":[
   {"id":"builtin.low_power","name":"Low power","silver_mhz":1171,"gold_mhz":1478,
    "prime_mhz":1632,"governor":"conservative","gpu_mhz":305,"builtin":true},
   {"id":"builtin.balanced","name":"Balanced","silver_mhz":1804,"gold_mhz":2419,
@@ -123,11 +123,19 @@ governor change:
   * **Apply this preset** writes the caps, the governor, the GPU cap and the
     preset id;
   * **Duplicate** creates an editable copy (`user.` + 8 hex characters);
-  * **Rename** and **Delete** for user presets;
-  * **Reset to factory values** for a built-in.
-* Editing a built-in is allowed and persists; only "Reset presets"/"Reset to
-  factory values" restores the table.  A built-in keeps its id and name and
-  cannot be renamed or deleted.
+  * **Rename** and **Delete** for every preset;
+  * **Reset to factory values** for a built-in (restores the #124 table values,
+    and re-creates the stock id if it was deleted).
+* The stock defaults are seeded once, on a fresh store (or corrupt/missing
+  data), recorded by a top-level `"seeded": true` flag.  A v1 file migrates in
+  place, keeping its presets.  A v2 file with the flag set inserts nothing, so a
+  deleted built-in stays deleted.  The `builtin` flag survives only for stable
+  row ordering.  At most 32 presets and 32-character ids still hold.
+* Every preset is user data: built-ins are fully editable, renamable,
+  duplicable and deletable, just like user presets.  "Reset to factory values"
+  restores one built-in to the #124 table (and re-creates a deleted stock id);
+  "Reset presets" removes everything, re-inserts the three stock defaults and
+  applies Balanced.
 * An edit is saved immediately.  When the edited preset is the **active** one it
   is also written to the properties, so the daemon follows at once; editing an
   inactive preset only changes the stored preset and takes effect when it is
@@ -151,8 +159,12 @@ governor change:
 * The active id lives in `persist.ashfall.power.preset`; the page, the editor,
   the tile, its dialog and the Handheld summary all resolve it through
   `Power.activePreset()`, which falls back to the built-in Balanced preset when
-  the recorded id is empty or stale.  Deleting the active user preset and
-  "Reset presets" remap the property, so it can never dangle.
+  present, otherwise to the first preset, so the name always resolves.  Deleting
+  the active preset applies `builtin.balanced` when present, otherwise the
+  first preset, via `Power.apply(...)`; deleting a non-active preset leaves the
+  active state untouched.  The store can never be empty: deleting the last
+  preset re-creates the stock Balanced preset and applies it.  "Reset presets"
+  remaps the property, so it can never dangle.
 * "Reset to stock" writes `0` to the three caps - the contract's own "stock
   maximum" (`docs/phase6.md` §9.3) - plus `schedutil`, 670 MHz and the override
   released, restores the built-in Balanced preset to its table values and

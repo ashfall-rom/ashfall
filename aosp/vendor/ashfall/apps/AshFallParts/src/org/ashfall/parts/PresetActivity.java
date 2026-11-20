@@ -149,25 +149,24 @@ public class PresetActivity extends PartsActivity {
         }
 
         private void showActions(Preset preset) {
-            final boolean builtin = preset.builtin;
+            if (preset.id.equals(PresetStore.ID_OFF)) {
+                new AlertDialog.Builder(requireContext())
+                        .setTitle(Ui.presetName(requireContext(), preset))
+                        .setMessage(R.string.preset_off_fixed)
+                        .setPositiveButton(android.R.string.ok, null)
+                        .show();
+                return;
+            }
             final boolean smart = Preset.MODE_SMART.equals(preset.mode);
             final java.util.List<String> actions = new java.util.ArrayList<>();
             actions.add(getString(R.string.activate));
-            // Built-in presets have a fixed mode (docs/phase5.md §3); only a
-            // user preset can be changed between fixed %, manual and Smart.
-            if (!builtin) {
-                actions.add(getString(R.string.preset_change_mode));
-            }
+            actions.add(getString(R.string.preset_change_mode));
             if (smart) {
                 actions.add(getString(R.string.fan_curve_title));
             }
-            if (!builtin) {
-                actions.add(getString(R.string.rename));
-            }
+            actions.add(getString(R.string.rename));
             actions.add(getString(R.string.duplicate));
-            if (!builtin) {
-                actions.add(getString(R.string.delete));
-            }
+            actions.add(getString(R.string.delete));
 
             new AlertDialog.Builder(requireContext())
                     .setTitle(Ui.presetName(requireContext(), preset))
@@ -245,7 +244,7 @@ public class PresetActivity extends PartsActivity {
                             return;
                         }
                         if (!mStore.rename(preset, name)) {
-                            input.setError(getString(R.string.preset_delete_builtin));
+                            input.setError(getString(R.string.preset_rename_failed));
                             return;
                         }
                         dialog.dismiss();

@@ -301,6 +301,9 @@ public class FanFragment extends PreferenceFragmentCompat {
             if (last == null || last.isOff()) {
                 last = mStore.byId(PresetStore.ID_SMART);
             }
+            if (last == null && !mStore.all().isEmpty()) {
+                last = mStore.all().get(0);
+            }
             activate(last);
         } else {
             Fan.setMode(Preset.MODE_OFF);
@@ -324,7 +327,16 @@ public class FanFragment extends PreferenceFragmentCompat {
         if (active != null && active.isCurveEditable()) {
             return active;
         }
-        return mStore.byId(PresetStore.ID_SMART);
+        final Preset smart = mStore.byId(PresetStore.ID_SMART);
+        if (smart != null) {
+            return smart;
+        }
+        for (Preset preset : mStore.all()) {
+            if (preset.isCurveEditable()) {
+                return preset;
+            }
+        }
+        return mStore.all().isEmpty() ? null : mStore.all().get(0);
     }
 
     private void rebuildPresets() {
