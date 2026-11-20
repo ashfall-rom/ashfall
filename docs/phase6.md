@@ -271,8 +271,10 @@ Wave 1, parallel and device-free:
 
 Wave 2, gated:
 
-- **#140** charging separation: after the `Settings > Battery` page from #137
-  exists. Second patch in the same series, never a concurrent edit.
+- **#140** charging separation: **not planned** and removed. This kernel only
+  exposes a "stop charging" switch that also suspends the charger input, so the
+  device drains on battery; there is no bypass/power-path node to hold the
+  level. The Settings page, the daemon backend and the SELinux labels are gone.
 - **#131** external-display pointer: after the RP5 is free and runs an AshFall
   build. The pointer uinput device extends `ashfall-rp5-input` only after the
   #138 daemon PR has merged; on-screen desktop windowing is not planned.
@@ -345,10 +347,10 @@ daemon workers cannot drift):
 
 `packages/apps/Settings` is a new ownership boundary for this project.
 
-- `0001-playtime-battery-page.patch` (#137) and
-  `0002-charging-control.patch` (#140) are **sequential**: #140 rebases on
-  #137's patch, never the other way round, and the two never edit
-  `power_usage_summary.xml` or `strings.xml` concurrently.
+- `0001-playtime-battery-page.patch` (#137) is the only patch in this
+  boundary. The charging-control patch (#140) was removed: the feature is not
+  planned (see §9.1), so nothing else may touch
+  `power_usage_summary.xml` or `strings.xml`.
 - Baseline for #137 at contract time: `packages/apps/Settings` @ `31b1a9f`
   (lineage-24.0 manifest revision, no AshFall patch yet).
 - The SystemUI patch is `patches/frameworks/base/0005-*.patch`, based on
