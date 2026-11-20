@@ -22,7 +22,7 @@ while [ $# -gt 0 ]; do
 done
 
 if [ -z "$NDK" ]; then
-    for d in "${ANDROID_HOME:-/root/android-sdk}"/ndk/*; do
+    for d in "${ANDROID_SDK_ROOT:-${ANDROID_HOME:-/root/android-sdk}}"/ndk/*; do
         [ -d "$d" ] && NDK="$d"
     done
 fi

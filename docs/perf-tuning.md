@@ -9,9 +9,9 @@ what was rejected, so a rejected idea is not re-proposed without new evidence.
 ## 1. Method
 
 * **Device:** RP5 `2f184581`, 8 GB, build `20261120-200437` (`cad575fa8be0`) for
-  the control/tuned pair and build `20261120-213629` (`b0fc815703b0`) for the
-  root-only candidates (a temporary daemon probe, §5).  The kept idle-timer
-  change was re-checked on its own build before this page was merged.
+  the control/tuned pair, build `20261120-213629` (`b0fc815703b0`) for the
+  root-only candidates (a temporary daemon probe, §5), and build
+  `20261120-223431` (`3b53d38`) for the kept idle-timer change.
 * **Thermal state:** each run starts below 36 °C (`gpuss-0`).  The fan is
   forced to 100 % except where a test says otherwise.  The screen stays on.
 * **Workload:** [`scripts/bench/ashfall-bench.c`](../scripts/bench/ashfall-bench.c),
@@ -115,8 +115,8 @@ Six minutes of mixed load (GPU pass, CPU pass, repeat) at 1000 MHz.
 The scheduler PELT multiplier, MGLRU and the KGSL idle timer live in root-only
 nodes (`ro.debuggable=0`, no `su`).  They were A/B'd through a temporary
 `ashfall-hwd` probe that applied `debug.ashfall.perf.*` properties
-(branch `perf/130-probe`, build `20261120-213629`); the probe is **not** part of
-the shipped daemon except for the idle-timer change in §5.3.
+(build `20261120-213629`); the probe is **not** part of the shipped daemon -
+only the idle-timer rule in §5.3 is.
 
 All candidates were measured at the tuned configuration; the same-build
 baseline is `probe-base` (two runs).
