@@ -168,7 +168,7 @@
     <string name="preset_change_mode">Change mode</string>
     <string name="fan_preset_none_custom">Custom</string>
     <string name="preset_delete_confirm">Delete “%1$s”?</string>
-    <string name="preset_delete_confirm_body">Removed from this device. The current fan settings stay.</string>
+    <string name="preset_delete_confirm_body">Removed from this device. If it was active, the fallback preset is applied.</string>
     <string name="preset_rename_title">Preset name</string>
     <string name="preset_new_name">New preset</string>
     <string name="preset_reset_title">Reset presets</string>
@@ -364,9 +364,9 @@
     <string name="power_reset_done">Reset to stock</string>
     <string name="power_rename_title">Preset name</string>
     <string name="power_delete_confirm">Delete “%1$s”?</string>
-    <string name="power_delete_body">Removed from this device. The active settings stay.</string>
+    <string name="power_delete_body">Removed from this device. If it was active, the fallback preset is applied.</string>
     <string name="power_reset_presets_confirm">Reset every preset?</string>
-    <string name="power_reset_presets_body">Built-in presets are restored and user presets removed. The active settings stay.</string>
+    <string name="power_reset_presets_body">Every preset is replaced by the stock set and Balanced is applied.</string>
     <string name="power_preset_limit">At most 32 presets</string>
     <string name="power_name_empty">Enter a name</string>
 
