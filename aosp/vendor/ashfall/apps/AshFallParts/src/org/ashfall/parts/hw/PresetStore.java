@@ -248,7 +248,6 @@ public final class PresetStore {
         final String raw = mPreferences.getString(KEY_PRESETS, null);
         mPresets.clear();
         mSeeded = false;
-        boolean corrupt = false;
         if (raw != null) {
             try {
                 final JSONObject root = new JSONObject(raw);
@@ -271,7 +270,6 @@ public final class PresetStore {
             } catch (JSONException e) {
                 Log.w(TAG, "presets are corrupt, restoring the built-ins", e);
                 mPresets.clear();
-                corrupt = true;
                 mSeeded = false;
             }
         }
@@ -344,7 +342,11 @@ public final class PresetStore {
             return;
         }
         final String builtinId = Fan.builtinPresetId(Fan.mode());
-        if (builtinId != null && byId(builtinId) != null) {
+        final Preset builtin = builtinId == null ? null : byId(builtinId);
+        if (builtin != null) {
+            // The mode still has its stock preset: repair the dangling id and
+            // make the preset's values the ones the daemon is running.
+            Fan.apply(builtin);
             return;
         }
         Preset fallback = byId(ID_OFF);

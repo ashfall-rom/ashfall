@@ -150,11 +150,11 @@ public class PresetActivity extends PartsActivity {
 
         private void showActions(Preset preset) {
             if (preset.id.equals(PresetStore.ID_OFF)) {
-                new AlertDialog.Builder(requireContext())
-                        .setTitle(Ui.presetName(requireContext(), preset))
-                        .setMessage(R.string.preset_off_fixed)
-                        .setPositiveButton(android.R.string.ok, null)
-                        .show();
+                // Off is the fan state, not an editable preset: a tap on it
+                // turns the fan off, exactly like the Fan page's preset row.
+                Fan.apply(preset);
+                Prefs.setLastPreset(requireContext(), preset.id);
+                rebuild();
                 return;
             }
             final boolean smart = Preset.MODE_SMART.equals(preset.mode);

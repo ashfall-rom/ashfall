@@ -301,8 +301,21 @@ public class FanFragment extends PreferenceFragmentCompat {
             if (last == null || last.isOff()) {
                 last = mStore.byId(PresetStore.ID_SMART);
             }
-            if (last == null && !mStore.all().isEmpty()) {
-                last = mStore.all().get(0);
+            if (last == null) {
+                // Smart was deleted: use the first preset that actually runs
+                // the fan, never Off (activating Off would leave the switch on
+                // and the fan stopped).
+                for (Preset preset : mStore.all()) {
+                    if (!preset.isOff()) {
+                        last = preset;
+                        break;
+                    }
+                }
+            }
+            if (last == null) {
+                // Only Off is left; turning the fan on needs a running preset.
+                last = mStore.add(mStore.newPresetName(requireContext()),
+                        Preset.MODE_BALANCED, 0, Curve.DEFAULT);
             }
             activate(last);
         } else {

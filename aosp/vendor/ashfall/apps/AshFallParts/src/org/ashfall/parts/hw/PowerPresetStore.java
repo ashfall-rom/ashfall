@@ -311,7 +311,6 @@ public final class PowerPresetStore {
         final String raw = mPreferences.getString(KEY_PRESETS, null);
         mPresets.clear();
         mSeeded = false;
-        boolean corrupt = false;
         if (raw != null) {
             try {
                 final JSONObject root = new JSONObject(raw);
@@ -334,7 +333,6 @@ public final class PowerPresetStore {
             } catch (JSONException e) {
                 Log.w(TAG, "power presets are corrupt, restoring the built-ins", e);
                 mPresets.clear();
-                corrupt = true;
                 mSeeded = false;
             }
         }
@@ -392,9 +390,6 @@ public final class PowerPresetStore {
         if (byId(recorded) != null) {
             return;
         }
-        if (byId(ID_BALANCED) != null) {
-            return;
-        }
         PowerPreset fallback = byId(ID_BALANCED);
         if (fallback == null && !mPresets.isEmpty()) {
             fallback = mPresets.get(0);
@@ -406,6 +401,8 @@ public final class PowerPresetStore {
             fallback = byId(ID_BALANCED);
         }
         if (fallback != null) {
+            // Never leave the recorded id dangling: selecting the fallback also
+            // makes the live caps match the preset the UI is about to show.
             Power.apply(fallback);
         }
     }
