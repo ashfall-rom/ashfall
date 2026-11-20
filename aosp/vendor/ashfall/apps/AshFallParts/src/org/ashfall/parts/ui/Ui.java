@@ -31,6 +31,7 @@ import org.ashfall.parts.R;
 import org.ashfall.parts.hw.Curve;
 import org.ashfall.parts.hw.Led;
 import org.ashfall.parts.hw.Preset;
+import org.ashfall.parts.hw.PresetStore;
 
 import java.util.Locale;
 
@@ -80,18 +81,23 @@ public final class Ui {
             return context.getString(R.string.fan_preset_none);
         }
         switch (preset.id) {
-            case "builtin.off":
+            case PresetStore.ID_OFF:
                 return context.getString(R.string.fan_off_preset);
-            case "builtin.quiet":
-                return context.getString(R.string.fan_quiet_preset);
-            case "builtin.balanced":
-                return context.getString(R.string.fan_balanced_preset);
-            case "builtin.max":
-                return context.getString(R.string.fan_max_preset);
-            case "builtin.manual":
-                return context.getString(R.string.fan_manual_preset);
-            case "builtin.smart":
-                return context.getString(R.string.fan_smart_preset);
+            case PresetStore.ID_QUIET:
+                return "Quiet".equals(preset.name)
+                        ? context.getString(R.string.fan_quiet_preset) : preset.name;
+            case PresetStore.ID_BALANCED:
+                return "Balanced".equals(preset.name)
+                        ? context.getString(R.string.fan_balanced_preset) : preset.name;
+            case PresetStore.ID_MAX:
+                return "Performance".equals(preset.name)
+                        ? context.getString(R.string.fan_max_preset) : preset.name;
+            case PresetStore.ID_MANUAL:
+                return "Manual".equals(preset.name)
+                        ? context.getString(R.string.fan_manual_preset) : preset.name;
+            case PresetStore.ID_SMART:
+                return "Smart (default)".equals(preset.name)
+                        ? context.getString(R.string.fan_smart_preset) : preset.name;
             default:
                 return preset.name;
         }

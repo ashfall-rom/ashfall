@@ -237,7 +237,16 @@ public final class Fan {
             return recorded;
         }
         final String builtin = builtinPresetId(mode());
-        return builtin == null ? null : store.byId(builtin);
+        final Preset builtinPreset = builtin == null ? null : store.byId(builtin);
+        if (builtinPreset != null) {
+            return builtinPreset;
+        }
+        final Preset off = store.byId(PresetStore.ID_OFF);
+        if (off != null) {
+            return off;
+        }
+        final java.util.List<Preset> all = store.all();
+        return all.isEmpty() ? null : all.get(0);
     }
 
     public static boolean isOn() {

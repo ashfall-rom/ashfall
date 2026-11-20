@@ -36,6 +36,11 @@ import java.util.UUID;
  * <p>The device-protected storage is deliberate: the presets describe boot
  * defaults and are needed before the user unlocks the device (the fan page and
  * the Quick Settings tile read them).  See {@code docs/phase5.md} §3.
+ *
+ * <p>Storage is version 2: a top-level {@code "seeded": true} flag records
+ * that the stock defaults have been inserted once.  After that the store never
+ * re-inserts a deleted built-in; every preset is user data from then on.  See
+ * issue #250 (finding 3).
  */
 public final class PresetStore {
 
@@ -43,7 +48,8 @@ public final class PresetStore {
     private static final String PREFS = "fan_presets";
     private static final String KEY_PRESETS = "presets";
     private static final String KEY_VERSION = "version";
-    private static final int VERSION = 1;
+    private static final String KEY_SEEDED = "seeded";
+    private static final int VERSION = 2;
 
     public static final String ID_OFF = "builtin.off";
     public static final String ID_QUIET = "builtin.quiet";
@@ -64,6 +70,7 @@ public final class PresetStore {
     private final SharedPreferences mPreferences;
     private final List<Preset> mPresets = new ArrayList<>();
     private final List<Runnable> mListeners = new ArrayList<>();
+    private boolean mSeeded;
 
     private PresetStore(Context context) {
         mPreferences = context.getApplicationContext()
@@ -94,6 +101,9 @@ public final class PresetStore {
     }
 
     public synchronized Preset byId(String id) {
+        if (id == null) {
+            return null;
+        }
         for (Preset preset : mPresets) {
             if (preset.id.equals(id)) {
                 return preset;
@@ -115,16 +125,23 @@ public final class PresetStore {
     }
 
     public synchronized boolean rename(Preset preset, String name) {
-        if (preset == null || preset.builtin || name == null || name.trim().isEmpty()) {
+        if (preset == null || preset.id == null || preset.id.equals(ID_OFF)
+                || name == null || name.trim().isEmpty()) {
             return false;
         }
-        preset.name = name.trim();
+        final Preset existing = byId(preset.id);
+        if (existing == null) {
+            return false;
+        }
+        existing.name = name.trim();
+        preset.name = existing.name;
         persist();
         return true;
     }
 
     public synchronized Preset duplicate(Preset preset) {
-        if (preset == null || mPresets.size() >= MAX_PRESETS) {
+        if (preset == null || preset.id == null || preset.id.equals(ID_OFF)
+                || mPresets.size() >= MAX_PRESETS) {
             return null;
         }
         final Preset copy = preset.copy(newUserId(), preset.name + " copy");
@@ -134,63 +151,115 @@ public final class PresetStore {
     }
 
     public synchronized boolean delete(Preset preset) {
-        if (preset == null || preset.builtin) {
+        if (preset == null || preset.id == null || preset.id.equals(ID_OFF)) {
             return false;
         }
-        final boolean removed = mPresets.remove(preset);
-        if (removed) {
-            persist();
-            remapActivePreset(preset.id);
+        int index = -1;
+        for (int i = 0; i < mPresets.size(); i++) {
+            if (mPresets.get(i).id.equals(preset.id)) {
+                index = i;
+                break;
+            }
         }
-        return removed;
+        if (index < 0) {
+            return false;
+        }
+        mPresets.remove(index);
+        final boolean wasActive = preset.id.equals(Fan.presetId());
+        persist();
+        if (wasActive) {
+            Preset fallback = byId(ID_OFF);
+            if (fallback == null && !mPresets.isEmpty()) {
+                fallback = mPresets.get(0);
+            }
+            if (fallback != null) {
+                Fan.apply(fallback);
+            }
+        }
+        return true;
     }
 
     /** Saves an edited preset in place (mode, manual percentage, curve). */
     public synchronized void save(Preset preset) {
-        if (preset == null) {
+        if (preset == null || preset.id == null) {
             return;
+        }
+        if (preset.id.equals(ID_OFF)) {
+            // Off is the fan state, not an editable preset.
+            return;
+        }
+        preset.mode = Preset.sanitizeMode(preset.mode);
+        preset.manualPct = clamp(preset.manualPct, 0, 100);
+        if (Curve.tryParse(preset.curve) == null) {
+            preset.curve = Curve.DEFAULT;
+        } else {
+            preset.curve = Curve.parse(preset.curve).format();
         }
         for (int i = 0; i < mPresets.size(); i++) {
             if (mPresets.get(i).id.equals(preset.id)) {
                 final Preset existing = mPresets.get(i);
-                if (existing.builtin) {
-                    // Built-in modes are fixed by the contract; only their
-                    // Smart curve is user-editable.
-                    preset.builtin = true;
-                    preset.name = existing.name;
-                    preset.mode = existing.mode;
-                }
+                preset.builtin = existing.builtin;
                 mPresets.set(i, preset);
                 persist();
                 return;
             }
         }
-        mPresets.add(preset);
-        persist();
+        if (mPresets.size() < MAX_PRESETS) {
+            preset.builtin = false;
+            mPresets.add(preset);
+            persist();
+        }
     }
 
+    /**
+     * Restores one stock preset to the values it shipped with, like
+     * {@link PowerPresetStore#resetPreset}.  The id is kept, so the active
+     * preset stays active.  A deleted stock id is re-created; user presets are
+     * left alone and return {@code false}.  {@code builtin.off} is the fan-off
+     * state, not a preset, so it is not restored here and can never come back
+     * this way.
+     */
+    public synchronized boolean resetPreset(Preset preset) {
+        if (preset == null || preset.id == null) {
+            return false;
+        }
+        final Preset stock = stockPreset(preset.id);
+        if (stock == null) {
+            return false;
+        }
+        final Preset existing = byId(preset.id);
+        if (existing == null) {
+            mPresets.add(stock);
+            sortPresets();
+            persist();
+            return true;
+        }
+        existing.name = stock.name;
+        existing.mode = stock.mode;
+        existing.manualPct = stock.manualPct;
+        existing.curve = stock.curve;
+        existing.builtin = true;
+        persist();
+        return true;
+    }
+
+    /** The five stock ids that {@link #resetPreset} can restore. */
+    public static boolean isStockId(String id) {
+        return stockPreset(id) != null;
+    }
+
+    /**
+     * Full reset: remove every preset, re-insert the six stock defaults, apply
+     * Balanced.
+     */
     public synchronized void resetUserPresets() {
-        final String activeId = Fan.presetId();
-        boolean activeRemoved = false;
-        for (int i = mPresets.size() - 1; i >= 0; i--) {
-            final Preset preset = mPresets.get(i);
-            if (!preset.builtin) {
-                if (preset.id.equals(activeId)) {
-                    activeRemoved = true;
-                }
-                mPresets.remove(i);
-            }
-        }
+        mPresets.clear();
+        insertStockDefaults();
+        sortPresets();
         persist();
-        if (activeRemoved) {
-            Fan.setPresetId(Fan.builtinPresetId(Fan.mode()));
-        }
-    }
-
-    /** Re-derives the recorded id from the mode after the active preset went away. */
-    private static void remapActivePreset(String removedId) {
-        if (removedId != null && removedId.equals(Fan.presetId())) {
-            Fan.setPresetId(Fan.builtinPresetId(Fan.mode()));
+        final Preset balanced = byId(ID_BALANCED);
+        if (balanced != null) {
+            Fan.apply(balanced);
         }
     }
 
@@ -214,34 +283,46 @@ public final class PresetStore {
 
     private void load() {
         final String raw = mPreferences.getString(KEY_PRESETS, null);
+        mPresets.clear();
+        mSeeded = false;
         if (raw != null) {
             try {
                 final JSONObject root = new JSONObject(raw);
+                final boolean hasSeeded = root.has(KEY_SEEDED);
+                mSeeded = root.optBoolean(KEY_SEEDED, false);
                 final JSONArray array = root.optJSONArray(KEY_PRESETS);
                 if (array != null) {
                     for (int i = 0; i < array.length(); i++) {
                         final Preset preset = Preset.fromJson(array.getJSONObject(i));
-                        if (preset.id.length() > Preset.MAX_ID_LENGTH) {
+                        if (preset.id == null || preset.id.length() > Preset.MAX_ID_LENGTH) {
                             continue;
                         }
                         mPresets.add(preset);
                     }
                 }
+                if (!hasSeeded) {
+                    // v1 (or older) migration: keep presets, mark seeded.
+                    mSeeded = true;
+                }
             } catch (JSONException e) {
                 Log.w(TAG, "presets are corrupt, restoring the built-ins", e);
                 mPresets.clear();
+                mSeeded = false;
             }
         }
-        ensureBuiltins();
-        Collections.sort(mPresets, (a, b) -> {
-            final int ai = builtinOrder(a);
-            final int bi = builtinOrder(b);
-            if (ai != bi) {
-                return Integer.compare(ai, bi);
-            }
-            return a.name.compareToIgnoreCase(b.name);
-        });
+        if (!mSeeded) {
+            mPresets.clear();
+            insertStockDefaults();
+            mSeeded = true;
+        }
+        if (mPresets.isEmpty()) {
+            mPresets.clear();
+            insertStockDefaults();
+            mSeeded = true;
+        }
+        sortPresets();
         persist();
+        repairActive();
     }
 
     /** Built-ins are shown in a fixed order; user presets follow, by name. */
@@ -267,54 +348,85 @@ public final class PresetStore {
         }
     }
 
-    /** Inserts any built-in preset that is missing and keeps their identity. */
-    private void ensureBuiltins() {
-        ensureBuiltin(ID_OFF, "Off", Preset.MODE_OFF);
-        ensureBuiltin(ID_QUIET, "Quiet", Preset.MODE_QUIET);
-        ensureBuiltin(ID_BALANCED, "Balanced", Preset.MODE_BALANCED);
-        // This also migrates the stored name: ensureBuiltin() rewrites the
-        // name of a preset that was persisted as "Maximum" on every load, so
-        // an existing builtin.max shows Performance without a version bump.
-        ensureBuiltin(ID_MAX, "Performance", Preset.MODE_MAX);
-        Preset manual = byId(ID_MANUAL);
-        if (manual == null) {
-            manual = Preset.builtin(ID_MANUAL, "Manual", Preset.MODE_MANUAL);
-            manual.manualPct = Fan.DEFAULT_MANUAL_PCT;
-            mPresets.add(manual);
+    private void sortPresets() {
+        Collections.sort(mPresets, (a, b) -> {
+            final int ai = builtinOrder(a);
+            final int bi = builtinOrder(b);
+            if (ai != bi) {
+                return Integer.compare(ai, bi);
+            }
+            return a.name.compareToIgnoreCase(b.name);
+        });
+    }
+
+    private void insertStockDefaults() {
+        mPresets.add(Preset.builtin(ID_OFF, "Off", Preset.MODE_OFF));
+        mPresets.add(stockPreset(ID_QUIET));
+        mPresets.add(stockPreset(ID_BALANCED));
+        mPresets.add(stockPreset(ID_MAX));
+        mPresets.add(stockPreset(ID_MANUAL));
+        mPresets.add(stockPreset(ID_SMART));
+    }
+
+    /**
+     * The factory values of one stock preset id, or {@code null} for
+     * {@link #ID_OFF} and for user ids.  This is the single source for both the
+     * first seed and "Reset to factory values".
+     */
+    private static Preset stockPreset(String id) {
+        if (id == null) {
+            return null;
         }
-        manual.builtin = true;
-        manual.mode = Preset.MODE_MANUAL;
-        manual.name = "Manual";
-        manual.manualPct = clamp(manual.manualPct, 0, 100);
-        Preset smart = byId(ID_SMART);
-        if (smart == null) {
-            smart = Preset.builtin(ID_SMART, "Smart (default)", Preset.MODE_SMART);
-            smart.curve = Curve.DEFAULT;
-            mPresets.add(smart);
-        }
-        smart.builtin = true;
-        smart.mode = Preset.MODE_SMART;
-        smart.name = "Smart (default)";
-        if (Curve.tryParse(smart.curve) == null) {
-            smart.curve = Curve.DEFAULT;
+        switch (id) {
+            case ID_QUIET:
+                return Preset.builtin(ID_QUIET, "Quiet", Preset.MODE_QUIET);
+            case ID_BALANCED:
+                return Preset.builtin(ID_BALANCED, "Balanced", Preset.MODE_BALANCED);
+            case ID_MAX:
+                return Preset.builtin(ID_MAX, "Performance", Preset.MODE_MAX);
+            case ID_MANUAL: {
+                final Preset manual = Preset.builtin(ID_MANUAL, "Manual", Preset.MODE_MANUAL);
+                manual.manualPct = Fan.DEFAULT_MANUAL_PCT;
+                return manual;
+            }
+            case ID_SMART: {
+                final Preset smart =
+                        Preset.builtin(ID_SMART, "Smart (default)", Preset.MODE_SMART);
+                smart.curve = Curve.DEFAULT;
+                return smart;
+            }
+            default:
+                return null;
         }
     }
 
-    private void ensureBuiltin(String id, String name, String mode) {
-        Preset preset = byId(id);
-        if (preset == null) {
-            preset = Preset.builtin(id, name, mode);
-            mPresets.add(preset);
+    private void repairActive() {
+        final String recorded = Fan.presetId();
+        if (byId(recorded) != null) {
+            return;
         }
-        preset.builtin = true;
-        preset.name = name;
-        preset.mode = mode;
+        final String builtinId = Fan.builtinPresetId(Fan.mode());
+        final Preset builtin = builtinId == null ? null : byId(builtinId);
+        if (builtin != null) {
+            // The mode still has its stock preset: repair the dangling id and
+            // make the preset's values the ones the daemon is running.
+            Fan.apply(builtin);
+            return;
+        }
+        Preset fallback = byId(ID_OFF);
+        if (fallback == null && !mPresets.isEmpty()) {
+            fallback = mPresets.get(0);
+        }
+        if (fallback != null) {
+            Fan.apply(fallback);
+        }
     }
 
     private void persist() {
         try {
             final JSONObject root = new JSONObject();
             root.put(KEY_VERSION, VERSION);
+            root.put(KEY_SEEDED, mSeeded);
             final JSONArray array = new JSONArray();
             for (Preset preset : mPresets) {
                 array.put(preset.toJson());

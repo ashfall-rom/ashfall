@@ -317,27 +317,27 @@ public class PowerPresetActivity extends PartsActivity {
                     return true;
                 });
                 category.addPreference(reset);
-            } else {
-                final Preference rename = new Preference(requireContext());
-                rename.setKey("power_editor_rename");
-                rename.setTitle(R.string.rename);
-                rename.setSummary(mPreset.name);
-                rename.setOnPreferenceClickListener(preference -> {
-                    showRenameDialog();
-                    return true;
-                });
-                category.addPreference(rename);
-
-                final Preference delete = new Preference(requireContext());
-                delete.setKey("power_editor_delete");
-                delete.setTitle(R.string.delete);
-                delete.setSummary(R.string.power_editor_delete_summary);
-                delete.setOnPreferenceClickListener(preference -> {
-                    confirmDelete();
-                    return true;
-                });
-                category.addPreference(delete);
             }
+
+            final Preference rename = new Preference(requireContext());
+            rename.setKey("power_editor_rename");
+            rename.setTitle(R.string.rename);
+            rename.setSummary(mPreset.name);
+            rename.setOnPreferenceClickListener(preference -> {
+                showRenameDialog();
+                return true;
+            });
+            category.addPreference(rename);
+
+            final Preference delete = new Preference(requireContext());
+            delete.setKey("power_editor_delete");
+            delete.setTitle(R.string.delete);
+            delete.setSummary(R.string.power_editor_delete_summary);
+            delete.setOnPreferenceClickListener(preference -> {
+                confirmDelete();
+                return true;
+            });
+            category.addPreference(delete);
         }
 
         private void addCpuCategory(PreferenceScreen screen) {
@@ -599,7 +599,7 @@ public class PowerPresetActivity extends PartsActivity {
         }
 
         private void showRenameDialog() {
-            if (!isAdded() || mPreset.builtin) {
+            if (!isAdded()) {
                 return;
             }
             final EditText input = new EditText(requireContext());
@@ -632,7 +632,7 @@ public class PowerPresetActivity extends PartsActivity {
         }
 
         private void confirmDelete() {
-            if (!isAdded() || mPreset.builtin) {
+            if (!isAdded()) {
                 return;
             }
             new AlertDialog.Builder(requireContext())
