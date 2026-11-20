@@ -17,4 +17,15 @@
 <resources>
     <!-- Third (MHz) axis of the Power graph (#250.4). -->
     <string name="power_axis_mhz">%1$d MHz</string>
+
+    <!-- Clock legend (#264): one segment per clock line, each drawn as
+         "bullet name value" in that line's own colour, so the names map
+         straight onto the plotted series.  The unit stays on the last
+         segment, as before. -->
+    <string name="power_legend_clock_bullet">●</string>
+    <string name="power_legend_clock_gap">"  "</string>
+    <string name="power_legend_clock_silver">silver %1$s</string>
+    <string name="power_legend_clock_gold">gold %1$s</string>
+    <string name="power_legend_clock_prime">prime %1$s</string>
+    <string name="power_legend_clock_gpu">GPU %1$s MHz</string>
 </resources>

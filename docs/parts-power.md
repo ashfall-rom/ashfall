@@ -67,7 +67,7 @@ The Fan page keeps its default chart, its 120 × 500 ms window and its API
 | Third axis | **CPU/GPU clocks** 0..3000 MHz, shared axis, labels at 0/1000/2000/3000 MHz (`%d MHz`); no extra grid lines (the left-axis grid stays the only grid) |
 | CPU load | `ashfall.status.perf.cpu_load_pct`: `/proc/stat` idle delta over the total delta, sampled by `ashfall-hwd` |
 | GPU load | `ashfall.status.perf.gpu_load_pct`: kgsl `gpu_busy_percentage` |
-| Clocks | plotted on the third (MHz) axis as four series (silver/gold/prime/GPU); the legend still carries `silver · gold · prime · GPU MHz` with the exact numbers |
+| Clocks | plotted on the third (MHz) axis as four series (silver/gold/prime/GPU); the legend still carries `● silver · gold · prime · GPU MHz` with the exact numbers, each name in its own series colour |
 | Series | power (orange), CPU load (blue), GPU load (green), silver/gold/prime/GPU clocks (silver/gold/prime/gpu clock colours) - seven series over the same 60 s window |
 
 * **Usage is real load, never a clock percentage** (#156 §3).  The old chart
@@ -81,9 +81,12 @@ The Fan page keeps its default chart, its 120 × 500 ms window and its API
   `ashfall.status.perf.gpu_mhz`; `-1`/missing is a gap, never a drawn zero, and
   the four clock series share one honest MHz axis (no per-series maxes).
 * The clocks are still shown, exactly, in the legend:
-  `silver 1516 · gold 1958 · prime 2073 · GPU 670 MHz`.  A clock the daemon has
-  not published is `—` for that cluster only; the plotted series and the legend
-  must not disagree.
+  `● silver 1516  ● gold 1958  ● prime 2073  ● GPU 670 MHz`.  Each segment is
+  drawn as a coloured bullet plus coloured text in **its own line's colour**
+  (`fan_graph_clock_silver/_gold/_prime/_gpu`, day and night), so the legend maps
+  every clock name to its plotted series.  A clock the daemon has not published
+  is `—` for that cluster only; the plotted series and the legend must not
+  disagree.
 * One sample per page tick, and the tick is the only appender (the #132 fix):
   a page open or a preset tap can no longer insert an extra sample.
 * `-1`/missing is a **gap**, never a drawn zero.  Power is `-1` while charging

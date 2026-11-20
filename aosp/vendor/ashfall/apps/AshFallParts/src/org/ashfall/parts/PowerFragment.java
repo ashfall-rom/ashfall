@@ -21,7 +21,10 @@ import android.content.Intent;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
+import android.text.SpannableStringBuilder;
+import android.text.Spanned;
 import android.text.TextUtils;
+import android.text.style.ForegroundColorSpan;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.TextView;
@@ -626,6 +629,9 @@ public class PowerFragment extends PreferenceFragmentCompat {
         private WeakReference<TextView> mCpuText = new WeakReference<>(null);
         private WeakReference<TextView> mGpuText = new WeakReference<>(null);
         private WeakReference<TextView> mClocksText = new WeakReference<>(null);
+        /** The coloured clock legend, rebuilt only when a clock moves (#264). */
+        private CharSequence mClocksLegend;
+        private boolean mClocksLegendStale = true;
 
         PowerStatusPreference(Context context) {
             super(context);
@@ -646,6 +652,10 @@ public class PowerFragment extends PreferenceFragmentCompat {
             mCharging = charging;
             mCpuLoad = cpuLoad;
             mGpuLoad = gpuLoad;
+            if (silverMhz != mSilverMhz || goldMhz != mGoldMhz
+                    || primeMhz != mPrimeMhz || gpuMhz != mGpuMhz) {
+                mClocksLegendStale = true;
+            }
             mSilverMhz = silverMhz;
             mGoldMhz = goldMhz;
             mPrimeMhz = primeMhz;
@@ -691,6 +701,8 @@ public class PowerFragment extends PreferenceFragmentCompat {
             mCpuText = new WeakReference<>(item.findViewById(R.id.power_legend_cpu));
             mGpuText = new WeakReference<>(item.findViewById(R.id.power_legend_gpu));
             mClocksText = new WeakReference<>(item.findViewById(R.id.power_legend_clocks));
+            // A rebind may land on a different theme, so re-resolve the colours.
+            mClocksLegendStale = true;
             if (graph != null) {
                 graph.setChart(powerChart(item.getContext()), mWindow);
             }
@@ -769,9 +781,36 @@ public class PowerFragment extends PreferenceFragmentCompat {
         }
 
         private CharSequence clocksText() {
-            return getContext().getString(R.string.power_legend_clocks,
-                    mhzText(mSilverMhz), mhzText(mGoldMhz), mhzText(mPrimeMhz),
-                    mhzText(mGpuMhz));
+            if (!mClocksLegendStale && mClocksLegend != null) {
+                return mClocksLegend;
+            }
+            final SpannableStringBuilder text = new SpannableStringBuilder();
+            appendClock(text, R.string.power_legend_clock_silver,
+                    R.color.fan_graph_clock_silver, mSilverMhz);
+            appendClock(text, R.string.power_legend_clock_gold,
+                    R.color.fan_graph_clock_gold, mGoldMhz);
+            appendClock(text, R.string.power_legend_clock_prime,
+                    R.color.fan_graph_clock_prime, mPrimeMhz);
+            appendClock(text, R.string.power_legend_clock_gpu,
+                    R.color.fan_graph_clock_gpu, mGpuMhz);
+            mClocksLegend = text;
+            mClocksLegendStale = false;
+            return text;
+        }
+
+        /** One "@bullet name value" segment in its own series colour, so the
+         *  legend cannot disagree with the four plotted clock lines. */
+        private void appendClock(SpannableStringBuilder text, int label, int color, int mhz) {
+            final Context context = getContext();
+            if (text.length() > 0) {
+                text.append(context.getString(R.string.power_legend_clock_gap));
+            }
+            final int start = text.length();
+            text.append(context.getString(R.string.power_legend_clock_bullet))
+                    .append(' ')
+                    .append(context.getString(label, mhzText(mhz)));
+            text.setSpan(new ForegroundColorSpan(context.getColor(color)),
+                    start, text.length(), Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
         }
 
         private String mhzText(int mhz) {
