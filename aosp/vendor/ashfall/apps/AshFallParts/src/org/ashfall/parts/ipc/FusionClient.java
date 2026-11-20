@@ -332,6 +332,51 @@ public final class FusionClient implements Closeable {
                 : context.getString(R.string.fusion_state_no_pad);
     }
 
+    /** The three distinguishable states of an empty connected-pad list. */
+    public enum PadListState {
+        FUSION_OFF,
+        NO_PAD,
+        UNAVAILABLE
+    }
+
+    /**
+     * Pure decision for the empty connected-pad list.  {@code status} is the
+     * parsed {@code FUSION STATUS} reply (or {@code null} when the daemon is
+     * unreachable or the reply is unparseable); {@code fusionOn} is the local
+     * {@code persist.ashfall.pad.fusion} switch state, passed explicitly so the
+     * decision stays testable without touching the property store.
+     */
+    public static PadListState padListState(Status status, boolean fusionOn) {
+        if (status == null || !status.available) {
+            return PadListState.UNAVAILABLE;
+        }
+        if (!fusionOn || !status.fusion) {
+            return PadListState.FUSION_OFF;
+        }
+        return PadListState.NO_PAD;
+    }
+
+    /** Convenience overload that reads the local switch state. */
+    public static PadListState padListState(Status status) {
+        return padListState(status, isOn());
+    }
+
+    /** String resource id for the empty connected-pad note. */
+    public static int padListMessage(Status status, boolean fusionOn) {
+        switch (padListState(status, fusionOn)) {
+            case FUSION_OFF:
+                return R.string.fusion_pads_fusion_off;
+            case UNAVAILABLE:
+                return R.string.fusion_state_unavailable;
+            default:
+                return R.string.fusion_pads_none;
+        }
+    }
+
+    public static int padListMessage(Status status) {
+        return padListMessage(status, isOn());
+    }
+
     private static String valueFor(String property, String key) {
         for (String entry : Props.get(property, "").split(";")) {
             final int equals = entry.indexOf('=');

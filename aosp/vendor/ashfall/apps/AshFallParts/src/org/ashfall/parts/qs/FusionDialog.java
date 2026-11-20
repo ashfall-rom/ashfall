@@ -323,9 +323,14 @@ public class FusionDialog extends Dialog {
             return;
         }
         final boolean available = status != null && status.available;
+        final boolean fusionOn = FusionClient.isOn();
         final List<FusionClient.Pad> pads = available
                 ? status.pads : Collections.emptyList();
         final StringBuilder signature = new StringBuilder(available ? "ok" : "down");
+        signature.append('|').append(fusionOn);
+        if (available) {
+            signature.append('|').append(status.fusion);
+        }
         for (FusionClient.Pad pad : pads) {
             signature.append('|').append(pad.key).append(':').append(pad.layout);
         }
@@ -337,10 +342,10 @@ public class FusionDialog extends Dialog {
         mPads.removeAllViews();
         if (pads.isEmpty()) {
             final TextView note = new TextView(getContext());
-            note.setText(available
-                    ? R.string.fusion_pads_none : R.string.fusion_state_unavailable);
+            note.setText(FusionClient.padListMessage(status, fusionOn));
             note.setTextAppearance(R.style.AshFallDialogSecondary);
             mPads.addView(note);
+            fitWindow();
             return;
         }
         final LayoutInflater inflater = LayoutInflater.from(getContext());

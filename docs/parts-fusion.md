@@ -45,6 +45,13 @@ were wired by the orchestrator before this work started.
   retry loop — the daemon is allowed to be absent.
 * Rows are rebuilt only when the reply actually changed (key, layout or name),
   so a tick never steals D-pad focus.
+* The connected-pads list distinguishes three empty states (shared helper
+  `FusionClient.padListState(status, fusionOn)`): Fusion off shows
+  `Fusion is off. Turn it on to merge your pads.` (no rescan prompt; the
+  switch is the next action); Fusion on with zero pads shows
+  `No pad found. Connect a pad and rescan.` plus the Rescan action; an
+  unavailable daemon shows `Unavailable`. The same three states apply to the
+  QS dialog's pad list.
 * The **layout dialog** offers Default / Xbox / Nintendo / swap A-B / swap X-Y /
   Custom.  The checked entry is the layout the daemon reports.  A choice writes
   `persist.ashfall.pad.layouts` (survives reboot) and sends
@@ -165,11 +172,11 @@ the tile subtitle and the D-pad focus — screenshots were captured as well
 but a theme *look* review (pure black) is an orchestrator/hardware item.
 
 1. **Daemon unavailable (no feeder).**  The Controller page shows the Fusion
-   category above the tester rows, the switch off, `No pad found. Connect a pad
-   and rescan.` in the pad list and `Unavailable` in the state line.  With fusion
-   switched on and the feeder stopped, the page and the dialog still say
-   `Unavailable` and the tile
-   subtitle is `unavailable` — the tile stays tappable on purpose, so the switch
+   category above the tester rows.  With fusion off the pad list reads
+   `Fusion is off. Turn it on to merge your pads.` and the state line reads
+   `Fusion off`; with fusion on and the feeder stopped the pad list reads
+   `Unavailable` and the state line reads `Unavailable`.  The tile subtitle is
+   `unavailable` — the tile stays tappable on purpose, so the switch
    can still be turned off.  Nothing crashes, nothing retries in a loop.
 2. **Fake daemon (`tools/mock/AshfallMockDaemon.c`).**  The existing test-only
    mock now answers the fusion commands as well: two stand-in pads
