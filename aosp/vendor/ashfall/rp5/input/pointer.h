@@ -144,6 +144,11 @@ struct pointer_state {
     int r2; /* calibrated 0..255, trigger hysteresis applied */
     int64_t last_frame_ms;
     bool have_frame;
+    /* True for a source that streams full frames (the internal MCU): only
+     * then does the 2 s frame timeout release held state.  External pads
+     * report changes only, so a held button sends nothing while held; their
+     * disappearance is handled by the pad drop paths instead (#250). */
+    bool streams_frames;
 
     /* Velocity in px/s and the sub-pixel remainder of the last tick. */
     double vx, vy;

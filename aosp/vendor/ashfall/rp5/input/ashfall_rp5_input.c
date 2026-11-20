@@ -703,9 +703,16 @@ static bool shadow_find_node(const struct daemon *d,
             } else {
                 name_ok = true; /* the pad itself has no name to mirror */
             }
+            /* Identity check on the full input_id: a same-model pad
+             * hotplugged inside the discovery window is the one residual
+             * ambiguity here (both carry the same id and name); matching
+             * bustype and version narrows it, and a wrong bind is
+             * self-healing - the next scan re-attaches both pads. */
             if (ioctl(fd, EVIOCGID, &node_id) == 0 &&
+                node_id.bustype == id->bustype &&
                 node_id.vendor == id->vendor &&
-                node_id.product == id->product && name_ok &&
+                node_id.product == id->product &&
+                node_id.version == id->version && name_ok &&
                 pad_by_node(d, path) < 0 && pad_shadow_by_node(d, path) < 0) {
                 snprintf(out, len, "%s", path);
                 close(fd);
@@ -842,6 +849,109 @@ static void pad_pointer_axis_feed(struct pointer_state *ps,
     pad_pointer_touch(ps);
 }
 
+/* The shadow_source view of one attached pad (pad_read and pad_seed). */
+static void pad_source_build(const struct pad_handle *pad,
+                             struct shadow_source *src)
+{
+    memset(src, 0, sizeof(*src));
+    src->name = pad->name;
+    src->id.bustype = pad->id.bustype;
+    src->id.vendor = pad->id.vendor;
+    src->id.product = pad->id.product;
+    src->id.version = pad->id.version;
+    src->keybits = pad->keybits;
+    src->keybits_len = sizeof(pad->keybits);
+    src->absbits = pad->absbits;
+    src->absbits_len = sizeof(pad->absbits);
+    src->absinfo = pad->absinfo;
+    src->axis_src = pad->axis_src;
+}
+
+/*
+ * A pad attached mid-press must not lose what the user is already holding:
+ * seed the source's pointer state - and, for a shadow, its output - from the
+ * kernel's current key/axis state, which stays readable through the grab
+ * (#250).  The merge needs no seeding: its registry entries start at rest
+ * and the consumed inputs are dropped per event.  Change-only pads never age
+ * their held state out, so this is also where a re-attached pad gets its
+ * truth back.
+ */
+static void pad_seed(struct daemon *d, int slot, bool shadow_too)
+{
+    struct pad_handle *pad = &d->pads[slot];
+    struct pointer_state *ps = &d->pointer_pads[slot];
+    struct shadow_source src;
+    uint8_t keybits[FUSION_BITS_BYTES(KEY_MAX + 1)];
+
+    memset(keybits, 0, sizeof(keybits));
+    if (ioctl(pad->fd, EVIOCGKEY(sizeof(keybits)), keybits) == 0 &&
+        fusion_bits_test(keybits, FUSION_POINTER_OWNED_KEY)) {
+        struct input_event ev = {
+            .type = EV_KEY,
+            .code = FUSION_POINTER_OWNED_KEY,
+            .value = 1,
+        };
+
+        pad_pointer_key_feed(ps, &ev);
+    }
+    for (int code = 0; code <= ABS_MAX; code++) {
+        struct input_absinfo info;
+        int axis = pad->axis_slot[code];
+
+        if (axis < 0 || !fusion_slot_pointer_owned(axis) ||
+            !pad->absinfo[code].present)
+            continue;
+        memset(&info, 0, sizeof(info));
+        if (ioctl(pad->fd, EVIOCGABS(code), &info) == 0) {
+            struct input_event ev = {
+                .type = EV_ABS,
+                .code = code,
+                .value = info.value,
+            };
+
+            pad_pointer_axis_feed(ps, pad, &ev, axis);
+        }
+    }
+    if (!shadow_too || pad->shadow_fd < 0)
+        return;
+
+    /* Held keys and deflected non-owned axes go to the shadow too, through
+     * the same routing new events take. */
+    pad_source_build(pad, &src);
+    {
+        struct shadow_sink sink = {
+            .fd = pad->shadow_fd,
+            .failed = false,
+        };
+
+        for (int code = 1; code <= KEY_MAX; code++) {
+            if (!fusion_bits_test(keybits, code) ||
+                code == FUSION_POINTER_OWNED_KEY)
+                continue;
+            shadow_route_event(&src, &pad->shadow_st, true, EV_KEY,
+                               (uint16_t)code, 1, shadow_emit, &sink);
+        }
+        for (int code = 0; code <= ABS_MAX; code++) {
+            struct input_absinfo info;
+            int axis = pad->axis_slot[code];
+
+            if (!pad->absinfo[code].present ||
+                (axis >= 0 && fusion_slot_pointer_owned(axis)))
+                continue;
+            memset(&info, 0, sizeof(info));
+            if (ioctl(pad->fd, EVIOCGABS(code), &info) == 0)
+                shadow_route_event(&src, &pad->shadow_st, true, EV_ABS,
+                                   (uint16_t)code, info.value, shadow_emit,
+                                   &sink);
+        }
+        shadow_route_event(&src, &pad->shadow_st, true, EV_SYN, SYN_REPORT, 0,
+                           shadow_emit, &sink);
+        if (sink.failed)
+            ah_logf(AH_LOG_WARN, "pointer: shadow seed for %s failed",
+                    pad->key);
+    }
+}
+
 /*
  * One event from one physical pad (#250).  The pointer-owned inputs feed the
  * pad's own pointer state whenever the pointer device exists - tracking
@@ -873,10 +983,16 @@ static bool pad_event(struct daemon *d, struct pad_handle *pad,
         int slot = ev->code <= ABS_MAX ? pad->axis_slot[ev->code] : -1;
 
         if (slot >= 0 && fusion_slot_pointer_owned(slot)) {
-            if (consume)
+            if (consume) {
                 pad_pointer_axis_feed(ps, pad, ev, slot);
-            if (index >= 0)
-                return true; /* consumed before the merge */
+                if (index >= 0)
+                    return true; /* consumed before the merge */
+            } else if (index >= 0) {
+                /* No live pointer device: the pad keeps its full mapping. */
+                fusion_abs_event(&d->fusion, index, slot, ev->value,
+                                 ah_now_ms());
+                return true;
+            }
         } else if (index >= 0) {
             if (slot >= 0)
                 fusion_abs_event(&d->fusion, index, slot, ev->value,
@@ -918,6 +1034,9 @@ static void pointer_consume_reconcile(struct daemon *d, bool on)
             continue;
         if (on) {
             fusion_pad_consume_pointer_inputs(&d->fusion, index);
+            /* The pointer starts consuming mid-press: its state must know
+             * what the pad is already holding. */
+            pad_seed(d, i, false);
             continue;
         }
         /* EVIOCGRAB does not change the kernel's idea of the axis state, so
@@ -1078,9 +1197,14 @@ static void pad_drop(struct daemon *d, int slot, const char *reason)
     ioctl(pad->fd, EVIOCGRAB, &zero);
     close(pad->fd);
     if (pad->key[0]) {
-        fusion_pad_remove(&d->fusion, pad->key);
-        ah_logf(AH_LOG_INFO, "fusion: pad %s removed%s%s", pad->key,
-                reason ? " (" : "", reason ? reason : "");
+        bool merged = fusion_pad_remove(&d->fusion, pad->key);
+
+        if (merged)
+            ah_logf(AH_LOG_INFO, "fusion: pad %s removed%s%s", pad->key,
+                    reason ? " (" : "", reason ? reason : "");
+        else if (!d->fusion.enabled)
+            ah_logf(AH_LOG_INFO, "pointer: pad %s released%s%s", pad->key,
+                    reason ? " (" : "", reason ? reason : "");
     }
     memset(pad, 0, sizeof(*pad));
     pad->fd = -1;
@@ -1217,6 +1341,13 @@ static void pad_scan(struct daemon *d)
             memcpy(handle->absinfo, probe.absinfo, sizeof(handle->absinfo));
             memcpy(handle->keybits, probe.keybits, sizeof(handle->keybits));
             memcpy(handle->absbits, probe.absbits, sizeof(handle->absbits));
+            /* A re-attached pad starts with a clean pointer state; pads are
+             * change-only sources, so they never age held state out. */
+            pointer_defaults(&d->pointer_pads[slot]);
+            d->pointer_pads[slot].on = d->pointer.on;
+            d->pointer_pads[slot].streams_frames = false;
+            if (pointer_consume(d))
+                pad_seed(d, slot, false);
             ah_logf(AH_LOG_INFO, "fusion: pad %s \"%s\" grabbed (%s)",
                     pad->key, pad->name, writable ? "rw" : "ro");
             continue;
@@ -1262,10 +1393,16 @@ static void pad_scan(struct daemon *d)
         memcpy(handle->absinfo, probe.absinfo, sizeof(handle->absinfo));
         memcpy(handle->keybits, probe.keybits, sizeof(handle->keybits));
         memcpy(handle->absbits, probe.absbits, sizeof(handle->absbits));
+        /* A re-attached pad starts with a clean pointer state; pads are
+         * change-only sources, so they never age held state out. */
+        pointer_defaults(&d->pointer_pads[slot]);
+        d->pointer_pads[slot].on = d->pointer.on;
+        d->pointer_pads[slot].streams_frames = false;
         if (!pad_shadow_attach(d, slot)) {
             pad_release_fd(handle);
             continue;
         }
+        pad_seed(d, slot, true);
         ah_logf(AH_LOG_INFO, "pointer: pad %s \"%s\" grabbed (shadow)",
                 handle->key, handle->name);
     }
@@ -1291,18 +1428,7 @@ static bool pad_read(struct daemon *d, int slot)
     bool consume = pointer_consume(d);
     ssize_t n;
 
-    memset(&src, 0, sizeof(src));
-    src.name = pad->name;
-    src.id.bustype = pad->id.bustype;
-    src.id.vendor = pad->id.vendor;
-    src.id.product = pad->id.product;
-    src.id.version = pad->id.version;
-    src.keybits = pad->keybits;
-    src.keybits_len = sizeof(pad->keybits);
-    src.absbits = pad->absbits;
-    src.absbits_len = sizeof(pad->absbits);
-    src.absinfo = pad->absinfo;
-    src.axis_src = pad->axis_src;
+    pad_source_build(pad, &src);
 
     while ((n = read(pad->fd, events, sizeof(events))) > 0) {
         size_t count = (size_t)n / sizeof(events[0]);

@@ -13,7 +13,8 @@ void shadow_spec(const struct shadow_source *src, struct shadow_spec_buf *buf,
     if (!src || !buf || !spec)
         return;
     memset(buf, 0, sizeof(*buf));
-    memset(spec, 0, sizeof(spec));
+    /* The shadow owns every field: no relative axes, no props, never FF. */
+    memset(spec, 0, sizeof(*spec));
 
     for (int code = 1; code <= KEY_MAX; code++) {
         if ((size_t)(code / 8) < src->keybits_len &&

@@ -2702,6 +2702,12 @@ static void test_pointer_per_source(void)
     CHECK_EQ(capture_sum(&cap_b, EV_REL, REL_Y), 0);
 }
 
+/* The spec constructor must own every field: poison first, then build. */
+static void spec_poison(struct uinput_dev_spec *spec)
+{
+    memset(spec, 0xAA, sizeof(*spec));
+}
+
 static void test_shadow_spec_caps(void)
 {
     struct shadow_fix fix;
@@ -2715,6 +2721,15 @@ static void test_shadow_spec_caps(void)
 
     shadow_fix_android(&fix);
     shadow_spec(&fix.src, &buf, &spec);
+    /* Poisoned storage: the constructor must have zeroed every field it
+     * does not set itself, or build() walks wild rel/prop lists. */
+    spec_poison(&spec);
+    shadow_spec(&fix.src, &buf, &spec);
+    CHECK_EQ(spec.rel_count, 0);
+    CHECK_EQ(spec.prop_count, 0);
+    CHECK(spec.rels == NULL);
+    CHECK(spec.props == NULL);
+    CHECK_EQ(spec.rumble, false);
     fake_init(&fake, &ops);
     fd = uinput_dev_create(&ops, &spec, &rumble);
     CHECK(fd >= 0);
@@ -2785,7 +2800,10 @@ static void test_shadow_spec_hid(void)
     CHECK_EQ(shadow_axis_slot(&fix.src, ABS_RX), FUSION_AXIS_RX);
     CHECK_EQ(shadow_axis_slot(&fix.src, ABS_BRAKE), -1);
 
+    spec_poison(&spec);
     shadow_spec(&fix.src, &buf, &spec);
+    CHECK_EQ(spec.rel_count, 0);
+    CHECK_EQ(spec.prop_count, 0);
     fake_init(&fake, &ops);
     CHECK(uinput_dev_create(&ops, &spec, &rumble) >= 0);
     /* ABS_Z is this pad's left trigger: the canonical trigger range, not the

@@ -42,6 +42,7 @@ void pointer_defaults(struct pointer_state *ps)
         return;
     memset(ps, 0, sizeof(*ps));
     ps->on = false;
+    ps->streams_frames = true;
 }
 
 bool pointer_switch_parse(const char *text, bool *on)
@@ -119,9 +120,13 @@ void pointer_frame(struct pointer_state *ps, uint16_t keys, int lx, int ly,
 }
 
 /* The MCU went quiet (screen cycle, UART loss): a held button must not stay
- * pressed and a held stick must stop moving until fresh frames arrive. */
+ * pressed and a held stick must stop moving until fresh frames arrive.
+ * Change-only sources (external pads) are exempt: a held button emits
+ * nothing while held, so silence there is not staleness (#250). */
 static void pointer_age(struct pointer_state *ps, int64_t now_ms)
 {
+    if (!ps->streams_frames)
+        return;
     if (!ps->have_frame ||
         now_ms - ps->last_frame_ms <= POINTER_FRAME_TIMEOUT_MS)
         return;

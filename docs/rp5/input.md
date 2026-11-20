@@ -841,10 +841,17 @@ the registry and attaches shadow pads.  A property change is never suppressed
 by GRAB: while grabbed, devices are created/destroyed and state is cleared
 silently, and everything resumes correctly on `GRAB OFF`.  A pad hotplug
 (USB unplug, BT drop) destroys that pad's shadow, releases its pointer
-buttons through the shared bus and clears its state.  A source that goes
-silent for 2 s (the same stale-frame rule the MCU has) releases its held
-pointer buttons; the pointer device itself is recreated by `pointer_retry`
-if `/dev/uinput` reappears, and the consume gate follows it.
+buttons through the shared bus and clears its state.
+
+A pad attached **mid-press** keeps what the user is already holding: the
+pointer state (and the shadow's output) are seeded from the kernel's current
+key/axis state, readable through the grab.  Pads are change-only sources, so
+the MCU's 2 s stale-frame rule does not apply to them - a held button sends
+nothing while held, and their disappearance is handled by the pad drop paths
+(POLLHUP, read error, node gone) instead.  Only the MCU, which streams every
+frame, ages held state out after 2 s.  The pointer device itself is recreated
+by `pointer_retry` if `/dev/uinput` reappears, and the consume gate follows
+it.
 
 ### Implementation choices
 
@@ -906,7 +913,11 @@ top.
   re-report on the next frame.  Every source is covered (#250): the pad
   states are cleared the same way, the merged pads' consumed inputs stay
   consumed (the gamepad must not see them with the pointer on), and the
-  shadows keep reporting them at rest.
+  shadows keep reporting them at rest.  The shadows themselves are **not**
+  suppressed: they are the pass-through of the physical pad - what a tester
+  holding GRAB is actually poking - and silencing them would make the pad
+  vanish from Android for the whole grab.  What stays silenced is the
+  daemon's own output: the merged gamepad and the pointer device.
 
 ### Files
 
