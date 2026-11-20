@@ -24,12 +24,17 @@
  * sensor path is untouched.  With fusion off the device is exactly what it
  * has always been ("AshFall RP5 Gamepad", 2020:3001).
  *
- * External-display pointer (#131) is additive and opt-in:
+ * External-display pointer (#131, #250) is additive and opt-in:
  * persist.ashfall.pad.pointer=1 creates a second uinput device, "AshFall RP5
  * Pointer" (EV_REL + BTN_LEFT/RIGHT/MIDDLE + INPUT_PROP_POINTER), and drives
- * it from the right stick at a fixed 125 Hz.  While it is on, the MCU pad's R1,
- * R2, left stick and right stick belong to the pointer and are not forwarded to
- * the gamepad device either; every other button passes through unchanged.  The
+ * it from the right stick at a fixed 125 Hz.  Since #250 every pad can drive
+ * it: the sources are the internal MCU plus every node fusion_node_mergeable()
+ * accepts, with the scan/open policy fusion.enabled || pointer.on.  With
+ * fusion off each external pad is grabbed and re-published through its own
+ * pass-through shadow device (shadow.c); with fusion on the pointer-owned
+ * inputs are consumed before they reach the merge.  While the pointer device
+ * exists no source reaches the gamepad/fusion device with its R1, R2, left
+ * stick or right stick; every other button passes through unchanged.  The
  * gamepad capability set and the RAW bit layout never change.
  *
  * The MCU protocol (0xA5 0xD3 0x5A 0x3D framing) was recovered from the stock
@@ -46,6 +51,7 @@
 #include "plat.h"
 #include "pointer.h"
 #include "session.h"
+#include "shadow.h"
 #include "uinput_dev.h"
 
 #include <dirent.h>
@@ -170,7 +176,9 @@ static const char *mcu_pad_key(void)
 #define MCU_KEY mcu_pad_key()
 
 /* One open external pad.  The fusion registry holds the state; this holds the
- * fds, the per-pad axis classification and the rumble relay bookkeeping. */
+ * fds, the per-pad axis classification, the rumble relay bookkeeping and -
+ * since #250 - everything the pointer feed and the pass-through shadow need:
+ * the source ranges, and the shadow's own fd, node path and output state. */
 struct ff_relay {
     bool used;
     int src_id;
@@ -182,9 +190,22 @@ struct pad_handle {
     int fd;
     bool writable; /* opened O_RDWR: needed for EVIOCSFF and EV_FF */
     char node[64];
+    char name[FUSION_NAME_MAX];
+    struct input_id id;
     char key[FUSION_KEY_MAX];
     int axis_slot[FUSION_ABS_MAX];
+    uint16_t axis_src[FUSION_AXIS_COUNT]; /* slot -> ABS code */
+    /* Source range of every ABS code (probe_pad), for the pointer feed and
+     * the shadow rescale. */
+    struct fusion_absinfo absinfo[FUSION_ABS_MAX];
+    uint8_t keybits[FUSION_BITS_BYTES(KEY_MAX + 1)];
+    uint8_t absbits[FUSION_BITS_BYTES(ABS_MAX + 1)];
     struct ff_relay ff[FUSION_FF_MAX];
+    /* Pass-through shadow (#250): valid while pointer.on and fusion off. */
+    int shadow_fd;
+    char shadow_node[64];
+    struct shadow_state shadow_st;
+    struct shadow_spec_buf shadow_buf;
 };
 
 struct daemon {
@@ -213,8 +234,14 @@ struct daemon {
     bool rumble;        /* the uinput device really advertises EV_FF */
 
     /* External-display gamepad pointer (#131): mapping logic plus the switch
-     * latch it shares with persist.ashfall.pad.pointer. */
+     * latch it shares with persist.ashfall.pad.pointer.  #250 gives every
+     * source - the MCU and each pad slot - its own state, so two pads share
+     * no buttons, velocity or scroll repeat; the one pointer device is
+     * guarded by the shared mouse-button bus. */
     struct pointer_state pointer;
+    struct pointer_state pointer_pads[FUSION_MAX_PADS];
+    struct pointer_shared pointer_shared;
+    bool pointer_consume_prev; /* last pointer_consume() state, for reconcile */
 
     uint8_t rx[4096];
     size_t rx_len;
@@ -404,10 +431,13 @@ static int create_pointer_uinput(struct daemon *d)
     }
     ah_logf(AH_LOG_INFO, "uinput %s created (%04x:%04x, external-display pointer)",
             spec.name, spec.vendor, spec.product);
-    /* The kernel device starts with no state: clear ours so the next tick
-     * re-reports whatever is physically held instead of assuming the button
-     * that was pressed while the device was missing is already down. */
-    pointer_release(&d->pointer, NULL, NULL);
+    /* The kernel device starts with no state: clear every source so the next
+     * tick re-reports whatever is physically held instead of assuming the
+     * button that was pressed while the device was missing is already down. */
+    pointer_release(&d->pointer, NULL, NULL, &d->pointer_shared);
+    for (int i = 0; i < FUSION_MAX_PADS; i++)
+        pointer_release(&d->pointer_pads[i], NULL, NULL, &d->pointer_shared);
+    pointer_shared_clear(&d->pointer_shared);
     return fd;
 }
 
@@ -547,6 +577,375 @@ static void sink_emit(void *ctx, uint16_t type, uint16_t code, int32_t value)
     emit_event(d->uinput_fd, type, code, value);
 }
 
+/* --- external pads and the pointer (#250) ---------------------------------- */
+
+/*
+ * The pointer consumes its inputs from every source only while the device it
+ * writes exists: with /dev/uinput missing, no source loses inputs to a
+ * pointer that is not there (docs/rp5/input.md).  GRAB does not change this -
+ * it suppresses the pointer's output, not the consumption.
+ */
+static bool pointer_consume(const struct daemon *d)
+{
+    return d->pointer.on && d->pointer_fd >= 0;
+}
+
+/* Pads are opened while Gamepad Fusion merges them or while the desktop
+ * pointer needs a source (#250): the scan/open policy is
+ * fusion.enabled || pointer.on.  Motion-only nodes are never opened by either
+ * (the fusion classify rule). */
+static bool pads_wanted(const struct daemon *d)
+{
+    return d->fusion.enabled || d->pointer.on;
+}
+
+/* Ungrab, close and forget one pad slot (no registry or log side effects). */
+static void pad_release_fd(struct pad_handle *pad)
+{
+    int zero = 0;
+
+    ioctl(pad->fd, EVIOCGRAB, &zero);
+    close(pad->fd);
+    memset(pad, 0, sizeof(*pad));
+    pad->fd = -1;
+}
+
+/* The event node of one of our own shadows must never be opened as a pad: it
+ * re-publishes what the daemon writes, and reading it back would feed the
+ * pad's own output into the merge or into another shadow. */
+static int pad_shadow_by_node(const struct daemon *d, const char *node)
+{
+    for (int i = 0; i < FUSION_MAX_PADS; i++) {
+        if (d->pads[i].shadow_fd >= 0 && !strcmp(d->pads[i].shadow_node, node))
+            return i;
+    }
+    return -1;
+}
+
+/* Node names present in /dev/input right now; 32 is plenty for this class of
+ * device. */
+struct node_snapshot {
+    char names[32][24];
+    int count;
+};
+
+static int pad_by_node(const struct daemon *d, const char *node);
+
+static void node_snapshot_take(struct node_snapshot *snap)
+{
+    DIR *dir = opendir(INPUT_DIR);
+    struct dirent *entry;
+
+    snap->count = 0;
+    if (!dir)
+        return;
+    for (entry = readdir(dir); entry; entry = readdir(dir)) {
+        if (strncmp(entry->d_name, "event", 5) != 0)
+            continue;
+        if (snap->count >= (int)ARRAY_SIZE(snap->names))
+            break;
+        snprintf(snap->names[snap->count], sizeof(snap->names[0]), "%s",
+                 entry->d_name);
+        snap->count++;
+    }
+    closedir(dir);
+}
+
+static bool node_snapshot_has(const struct node_snapshot *snap,
+                              const char *name)
+{
+    for (int i = 0; i < snap->count; i++) {
+        if (!strcmp(snap->names[i], name))
+            return true;
+    }
+    return false;
+}
+
+/*
+ * The shadow's own event node, found by identity (the shadow mirrors the
+ * pad's) among the nodes that did not exist before UI_DEV_CREATE.  ueventd
+ * creates the node asynchronously, hence the bounded retry.  A node that
+ * never shows up fails the attach: no untracked clone of a pad is ever left
+ * in /dev/input for the next scan to mistake for a pad.
+ */
+static bool shadow_find_node(const struct daemon *d,
+                             const struct node_snapshot *snap,
+                             const struct input_id *id, const char *name,
+                             char *out, size_t len)
+{
+    for (int attempt = 0; attempt < 50; attempt++) {
+        DIR *dir = opendir(INPUT_DIR);
+        struct dirent *entry;
+
+        if (!dir)
+            return false;
+        for (entry = readdir(dir); entry; entry = readdir(dir)) {
+            struct input_id node_id;
+            char node_name[FUSION_NAME_MAX];
+            char path[64];
+            int fd;
+            bool name_ok;
+
+            if (strncmp(entry->d_name, "event", 5) != 0)
+                continue;
+            if (node_snapshot_has(snap, entry->d_name))
+                continue;
+            join_path(path, sizeof(path), INPUT_DIR, entry->d_name);
+            fd = open(path, O_RDONLY | O_NONBLOCK | O_CLOEXEC);
+            if (fd < 0)
+                continue;
+            memset(&node_id, 0, sizeof(node_id));
+            node_name[0] = '\0';
+            if (name && name[0]) {
+                name_ok = ioctl(fd, EVIOCGNAME(sizeof(node_name)),
+                                node_name) > 0 &&
+                          !strcmp(node_name, name);
+            } else {
+                name_ok = true; /* the pad itself has no name to mirror */
+            }
+            if (ioctl(fd, EVIOCGID, &node_id) == 0 &&
+                node_id.vendor == id->vendor &&
+                node_id.product == id->product && name_ok &&
+                pad_by_node(d, path) < 0 && pad_shadow_by_node(d, path) < 0) {
+                snprintf(out, len, "%s", path);
+                close(fd);
+                closedir(dir);
+                return true;
+            }
+            close(fd);
+        }
+        closedir(dir);
+        usleep(1000);
+    }
+    return false;
+}
+
+/*
+ * Create the shadow for one grabbed pad (#250).  Returns true when the pad
+ * is fully attached; on failure the caller releases it and the next scan
+ * tries again - a pad visible to Android beats an invisible one.
+ */
+static bool pad_shadow_attach(struct daemon *d, int slot)
+{
+    struct pad_handle *pad = &d->pads[slot];
+    struct shadow_source src;
+    struct node_snapshot snap;
+    struct uinput_dev_spec spec;
+    bool rumble = false;
+    int fd;
+
+    memset(&src, 0, sizeof(src));
+    src.name = pad->name;
+    src.id.bustype = pad->id.bustype;
+    src.id.vendor = pad->id.vendor;
+    src.id.product = pad->id.product;
+    src.id.version = pad->id.version;
+    src.keybits = pad->keybits;
+    src.keybits_len = sizeof(pad->keybits);
+    src.absbits = pad->absbits;
+    src.absbits_len = sizeof(pad->absbits);
+    src.absinfo = pad->absinfo;
+    src.axis_src = pad->axis_src;
+
+    /* The snapshot is taken before the device exists, so the new node is
+     * recognisable even between two identical pads attached back to back. */
+    node_snapshot_take(&snap);
+    shadow_spec(&src, &pad->shadow_buf, &spec);
+    fd = uinput_dev_create(&uinput_ops, &spec, &rumble);
+    if (fd < 0) {
+        ah_logf(AH_LOG_WARN, "pointer: shadow for %s: %s", pad->key,
+                strerror(errno));
+        return false;
+    }
+    if (!shadow_find_node(d, &snap, &pad->id, pad->name, pad->shadow_node,
+                          sizeof(pad->shadow_node))) {
+        ah_logf(AH_LOG_WARN,
+                "pointer: shadow for %s: no event node, pad left alone",
+                pad->key);
+        ioctl(fd, UI_DEV_DESTROY);
+        close(fd);
+        return false;
+    }
+    pad->shadow_fd = fd;
+    shadow_state_init(&pad->shadow_st);
+    ah_logf(AH_LOG_INFO, "pointer: shadow for %s created at %s", pad->key,
+            pad->shadow_node);
+    return true;
+}
+
+/* EV_KEY/EV_ABS/EV_SYN sink into one shadow fd; `failed` tells pad_event to
+ * drop the pad instead of leaving Android with a dead shadow device. */
+struct shadow_sink {
+    int fd;
+    bool failed;
+};
+
+static void shadow_emit(void *ctx, uint16_t type, uint16_t code, int32_t value)
+{
+    struct shadow_sink *sink = ctx;
+    struct input_event ev;
+
+    memset(&ev, 0, sizeof(ev));
+    ev.type = type;
+    ev.code = code;
+    ev.value = value;
+    if (write_all(sink->fd, &ev, sizeof(ev)) < 0) {
+        ah_logf(AH_LOG_WARN, "pointer: shadow write failed: %s",
+                strerror(errno));
+        sink->failed = true;
+    }
+}
+
+/* Any event from a source keeps its held pointer state trusted: the 2 s
+ * frame timeout then only fires for a source that really went away. */
+static void pad_pointer_touch(struct pointer_state *ps)
+{
+    ps->last_frame_ms = ah_now_ms();
+    ps->have_frame = true;
+}
+
+/* Feed the pointer-owned inputs of one event into the source's pointer
+ * state, in canonical space - the same values the merge (or the shadow)
+ * would have carried (#250).  The MCU keeps its own calibrated feed. */
+static void pad_pointer_key_feed(struct pointer_state *ps,
+                                 const struct input_event *ev)
+{
+    /* External pads carry no other pointer keys than R1. */
+    ps->keys = ev->value ? POINTER_KEY_R1 : 0;
+    pad_pointer_touch(ps);
+}
+
+static void pad_pointer_axis_feed(struct pointer_state *ps,
+                                  const struct pad_handle *pad,
+                                  const struct input_event *ev, int slot)
+{
+    int32_t scaled = fusion_pad_rescale(&pad->absinfo[ev->code], slot,
+                                        ev->value);
+
+    switch (slot) {
+    case FUSION_AXIS_LX:
+        ps->lx = scaled;
+        break;
+    case FUSION_AXIS_LY:
+        ps->ly = scaled;
+        break;
+    case FUSION_AXIS_RX:
+        ps->rx = scaled;
+        break;
+    case FUSION_AXIS_RY:
+        ps->ry = scaled;
+        break;
+    case FUSION_AXIS_R2:
+        ps->r2 = scaled;
+        break;
+    }
+    pad_pointer_touch(ps);
+}
+
+/*
+ * One event from one physical pad (#250).  The pointer-owned inputs feed the
+ * pad's own pointer state whenever the pointer device exists - tracking
+ * continues while GRAB suppresses the output, so GRAB OFF resumes from the
+ * current physical state - and are then consumed: never entered into the
+ * merge (fusion on), reported at rest by the shadow (fusion off).  Everything
+ * else flows to the merge or the shadow exactly as before.  Returns false
+ * when the shadow stopped accepting writes and the pad must be dropped.
+ */
+static bool pad_event(struct daemon *d, struct pad_handle *pad,
+                      struct pointer_state *ps, const struct shadow_source *src,
+                      int index, bool consume, const struct input_event *ev)
+{
+    struct shadow_sink sink;
+
+    if (ev->type == EV_KEY) {
+        if (consume && ev->code == FUSION_POINTER_OWNED_KEY) {
+            pad_pointer_key_feed(ps, ev);
+            if (index >= 0)
+                return true; /* consumed before the merge */
+        } else if (index >= 0) {
+            /* The device capabilities are fixed at creation; merging a code
+             * we never advertised would only add phantom state. */
+            if (fusion_key_supported(ev->code))
+                fusion_key_event(&d->fusion, index, ev->code, ev->value);
+            return true;
+        }
+    } else if (ev->type == EV_ABS) {
+        int slot = ev->code <= ABS_MAX ? pad->axis_slot[ev->code] : -1;
+
+        if (slot >= 0 && fusion_slot_pointer_owned(slot)) {
+            if (consume)
+                pad_pointer_axis_feed(ps, pad, ev, slot);
+            if (index >= 0)
+                return true; /* consumed before the merge */
+        } else if (index >= 0) {
+            if (slot >= 0)
+                fusion_abs_event(&d->fusion, index, slot, ev->value,
+                                 ah_now_ms());
+            return true;
+        }
+    } else if (index >= 0) {
+        return true; /* the merge builds its own batches */
+    }
+
+    if (pad->shadow_fd < 0)
+        return true;
+    sink.fd = pad->shadow_fd;
+    sink.failed = false;
+    shadow_route_event(src, &pad->shadow_st, consume, ev->type, ev->code,
+                       ev->value, shadow_emit, &sink);
+    return !sink.failed;
+}
+
+/*
+ * The pointer-owned inputs of every merged pad follow the live pointer
+ * device: consumed while it exists (zeroed in the registry), re-seeded from
+ * the pads' current state when it does not (#250).  The MCU needs no re-seed
+ * - it streams every axis on every frame - and the shadow pads carry no
+ * registry state at all.
+ */
+static void pointer_consume_reconcile(struct daemon *d, bool on)
+{
+    if (!d->fusion_device)
+        return;
+    for (int i = 0; i < FUSION_MAX_PADS; i++) {
+        struct pad_handle *pad = &d->pads[i];
+        int index;
+
+        if (pad->fd < 0)
+            continue;
+        index = fusion_pad_index(&d->fusion, pad->key);
+        if (index < 0)
+            continue;
+        if (on) {
+            fusion_pad_consume_pointer_inputs(&d->fusion, index);
+            continue;
+        }
+        /* EVIOCGRAB does not change the kernel's idea of the axis state, so
+         * the current values are readable even mid-press. */
+        for (int code = 0; code <= ABS_MAX; code++) {
+            struct input_absinfo info;
+            int slot = pad->axis_slot[code];
+
+            if (slot < 0 || !fusion_slot_pointer_owned(slot))
+                continue;
+            memset(&info, 0, sizeof(info));
+            if (ioctl(pad->fd, EVIOCGABS(code), &info) == 0)
+                fusion_abs_event(&d->fusion, index, slot, info.value,
+                                 ah_now_ms());
+        }
+        {
+            uint8_t keybits[FUSION_BITS_BYTES(KEY_MAX + 1)];
+
+            memset(keybits, 0, sizeof(keybits));
+            if (ioctl(pad->fd, EVIOCGKEY(sizeof(keybits)), keybits) == 0 &&
+                fusion_bits_test(keybits, FUSION_POINTER_OWNED_KEY))
+                fusion_key_event(&d->fusion, index,
+                                 FUSION_POINTER_OWNED_KEY, 1);
+        }
+    }
+    fusion_refresh(&d->fusion);
+}
+
 /* --- external pad registry ------------------------------------------------ */
 
 struct pad_probe {
@@ -555,6 +954,10 @@ struct pad_probe {
     enum fusion_connection connection;
     struct fusion_absinfo absinfo[FUSION_ABS_MAX];
     uint16_t axis_src[FUSION_AXIS_COUNT];
+    /* Capability bitmaps, kept for the per-pad shadow (#250): the shadow
+     * mirrors the pad's key/abs capabilities. */
+    uint8_t keybits[FUSION_BITS_BYTES(KEY_MAX + 1)];
+    uint8_t absbits[FUSION_BITS_BYTES(ABS_MAX + 1)];
     /* What the fusion registry asked for: a mergeable node plus its stable
      * vendor:product:connection key. */
     struct fusion_node node;
@@ -614,6 +1017,11 @@ static bool probe_pad(int fd, struct pad_probe *out)
     if (!fusion_node_mergeable(&out->node, out->key, sizeof(out->key)))
         return false;
 
+    /* The capability bitmaps outlive this probe in the pad handle: the
+     * shadow mirrors them (#250). */
+    memcpy(out->keybits, keybits, sizeof(out->keybits));
+    memcpy(out->absbits, absbits, sizeof(out->absbits));
+
     for (int code = 0; code <= ABS_MAX; code++) {
         struct input_absinfo info;
 
@@ -655,6 +1063,16 @@ static void pad_drop(struct daemon *d, int slot, const char *reason)
 
     if (pad->fd < 0)
         return;
+    /* A pad unplugged mid-press releases everything, including the pointer
+     * buttons it held: the shared bus only lifts the device's button when no
+     * other source still holds it (#250). */
+    pointer_release(&d->pointer_pads[slot], pointer_emit, d,
+                    &d->pointer_shared);
+    if (pad->shadow_fd >= 0) {
+        ioctl(pad->shadow_fd, UI_DEV_DESTROY);
+        close(pad->shadow_fd);
+        ah_logf(AH_LOG_INFO, "pointer: shadow for %s removed", pad->key);
+    }
     /* Explicit release before close: close() would do it too, but an explicit
      * ungrab keeps the intent visible and runs before the fd disappears. */
     ioctl(pad->fd, EVIOCGRAB, &zero);
@@ -674,12 +1092,18 @@ static void pad_drop_all(struct daemon *d)
         pad_drop(d, i, NULL);
 }
 
-static void fusion_scan(struct daemon *d)
+static void pad_scan(struct daemon *d)
 {
     DIR *dir;
     struct dirent *entry;
 
-    if (!d->fusion.enabled)
+    if (!pads_wanted(d))
+        return;
+    /* Pointer-only mode attaches a pad only when there is a live pointer
+     * device to consume for: grabbing a pad with no shadow and no merge
+     * would make it invisible to Android for nothing.  The next scan (or
+     * pointer_retry) attaches it. */
+    if (!d->fusion.enabled && d->pointer_fd < 0)
         return;
     dir = opendir(INPUT_DIR);
     if (!dir) {
@@ -699,7 +1123,7 @@ static void fusion_scan(struct daemon *d)
         if (strncmp(entry->d_name, "event", 5) != 0)
             continue;
         join_path(node, sizeof(node), INPUT_DIR, entry->d_name);
-        if (pad_by_node(d, node) >= 0)
+        if (pad_by_node(d, node) >= 0 || pad_shadow_by_node(d, node) >= 0)
             continue;
         slot = pad_free_slot(d);
         if (slot < 0) {
@@ -731,12 +1155,13 @@ static void fusion_scan(struct daemon *d)
                 writable = true;
             }
         }
-        /*
-         * Grab before the pad reaches the merge.  A pad we cannot grab must
-         * not be merged either: apps would see the fusion pad *and* the
-         * physical one - exactly the double input fusion exists to remove.
-         */
-        {
+        if (d->fusion.enabled) {
+            /*
+             * Grab before the pad reaches the merge.  A pad we cannot grab
+             * must not be merged either: apps would see the fusion pad *and*
+             * the physical one - exactly the double input fusion exists to
+             * remove.
+             */
             int one = 1;
 
             if (ioctl(fd, EVIOCGRAB, &one) < 0) {
@@ -747,29 +1172,83 @@ static void fusion_scan(struct daemon *d)
                 close(fd);
                 continue;
             }
-        }
 
-        /* The key the registry decided on (vendor:product:connection), logged
-         * by fusion_pad_add, so a BT and a USB session of the same pad keep
-         * distinct, stable keys. */
-        pad = fusion_pad_add(&d->fusion, probe.key, probe.name,
-                             probe.connection, ah_now_ms());
-        if (!pad) {
-            close(fd);
+            /* The key the registry decided on (vendor:product:connection),
+             * logged by fusion_pad_add, so a BT and a USB session of the same
+             * pad keep distinct, stable keys. */
+            pad = fusion_pad_add(&d->fusion, probe.key, probe.name,
+                                 probe.connection, ah_now_ms());
+            if (!pad) {
+                close(fd);
+                continue;
+            }
+
+            if (!writable)
+                ah_logf(AH_LOG_WARN,
+                        "fusion: %s is read-only, rumble relay unavailable",
+                        pad->key);
+
+            handle = &d->pads[slot];
+            memset(handle, 0, sizeof(*handle));
+            handle->fd = fd;
+            handle->writable = writable;
+            snprintf(handle->node, sizeof(handle->node), "%s", node);
+            snprintf(handle->name, sizeof(handle->name), "%s", probe.name);
+            handle->id = probe.id;
+            snprintf(handle->key, sizeof(handle->key), "%s", pad->key);
+            for (int i = 0; i < FUSION_ABS_MAX; i++)
+                handle->axis_slot[i] = -1;
+            for (int axis = 0; axis < FUSION_AXIS_COUNT; axis++) {
+                uint16_t code = probe.axis_src[axis];
+
+                if (code == 0 || code > ABS_MAX)
+                    continue;
+                handle->axis_slot[code] = axis;
+                /* Rescale pads that do not speak the uinput range (-127..127
+                 * sticks, 10-bit triggers) instead of clamping them. */
+                if (probe.absinfo[code].present)
+                    fusion_pad_set_axis_range(&d->fusion,
+                                              fusion_pad_index(&d->fusion,
+                                                               pad->key),
+                                              axis, probe.absinfo[code].minimum,
+                                              probe.absinfo[code].maximum);
+            }
+            memcpy(handle->axis_src, probe.axis_src, sizeof(handle->axis_src));
+            memcpy(handle->absinfo, probe.absinfo, sizeof(handle->absinfo));
+            memcpy(handle->keybits, probe.keybits, sizeof(handle->keybits));
+            memcpy(handle->absbits, probe.absbits, sizeof(handle->absbits));
+            ah_logf(AH_LOG_INFO, "fusion: pad %s \"%s\" grabbed (%s)",
+                    pad->key, pad->name, writable ? "rw" : "ro");
             continue;
         }
 
-        if (!writable)
-            ah_logf(AH_LOG_WARN,
-                    "fusion: %s is read-only, rumble relay unavailable",
-                    pad->key);
+        /*
+         * Pointer shadow mode (#250): grab the pad and re-publish it through
+         * its own pass-through uinput device; it never enters the fusion
+         * registry.  A pad we cannot grab or cannot shadow is left alone -
+         * an ungrabbed pad visible to Android beats an invisible one.
+         */
+        {
+            int one = 1;
+
+            if (ioctl(fd, EVIOCGRAB, &one) < 0) {
+                ah_logf(AH_LOG_WARN,
+                        "pointer: cannot grab %04x:%04x (%s): %s",
+                        probe.id.vendor, probe.id.product, node,
+                        strerror(errno));
+                close(fd);
+                continue;
+            }
+        }
 
         handle = &d->pads[slot];
         memset(handle, 0, sizeof(*handle));
         handle->fd = fd;
         handle->writable = writable;
         snprintf(handle->node, sizeof(handle->node), "%s", node);
-        snprintf(handle->key, sizeof(handle->key), "%s", pad->key);
+        snprintf(handle->name, sizeof(handle->name), "%s", probe.name);
+        handle->id = probe.id;
+        snprintf(handle->key, sizeof(handle->key), "%s", probe.key);
         for (int i = 0; i < FUSION_ABS_MAX; i++)
             handle->axis_slot[i] = -1;
         for (int axis = 0; axis < FUSION_AXIS_COUNT; axis++) {
@@ -778,17 +1257,17 @@ static void fusion_scan(struct daemon *d)
             if (code == 0 || code > ABS_MAX)
                 continue;
             handle->axis_slot[code] = axis;
-            /* Rescale pads that do not speak the uinput range (-127..127
-             * sticks, 10-bit triggers) instead of clamping them. */
-            if (probe.absinfo[code].present)
-                fusion_pad_set_axis_range(&d->fusion,
-                                          fusion_pad_index(&d->fusion,
-                                                           pad->key),
-                                          axis, probe.absinfo[code].minimum,
-                                          probe.absinfo[code].maximum);
         }
-        ah_logf(AH_LOG_INFO, "fusion: pad %s \"%s\" grabbed (%s)", pad->key,
-                pad->name, writable ? "rw" : "ro");
+        memcpy(handle->axis_src, probe.axis_src, sizeof(handle->axis_src));
+        memcpy(handle->absinfo, probe.absinfo, sizeof(handle->absinfo));
+        memcpy(handle->keybits, probe.keybits, sizeof(handle->keybits));
+        memcpy(handle->absbits, probe.absbits, sizeof(handle->absbits));
+        if (!pad_shadow_attach(d, slot)) {
+            pad_release_fd(handle);
+            continue;
+        }
+        ah_logf(AH_LOG_INFO, "pointer: pad %s \"%s\" grabbed (shadow)",
+                handle->key, handle->name);
     }
     closedir(dir);
 }
@@ -806,28 +1285,31 @@ static bool pad_read(struct daemon *d, int slot)
 {
     struct pad_handle *pad = &d->pads[slot];
     struct input_event events[64];
+    struct shadow_source src;
+    struct pointer_state *ps = &d->pointer_pads[slot];
     int index = fusion_pad_index(&d->fusion, pad->key);
+    bool consume = pointer_consume(d);
     ssize_t n;
+
+    memset(&src, 0, sizeof(src));
+    src.name = pad->name;
+    src.id.bustype = pad->id.bustype;
+    src.id.vendor = pad->id.vendor;
+    src.id.product = pad->id.product;
+    src.id.version = pad->id.version;
+    src.keybits = pad->keybits;
+    src.keybits_len = sizeof(pad->keybits);
+    src.absbits = pad->absbits;
+    src.absbits_len = sizeof(pad->absbits);
+    src.absinfo = pad->absinfo;
+    src.axis_src = pad->axis_src;
 
     while ((n = read(pad->fd, events, sizeof(events))) > 0) {
         size_t count = (size_t)n / sizeof(events[0]);
 
-        for (size_t i = 0; i < count && index >= 0; i++) {
-            if (events[i].type == EV_KEY) {
-                /* The device capabilities are fixed at creation; merging a
-                 * code we never advertised would only add phantom state. */
-                if (fusion_key_supported(events[i].code))
-                    fusion_key_event(&d->fusion, index, events[i].code,
-                                     events[i].value);
-            } else if (events[i].type == EV_ABS) {
-                int axis = events[i].code <= ABS_MAX
-                               ? pad->axis_slot[events[i].code]
-                               : -1;
-
-                if (axis >= 0)
-                    fusion_abs_event(&d->fusion, index, axis, events[i].value,
-                                     ah_now_ms());
-            }
+        for (size_t i = 0; i < count; i++) {
+            if (!pad_event(d, pad, ps, &src, index, consume, &events[i]))
+                return false; /* shadow lost: drop the pad, not the loop */
         }
     }
     if (n < 0 && errno != EAGAIN && errno != EWOULDBLOCK && errno != EINTR)
@@ -1120,7 +1602,7 @@ static void mcu_release_state(struct daemon *d)
         mcu_release(d);
     }
     if (!d->grabbed)
-        pointer_release(&d->pointer, pointer_emit, d);
+        pointer_release(&d->pointer, pointer_emit, d, &d->pointer_shared);
     syskey_route(d, 0);
     d->good_frames = 0;
 }
@@ -1369,7 +1851,9 @@ static void mcu_parse(struct daemon *d)
 /* --- fusion mode transitions ---------------------------------------------- */
 
 /* Fusion on: the uinput device becomes the Xbox pad and every external pad is
- * grabbed and merged.  Fusion off: none of that, exactly the phase 5 device. */
+ * grabbed and merged.  Fusion off: none of that, exactly the phase 5 device -
+ * but with the pointer on, the pads come back grabbed and shadowed (#250).
+ * Both directions drop the pads first: their role (merge vs shadow) changes. */
 static void apply_fusion_mode(struct daemon *d, bool on)
 {
     /* Release what the old device still shows before it is destroyed. */
@@ -1378,10 +1862,8 @@ static void apply_fusion_mode(struct daemon *d, bool on)
     else if (!d->fusion_device && !d->grabbed)
         mcu_release(d);
 
-    if (!on) {
-        pad_drop_all(d);
-        fusion_clear_pads(&d->fusion);
-    }
+    pad_drop_all(d);
+    fusion_clear_pads(&d->fusion);
     if (d->own_fd >= 0) {
         close(d->own_fd);
         d->own_fd = -1;
@@ -1408,11 +1890,13 @@ static void apply_fusion_mode(struct daemon *d, bool on)
         d->own_fd = open_self_node();
         fusion_pad_add(&d->fusion, MCU_KEY, "RP5 internal (MCU)",
                        FUSION_CONN_MCU, ah_now_ms());
-        fusion_scan(d);
+        pad_scan(d);
         ah_logf(AH_LOG_INFO, "fusion ON: %d pad(s) merged",
                 d->fusion.pad_count);
     } else {
         ah_logf(AH_LOG_INFO, "fusion OFF: physical pads visible again");
+        if (pads_wanted(d))
+            pad_scan(d); /* the pointer re-attaches them as shadows */
     }
 }
 
@@ -1421,7 +1905,7 @@ static void fusion_rescan(struct daemon *d)
     if (d->uinput_fd < 0 || !d->fusion.enabled)
         return;
     fusion_check_missing(d);
-    fusion_scan(d);
+    pad_scan(d);
     ah_logf(AH_LOG_INFO, "fusion: rescan, %d pad(s)", d->fusion.pad_count);
 }
 
@@ -1444,50 +1928,84 @@ static void sync_grab(struct daemon *d)
         else
             mcu_release(d);
         /* Still allowed to emit: d->grabbed flips after this.  GRAB ON must not
-         * leave a mouse button held on the pointer device either. */
-        pointer_release(&d->pointer, pointer_emit, d);
+         * leave a mouse button held on the pointer device either, from any
+         * source (#250). */
+        pointer_release(&d->pointer, pointer_emit, d, &d->pointer_shared);
+        for (int i = 0; i < FUSION_MAX_PADS; i++)
+            pointer_release(&d->pointer_pads[i], pointer_emit, d,
+                            &d->pointer_shared);
         ah_logf(AH_LOG_INFO, "GRAB ON: uinput output suppressed");
     } else {
         d->prev_keys = 0;
         for (int i = 0; i < AXIS_COUNT; i++)
             d->prev_axes[i] = INT_MIN;
         fusion_reset_reported(&d->fusion);
-        pointer_release(&d->pointer, NULL, NULL);
+        pointer_release(&d->pointer, NULL, NULL, &d->pointer_shared);
+        for (int i = 0; i < FUSION_MAX_PADS; i++)
+            pointer_release(&d->pointer_pads[i], NULL, NULL,
+                            &d->pointer_shared);
+        pointer_shared_clear(&d->pointer_shared);
         ah_logf(AH_LOG_INFO, "GRAB OFF: uinput output resumed");
     }
     d->grabbed = now;
 }
 
 /*
- * Apply a live pointer switch change (#131).  A switch is a hard reset for
- * input: every button held on the gamepad and on the pointer is released (the
- * next MCU frame re-reports the physical state), the pointer's
- * velocity/fraction/scroll state is dropped, and the pointer uinput device is
- * created or destroyed - so with the switch off there is no mouse device at
- * all.
+ * Apply a live pointer switch change (#131, #250).  A switch is a hard reset
+ * for input: every button held on the gamepad and on the pointer is released
+ * from every source (the next MCU frame re-reports the physical state), the
+ * pointers' velocity/fraction/scroll state is dropped, and the pointer uinput
+ * device is created or destroyed - so with the switch off there is no mouse
+ * device at all.  With fusion off the pads opened for the pointer are
+ * dropped again (ungrabbed, closed, shadows destroyed); with fusion on the
+ * merged pads' consumed inputs are zeroed in the registry, and re-seeded
+ * from the pads on the way off.  A property change is never suppressed by
+ * GRAB: while grabbed everything here happens silently.
  */
 static void apply_pointer_switch(struct daemon *d)
 {
+    bool on = d->pointer.on;
+
     if (!d->grabbed) {
         if (d->fusion_device)
             fusion_release(&d->fusion, sink_emit, d);
         else
             mcu_release(d);
-        pointer_release(&d->pointer, pointer_emit, d);
+        pointer_release(&d->pointer, pointer_emit, d, &d->pointer_shared);
     } else {
         /* A tester owns the input: nothing may be injected, but the state must
          * still be clean for GRAB OFF. */
-        pointer_release(&d->pointer, NULL, NULL);
+        pointer_release(&d->pointer, NULL, NULL, &d->pointer_shared);
     }
+    for (int i = 0; i < FUSION_MAX_PADS; i++) {
+        pointer_release(&d->pointer_pads[i], d->grabbed ? NULL : pointer_emit,
+                        d, &d->pointer_shared);
+    }
+    pointer_shared_clear(&d->pointer_shared);
 
-    if (d->pointer.on) {
+    if (on) {
         if (d->pointer_fd < 0) {
             d->pointer_fd = create_pointer_uinput(d);
             d->last_pointer_ms = ah_now_ms();
         }
+        if (d->pointer_fd >= 0) {
+            pointer_consume_reconcile(d, true);
+            if (!d->fusion.enabled) {
+                d->last_scan_ms = 0;
+                pad_scan(d); /* attach shadow pads right away */
+            }
+        }
     } else {
+        /* Re-seed the merged pads before anything is released: the physical
+         * state is still readable through the grabbed fds. */
+        pointer_consume_reconcile(d, false);
+        if (!d->fusion.enabled)
+            pad_drop_all(d); /* the shadows die with their pads */
         pointer_destroy(d);
     }
+    for (int i = 0; i < FUSION_MAX_PADS; i++)
+        pointer_set_enabled(&d->pointer_pads[i], on);
+    d->pointer_consume_prev = pointer_consume(d);
 }
 
 /* /dev/uinput can be missing for a moment after boot; retry rather than
@@ -1616,7 +2134,7 @@ static void uinput_retry(struct daemon *d)
         d->own_fd = open_self_node();
         fusion_pad_add(&d->fusion, MCU_KEY, "RP5 internal (MCU)",
                        FUSION_CONN_MCU, now);
-        fusion_scan(d);
+        pad_scan(d);
     }
 }
 
@@ -1643,6 +2161,31 @@ static void mcu_connect(struct daemon *d)
     ah_logf(AH_LOG_INFO, "waiting for MCU status frames");
 }
 
+static int pad_attached_count(const struct daemon *d)
+{
+    int count = 0;
+
+    for (int i = 0; i < FUSION_MAX_PADS; i++) {
+        if (d->pads[i].fd >= 0)
+            count++;
+    }
+    return count;
+}
+
+/* Milliseconds until any pointer source wants to emit, or -1 (#250). */
+static int pointer_sources_timeout_ms(struct daemon *d, int64_t now)
+{
+    int best = pointer_timeout_ms(&d->pointer, now);
+
+    for (int i = 0; i < FUSION_MAX_PADS; i++) {
+        int ms = pointer_timeout_ms(&d->pointer_pads[i], now);
+
+        if (ms >= 0 && (best < 0 || ms < best))
+            best = ms;
+    }
+    return best;
+}
+
 /* Everything that must happen even when no fd is ready. */
 static void daemon_tick(struct daemon *d)
 {
@@ -1663,8 +2206,26 @@ static void daemon_tick(struct daemon *d)
     uinput_retry(d);
 
     pointer_retry(d);
-    if (!d->grabbed)
-        pointer_tick(&d->pointer, now, pointer_emit, d);
+    {
+        /* The pointer-owned inputs follow the live pointer device: reconcile
+         * the merged pads on every transition, including the ones pointer_retry
+         * and the write-error teardown cause (#250). */
+        bool consume = pointer_consume(d);
+
+        if (consume != d->pointer_consume_prev) {
+            d->pointer_consume_prev = consume;
+            pointer_consume_reconcile(d, consume);
+        }
+    }
+    if (!d->grabbed) {
+        /* Every source gets its own tick; they share only the mouse buttons. */
+        pointer_tick(&d->pointer, now, pointer_emit, d, &d->pointer_shared);
+        for (int i = 0; i < FUSION_MAX_PADS; i++) {
+            if (d->pads[i].fd >= 0)
+                pointer_tick(&d->pointer_pads[i], now, pointer_emit, d,
+                             &d->pointer_shared);
+        }
+    }
 
     if (d->uinput_fd >= 0 && d->fusion.enabled != d->fusion_device)
         apply_fusion_mode(d, d->fusion.enabled);
@@ -1680,7 +2241,7 @@ static void daemon_tick(struct daemon *d)
 
             d->last_scan_ms = now;
             fusion_check_missing(d);
-            fusion_scan(d);
+            pad_scan(d);
             /* Log the result only when it changed: a 2 s tick must not fill
              * logcat, but a pad that appears or disappears must be visible. */
             if (d->fusion.pad_count != merged)
@@ -1690,6 +2251,20 @@ static void daemon_tick(struct daemon *d)
         if (d->own_fd < 0 && now - d->last_self_ms >= SELF_NODE_MS) {
             d->last_self_ms = now;
             d->own_fd = open_self_node();
+        }
+    } else if (d->pointer.on) {
+        /* Pointer-only mode: the same 2 s / hotplug cadence, attaching and
+         * re-attaching shadow pads while the pointer device exists. */
+        if (d->uinput_fd >= 0 &&
+            (d->last_scan_ms == 0 || now - d->last_scan_ms >= FUSION_SCAN_MS)) {
+            int attached = pad_attached_count(d);
+
+            d->last_scan_ms = now;
+            fusion_check_missing(d);
+            pad_scan(d);
+            if (pad_attached_count(d) != attached)
+                ah_logf(AH_LOG_INFO, "pointer: scan: %d pad(s) attached",
+                        pad_attached_count(d));
         }
     }
 
@@ -1737,9 +2312,13 @@ int main(void)
     d.ctx.fusion = &d.fusion;
 
     /* External-display pointer (#131): off by default; the AshFall Parts switch
-     * in the Fusion QS dialog is the only writer. */
+     * in the Fusion QS dialog is the only writer.  #250 gives every source its
+     * own pointer state under one shared mouse-button bus. */
     pointer_defaults(&d.pointer);
     pointer_switch_read(&d.pointer);
+    for (int i = 0; i < FUSION_MAX_PADS; i++)
+        pointer_defaults(&d.pointer_pads[i]);
+    pointer_shared_init(&d.pointer_shared);
 
     d.control = control_create(&d.ctx);
     if (!d.control)
@@ -1764,15 +2343,6 @@ int main(void)
     fusion_reset_reported(&d.fusion);
     for (int i = 0; i < AXIS_COUNT; i++)
         d.prev_axes[i] = INT_MIN;
-    if (d.fusion.enabled) {
-        d.own_fd = open_self_node();
-        fusion_pad_add(&d.fusion, MCU_KEY, "RP5 internal (MCU)",
-                       FUSION_CONN_MCU, ah_now_ms());
-        fusion_scan(&d);
-    }
-    d.last_scan_ms = ah_now_ms();
-    ah_logf(AH_LOG_INFO, "fusion: %s", d.fusion.enabled ? "on" : "off");
-
     if (d.pointer.on) {
         d.pointer_fd = create_pointer_uinput(&d);
         d.last_pointer_ms = ah_now_ms();
@@ -1780,6 +2350,19 @@ int main(void)
     } else {
         ah_logf(AH_LOG_INFO, "pointer: off");
     }
+    /* The shadow pads attach after the pointer device exists: consuming for a
+     * pointer that is not there is what pads must never lose inputs to. */
+    if (d.fusion.enabled) {
+        d.own_fd = open_self_node();
+        fusion_pad_add(&d.fusion, MCU_KEY, "RP5 internal (MCU)",
+                       FUSION_CONN_MCU, ah_now_ms());
+        pad_scan(&d);
+    } else if (pads_wanted(&d)) {
+        pad_scan(&d); /* pointer on: attach the shadow pads from the start */
+    }
+    d.last_scan_ms = ah_now_ms();
+    ah_logf(AH_LOG_INFO, "fusion: %s", d.fusion.enabled ? "on" : "off");
+    d.pointer_consume_prev = pointer_consume(&d);
 
     /*
      * One loop for everything: the MCU (which can disappear across a screen
@@ -1838,9 +2421,9 @@ int main(void)
 
         timeout = d.mcu_fd >= 0 && d.good_frames ? PROP_REFRESH_MS : 500;
         /* The pointer emits on a fixed 125 Hz tick, so the loop must wake for
-         * it even when no MCU frame arrives. */
+         * it even when no MCU frame arrives - for every source (#250). */
         if (d.pointer_fd >= 0 && !d.grabbed) {
-            int pointer_ms = pointer_timeout_ms(&d.pointer, ah_now_ms());
+            int pointer_ms = pointer_sources_timeout_ms(&d, ah_now_ms());
 
             if (pointer_ms >= 0 && pointer_ms < timeout)
                 timeout = pointer_ms;
@@ -1947,8 +2530,12 @@ int main(void)
         else
             mcu_release(&d);
     }
-    /* No stuck mouse button when the daemon restarts. */
-    pointer_release(&d.pointer, d.grabbed ? NULL : pointer_emit, &d);
+    /* No stuck mouse button when the daemon restarts, from any source. */
+    pointer_release(&d.pointer, d.grabbed ? NULL : pointer_emit, &d,
+                    &d.pointer_shared);
+    for (int i = 0; i < FUSION_MAX_PADS; i++)
+        pointer_release(&d.pointer_pads[i], d.grabbed ? NULL : pointer_emit,
+                        &d, &d.pointer_shared);
     pointer_destroy(&d);
     pad_drop_all(&d);
     control_destroy(d.control);

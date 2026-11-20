@@ -7,6 +7,7 @@
 #include "mapping.h"
 #include "plat.h"
 
+#include <limits.h>
 #include <math.h>
 #include <stdio.h>
 #include <string.h>
@@ -142,8 +143,72 @@ static bool trigger_down(int value, bool was_down)
     return was_down;
 }
 
+void pointer_shared_init(struct pointer_shared *sh)
+{
+    if (sh)
+        memset(sh, 0, sizeof(*sh));
+}
+
+void pointer_shared_clear(struct pointer_shared *sh)
+{
+    pointer_shared_init(sh);
+}
+
+int pointer_shared_button(struct pointer_shared *sh, bool is_left, bool down,
+                          session_emit_fn emit, void *ctx)
+{
+    int *refs;
+    bool *reported;
+    uint16_t code;
+    int emitted = 0;
+
+    if (!sh)
+        return 0;
+    refs = is_left ? &sh->left : &sh->right;
+    reported = is_left ? &sh->left_on : &sh->right_on;
+    code = is_left ? BTN_LEFT : BTN_RIGHT;
+    if (down) {
+        if (*refs < INT_MAX)
+            (*refs)++;
+        if (*refs == 1 && !*reported) {
+            *reported = true;
+            if (emit) {
+                emit(ctx, EV_KEY, code, 1);
+                emitted++;
+            }
+        }
+    } else {
+        if (*refs > 0)
+            (*refs)--;
+        if (*refs == 0 && *reported) {
+            *reported = false;
+            if (emit) {
+                emit(ctx, EV_KEY, code, 0);
+                emitted++;
+            }
+        }
+    }
+    return emitted;
+}
+
+/* One source's button transitions, either straight to the device or through
+ * the shared bus that de-duplicates across sources (#250). */
+static void emit_button(bool is_left, bool down, session_emit_fn emit,
+                        void *ctx, int *emitted, struct pointer_shared *sh)
+{
+    uint16_t code = is_left ? BTN_LEFT : BTN_RIGHT;
+
+    if (sh) {
+        *emitted += pointer_shared_button(sh, is_left, down, emit, ctx);
+        return;
+    }
+    emit(ctx, EV_KEY, code, down);
+    (*emitted)++;
+}
+
 static void pointer_buttons(struct pointer_state *ps, session_emit_fn emit,
-                            void *ctx, int *emitted)
+                            void *ctx, int *emitted,
+                            struct pointer_shared *sh)
 {
     /* R1 is the left button: holding it while the right stick moves is a drag.
      * R2 is the right button, with the same 50 %/37.5 % trigger hysteresis the
@@ -156,13 +221,11 @@ static void pointer_buttons(struct pointer_state *ps, session_emit_fn emit,
 
     if (left != ps->btn_left) {
         ps->btn_left = left;
-        emit(ctx, EV_KEY, BTN_LEFT, left);
-        (*emitted)++;
+        emit_button(true, left, emit, ctx, emitted, sh);
     }
     if (right != ps->btn_right) {
         ps->btn_right = right;
-        emit(ctx, EV_KEY, BTN_RIGHT, right);
-        (*emitted)++;
+        emit_button(false, right, emit, ctx, emitted, sh);
     }
 }
 
@@ -290,22 +353,31 @@ static void pointer_move(struct pointer_state *ps, double dt_s,
     }
 }
 
-int pointer_release(struct pointer_state *ps, session_emit_fn emit, void *ctx)
+int pointer_release(struct pointer_state *ps, session_emit_fn emit, void *ctx,
+                    struct pointer_shared *sh)
 {
     int emitted = 0;
 
     if (!ps)
         return 0;
-    if (emit) {
+    if (emit || sh) {
         if (ps->btn_left) {
-            emit(ctx, EV_KEY, BTN_LEFT, 0);
-            emitted++;
+            if (sh) {
+                emitted += pointer_shared_button(sh, true, false, emit, ctx);
+            } else if (emit) {
+                emit(ctx, EV_KEY, BTN_LEFT, 0);
+                emitted++;
+            }
         }
         if (ps->btn_right) {
-            emit(ctx, EV_KEY, BTN_RIGHT, 0);
-            emitted++;
+            if (sh) {
+                emitted += pointer_shared_button(sh, false, false, emit, ctx);
+            } else if (emit) {
+                emit(ctx, EV_KEY, BTN_RIGHT, 0);
+                emitted++;
+            }
         }
-        if (emitted > 0)
+        if (emitted > 0 && emit)
             emit(ctx, EV_SYN, SYN_REPORT, 0);
     }
 
@@ -326,7 +398,7 @@ int pointer_release(struct pointer_state *ps, session_emit_fn emit, void *ctx)
 }
 
 int pointer_tick(struct pointer_state *ps, int64_t now_ms,
-                 session_emit_fn emit, void *ctx)
+                 session_emit_fn emit, void *ctx, struct pointer_shared *sh)
 {
     int emitted = 0;
     double dt_s;
@@ -356,7 +428,7 @@ int pointer_tick(struct pointer_state *ps, int64_t now_ms,
         ps->next_tick_ms = now_ms + POINTER_TICK_MS;
     }
 
-    pointer_buttons(ps, emit, ctx, &emitted);
+    pointer_buttons(ps, emit, ctx, &emitted, sh);
     pointer_scroll(ps, now_ms, emit, ctx, &emitted);
     pointer_move(ps, dt_s, emit, ctx, &emitted);
 
