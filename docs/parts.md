@@ -105,7 +105,7 @@ immediately to the properties from §2 of the contract; there is no Apply button
 |---|---|---|
 | AshFall settings | `HandheldActivity` | Fan / Lighting / Controller / Power / Memory rows with live summaries, daemon note |
 | Fan | `FanActivity` | main switch, live graph, presets, curve, manual %, fan speed limits, kick, screen-off, throttling override, GPU max frequency |
-| Fan presets | `PresetActivity` | create / rename / duplicate / delete / change mode |
+| Fan presets | `PresetActivity` | list + per-preset editor: mode, manual %, curve, apply, duplicate, reset, rename, delete |
 | Curve | `CurveActivity` | drag-and-D-pad curve editor, live marker, live preview, stress test |
 | Lighting | `LightingActivity` | switch, target, live colour picker, brightness, effect (incl. Match screen), screen rate/delay, speed |
 | Controller | `ControllerActivity` | tester, calibration wizard, factory reset, deadzones, fusion |
@@ -249,10 +249,21 @@ before the first unlock:
   slider; every other built-in has no curve to edit.
 * A user preset is mode + `manual_pct` *or* `curve`; ids are
   `user.` + 8 hex characters (≤ 32 characters, matching the property limit).
-* The editor offers Activate / Change mode / Curve (Smart only) / Rename /
-  Duplicate / Delete for every preset except Off; Off shows its mode read-only
-  with no Rename/Delete.  Duplicating a built-in creates a normal user preset
-  whose mode is editable.
+* The editor is the Power-editor shape (`PresetActivity`): a list of every
+  preset with the active one marked, and one screen per preset with a read-only
+  mode / manual % / curve summary, a single-choice **Mode** row (Quiet /
+  Balanced / Performance / Manual / Smart — Off is never offered there), the
+  **Manual output** slider (Manual only), the **Curve** row (Smart only, opens
+  `CurveActivity` for that preset), and Apply / Duplicate / Reset (stock ids) /
+  Rename / Delete.  Every value change calls `PresetStore.save()` and, when the
+  edited preset is the active one, also `Fan.apply(preset)`, so the daemon
+  follows immediately.  A tap on the Off row activates the fan-off state
+  directly instead of opening an editor.  Duplicating a built-in creates a
+  normal user preset whose mode is editable.
+* `PresetStore.resetPreset(preset)` restores a stock id's `name`, `mode`,
+  `manual_pct` and `curve` (re-creating a deleted stock preset and keeping its
+  id, so an active preset stays active); it returns `false` for user presets
+  and never re-creates `builtin.off`.
 * The **active preset** is resolved in one place, `Fan.activePreset(store)`:
   use `persist.ashfall.fan.preset` when it still names a preset, otherwise map
   the daemon-visible `mode` to the matching built-in

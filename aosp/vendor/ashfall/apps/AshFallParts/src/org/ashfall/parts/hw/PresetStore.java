@@ -212,6 +212,43 @@ public final class PresetStore {
     }
 
     /**
+     * Restores one stock preset to the values it shipped with, like
+     * {@link PowerPresetStore#resetPreset}.  The id is kept, so the active
+     * preset stays active.  A deleted stock id is re-created; user presets are
+     * left alone and return {@code false}.  {@code builtin.off} is the fan-off
+     * state, not a preset, so it is not restored here and can never come back
+     * this way.
+     */
+    public synchronized boolean resetPreset(Preset preset) {
+        if (preset == null || preset.id == null) {
+            return false;
+        }
+        final Preset stock = stockPreset(preset.id);
+        if (stock == null) {
+            return false;
+        }
+        final Preset existing = byId(preset.id);
+        if (existing == null) {
+            mPresets.add(stock);
+            sortPresets();
+            persist();
+            return true;
+        }
+        existing.name = stock.name;
+        existing.mode = stock.mode;
+        existing.manualPct = stock.manualPct;
+        existing.curve = stock.curve;
+        existing.builtin = true;
+        persist();
+        return true;
+    }
+
+    /** The five stock ids that {@link #resetPreset} can restore. */
+    public static boolean isStockId(String id) {
+        return stockPreset(id) != null;
+    }
+
+    /**
      * Full reset: remove every preset, re-insert the six stock defaults, apply
      * Balanced.
      */
@@ -324,16 +361,43 @@ public final class PresetStore {
 
     private void insertStockDefaults() {
         mPresets.add(Preset.builtin(ID_OFF, "Off", Preset.MODE_OFF));
-        mPresets.add(Preset.builtin(ID_QUIET, "Quiet", Preset.MODE_QUIET));
-        mPresets.add(Preset.builtin(ID_BALANCED, "Balanced", Preset.MODE_BALANCED));
-        final Preset max = Preset.builtin(ID_MAX, "Performance", Preset.MODE_MAX);
-        mPresets.add(max);
-        final Preset manual = Preset.builtin(ID_MANUAL, "Manual", Preset.MODE_MANUAL);
-        manual.manualPct = Fan.DEFAULT_MANUAL_PCT;
-        mPresets.add(manual);
-        final Preset smart = Preset.builtin(ID_SMART, "Smart (default)", Preset.MODE_SMART);
-        smart.curve = Curve.DEFAULT;
-        mPresets.add(smart);
+        mPresets.add(stockPreset(ID_QUIET));
+        mPresets.add(stockPreset(ID_BALANCED));
+        mPresets.add(stockPreset(ID_MAX));
+        mPresets.add(stockPreset(ID_MANUAL));
+        mPresets.add(stockPreset(ID_SMART));
+    }
+
+    /**
+     * The factory values of one stock preset id, or {@code null} for
+     * {@link #ID_OFF} and for user ids.  This is the single source for both the
+     * first seed and "Reset to factory values".
+     */
+    private static Preset stockPreset(String id) {
+        if (id == null) {
+            return null;
+        }
+        switch (id) {
+            case ID_QUIET:
+                return Preset.builtin(ID_QUIET, "Quiet", Preset.MODE_QUIET);
+            case ID_BALANCED:
+                return Preset.builtin(ID_BALANCED, "Balanced", Preset.MODE_BALANCED);
+            case ID_MAX:
+                return Preset.builtin(ID_MAX, "Performance", Preset.MODE_MAX);
+            case ID_MANUAL: {
+                final Preset manual = Preset.builtin(ID_MANUAL, "Manual", Preset.MODE_MANUAL);
+                manual.manualPct = Fan.DEFAULT_MANUAL_PCT;
+                return manual;
+            }
+            case ID_SMART: {
+                final Preset smart =
+                        Preset.builtin(ID_SMART, "Smart (default)", Preset.MODE_SMART);
+                smart.curve = Curve.DEFAULT;
+                return smart;
+            }
+            default:
+                return null;
+        }
     }
 
     private void repairActive() {

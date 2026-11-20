@@ -87,7 +87,7 @@
     <string name="fan_preset_curve_summary">Curve, %1$d points</string>
     <string name="fan_preset_fixed_summary">%1$s</string>
     <string name="fan_preset_edit_title">Edit presets</string>
-    <string name="fan_preset_edit_summary">Add, rename, duplicate or delete presets</string>
+    <string name="fan_preset_edit_summary">Edit the mode, manual % and curve of every preset</string>
     <string name="fan_preset_none">Custom values</string>
     <string name="fan_new_preset">New preset</string>
     <string name="fan_new_preset_default">Preset %1$d</string>
@@ -164,8 +164,6 @@
     <!-- Preset editor -->
     <string name="preset_builtin_summary">Built-in · %1$s</string>
     <string name="preset_user_summary">%1$s · %2$s</string>
-    <string name="preset_actions">%1$s</string>
-    <string name="preset_change_mode">Change mode</string>
     <string name="fan_preset_none_custom">Custom</string>
     <string name="preset_delete_confirm">Delete “%1$s”?</string>
     <string name="preset_delete_confirm_body">Removed from this device. If it was active, the fallback preset is applied.</string>
@@ -177,6 +175,21 @@
     <string name="preset_rename_failed">Could not rename preset</string>
     <string name="preset_name_empty">Enter a name</string>
     <string name="preset_limit">At most 32 presets</string>
+
+    <!-- Fan preset editor, list + one screen per preset (#265) -->
+    <string name="preset_editor_edit_title">Edit preset</string>
+    <string name="preset_editor_active_note">Active</string>
+    <string name="preset_editor_values_title">Values</string>
+    <string name="preset_editor_mode_title">Mode</string>
+    <string name="preset_editor_manual_title">Manual output</string>
+    <string name="preset_editor_apply_title">Apply this preset</string>
+    <string name="preset_editor_apply_active">This is the active preset</string>
+    <string name="preset_editor_apply_inactive">Apply these values to the device</string>
+    <string name="preset_editor_applied">Preset applied</string>
+    <string name="preset_editor_duplicate_summary">Create an editable copy of this preset</string>
+    <string name="preset_editor_delete_summary">Remove this preset from the list</string>
+    <string name="preset_editor_reset_one_title">Reset to factory values</string>
+    <string name="preset_editor_reset_one_summary">Restore this built-in preset to the values it shipped with</string>
 
     <!-- Curve editor -->
     <string name="curve_hint">Drag a point, or use the D-pad. A adds a point, X deletes it.</string>
