@@ -21,4 +21,10 @@
     <color name="fan_graph_temp">#FFFFB74D</color>
     <color name="fan_graph_pct">#FF64B5F6</color>
     <color name="fan_graph_rpm">#FF81C784</color>
+
+    <!-- Power graph clock series (#250.4) for the night and pure-black themes. -->
+    <color name="fan_graph_clock_silver">#FFCBD5E1</color>
+    <color name="fan_graph_clock_gold">#FFFCD34D</color>
+    <color name="fan_graph_clock_prime">#FFC084FC</color>
+    <color name="fan_graph_clock_gpu">#FF2DD4BF</color>
 </resources>

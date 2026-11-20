@@ -117,6 +117,10 @@
             </LinearLayout>
         </LinearLayout>
 
+        <!-- Four colour-coded clock segments (#264) on the 1080 px / 480 dpi
+             page: at the summary size the bulleted line is 347 dp wide against
+             328 dp of row, so it is set one step down to keep it on one line
+             without clipping. -->
         <TextView
             android:id="@+id/power_legend_clocks"
             style="@style/AshFallPreferenceSummary"
@@ -124,7 +128,8 @@
             android:layout_height="wrap_content"
             android:layout_marginTop="2dp"
             android:focusable="false"
-            android:singleLine="true" />
+            android:singleLine="true"
+            android:textSize="12sp" />
 
         <org.ashfall.parts.ui.FanGraphView
             android:id="@+id/power_graph"

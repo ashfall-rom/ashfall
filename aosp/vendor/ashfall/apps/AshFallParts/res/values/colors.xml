@@ -42,4 +42,12 @@
     <color name="fan_graph_temp">#FFC2410C</color>
     <color name="fan_graph_pct">#FF1D4ED8</color>
     <color name="fan_graph_rpm">#FF15803D</color>
+
+    <!-- Power graph clock series (#250.4): silver/gold/prime/GPU clocks on the
+         shared MHz (third) axis.  Day tints are dark enough to read on the
+         light Settings surface. -->
+    <color name="fan_graph_clock_silver">#FF64748B</color>
+    <color name="fan_graph_clock_gold">#FFB45309</color>
+    <color name="fan_graph_clock_prime">#FF9333EA</color>
+    <color name="fan_graph_clock_gpu">#FF0D9488</color>
 </resources>
