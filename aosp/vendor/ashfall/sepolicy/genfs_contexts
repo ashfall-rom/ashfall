@@ -59,13 +59,3 @@ genfscon sysfs /devices/system/cpu/cpu7/cpufreq u:object_r:ashfall_cpu_sysfs:s0
 
 # Memory (phase 6, #141): no entry.  The swapfile lives on /data
 # (file_contexts), and zram was removed in wave 3 (issue #156 item 7).
-
-# Charging separation (#140).  The retail factory HAL's chargerEnable() is a
-# no-op on this kernel (its mmid daemon wants battery/input_suspend, which does
-# not exist), so ashfall-hwd drives the QTI charger class restricted-charging
-# pair instead: restrict_chg=1 selects the restricted charge current and
-# restrict_cur sets it.  restrict_cur=0 stops battery charging while the
-# adapter keeps powering the device.  /sys/class/qcom-battery is a real
-# directory (not a symlink), so these are the inode paths the kernel labels.
-genfscon sysfs /class/qcom-battery/restrict_chg u:object_r:ashfall_charger_sysfs:s0
-genfscon sysfs /class/qcom-battery/restrict_cur u:object_r:ashfall_charger_sysfs:s0

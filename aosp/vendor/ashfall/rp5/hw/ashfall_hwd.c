@@ -65,18 +65,6 @@ _Static_assert(HWD_VALUE_WATCH_MAX >= FAN_CURVE_MAX_LEN + 1,
 #define PROP_CPU_GOV "persist.ashfall.perf.cpu_gov"
 
 #define PROP_MEM_SWAP_MB "persist.ashfall.mem.swap_mb"
-#define PROP_CHARGE_SEP "persist.ashfall.batt.charge_sep"
-
-/* The retail vendor factory HAL's chargerEnable() sends a command to the mmi
- * daemon, which looks for /sys/class/power_supply/battery/input_suspend - a
- * node this kernel does not have, so it is a silent no-op (#140).  The QTI
- * charger class exposes the restricted-charging flag instead; the SMB5 USB
- * input current limit is the fallback.  hwd is root, owns these writes and
- * restores the saved limit when separation is turned off. */
-#define CHARGE_RESTRICT "/sys/class/qcom-battery/restrict_chg"
-#define CHARGE_RESTRICT_CUR "/sys/class/qcom-battery/restrict_cur"
-#define CHARGE_RESTRICT_CUR_DEFAULT 1000000
-#define CHARGE_SEP_REASSERT_MS 30000
 
 #define STATUS_FAN_TEMP "ashfall.status.fan.temp"
 #define STATUS_FAN_PCT "ashfall.status.fan.pct"
@@ -253,117 +241,6 @@ static void read_fan_preview(fan_state *fan, bool live_fresh, bool *present,
         fan->preview_valid = valid;
         *changed = true;
     }
-}
-
-/* Charge separation (#140): the property is written by Settings/system_app;
- * this daemon applies it because the vendor factory HAL is a no-op on this
- * kernel (its mmid daemon wants battery/input_suspend, which does not exist).
- *
- * The control is the QTI charger class restricted-charging pair under
- * /sys/class/qcom-battery: restrict_chg=1 switches the charger to the
- * "restricted" charge current and restrict_cur sets that current.  With
- * restrict_chg=1 and restrict_cur=0 the fuel gauge reports 0 A and the battery
- * stops taking charge while the adapter keeps powering the device - the
- * bypass behaviour the settings switch promises.  Both nodes are root-owned
- * and relabelled to ashfall_charger_sysfs.
- *
- * The vendor charging stack recomputes the charge current on adapter plug and
- * on thermal events, so a held request is re-asserted on a slow timer rather
- * than trusted once. */
-static int charge_sep_state = -1;
-static int charge_cur_saved = -1;
-static int64_t charge_sep_reassert_ms;
-
-static int read_int_sysfs(const char *path)
-{
-    FILE *file = fopen(path, "r");
-    int value = -1;
-
-    if (!file)
-        return -1;
-    if (fscanf(file, "%d", &value) != 1)
-        value = -1;
-    fclose(file);
-    return value;
-}
-
-static bool write_int_sysfs(const char *path, int value)
-{
-    FILE *file = fopen(path, "w");
-    bool ok;
-
-    if (!file)
-        return false;
-    ok = fprintf(file, "%d", value) > 0 && fflush(file) == 0 &&
-         ferror(file) == 0;
-    fclose(file);
-    return ok && read_int_sysfs(path) == value;
-}
-
-/* The restricted current is restored to what the vendor stack had set (1 A on
- * the RP5) or, when the daemon restarted while it was zeroed, to that default. */
-static int charge_cur_restore(void)
-{
-    return charge_cur_saved > 0 ? charge_cur_saved
-                                : CHARGE_RESTRICT_CUR_DEFAULT;
-}
-
-static void charge_sep_apply(bool on)
-{
-    if (on) {
-        const int cur = read_int_sysfs(CHARGE_RESTRICT_CUR);
-        bool ok;
-
-        if (cur > 0)
-            charge_cur_saved = cur;
-        ok = write_int_sysfs(CHARGE_RESTRICT_CUR, 0) &&
-             write_int_sysfs(CHARGE_RESTRICT, 1);
-        if (ok) {
-            ah_logf(AH_LOG_INFO, "batt: separation on (charge current 0)");
-        } else {
-            ah_logf(AH_LOG_WARN, "batt: separation unavailable (%s, %s)",
-                    CHARGE_RESTRICT, CHARGE_RESTRICT_CUR);
-        }
-        return;
-    }
-    if (!write_int_sysfs(CHARGE_RESTRICT_CUR, charge_cur_restore()))
-        ah_logf(AH_LOG_WARN, "batt: cannot restore %s", CHARGE_RESTRICT_CUR);
-    if (!write_int_sysfs(CHARGE_RESTRICT, 0))
-        ah_logf(AH_LOG_WARN, "batt: cannot clear %s", CHARGE_RESTRICT);
-    ah_logf(AH_LOG_INFO, "batt: separation off (charge current %d)",
-            charge_cur_restore());
-}
-
-static void charge_sep_tick(int64_t now)
-{
-    char value[8];
-    const bool on = prop_get_str(PROP_CHARGE_SEP, value, sizeof(value)) > 0
-            && strcmp(value, "1") == 0;
-
-    if (charge_sep_state < 0) {
-        /* First loop: apply a stored request, and clear a restriction left
-         * behind by a daemon restart that happened while it was on. */
-        charge_sep_state = on ? 1 : 0;
-        if (on) {
-            charge_sep_apply(true);
-            charge_sep_reassert_ms = now + CHARGE_SEP_REASSERT_MS;
-        } else if (read_int_sysfs(CHARGE_RESTRICT) == 1 ||
-                   read_int_sysfs(CHARGE_RESTRICT_CUR) == 0) {
-            charge_sep_apply(false);
-        }
-        return;
-    }
-    if ((int)on != charge_sep_state) {
-        charge_sep_state = on ? 1 : 0;
-        charge_sep_apply(on);
-        charge_sep_reassert_ms = now + CHARGE_SEP_REASSERT_MS;
-        return;
-    }
-    if (!on || now < charge_sep_reassert_ms)
-        return;
-    charge_sep_reassert_ms = now + CHARGE_SEP_REASSERT_MS;
-    write_int_sysfs(CHARGE_RESTRICT_CUR, 0);
-    write_int_sysfs(CHARGE_RESTRICT, 1);
 }
 
 /* ashfall.ui.led_override is honoured only while its publisher heartbeat
@@ -740,7 +617,6 @@ int main(void)
                           hwd_ui_heartbeat_fresh(&led_beat, now), &present,
                           &changed);
     }
-    charge_sep_tick(now);
     last_temp = thermal_hottest_tenths(&thermal);
     next_thermal_ms = now + THERMAL_SWEEP_MS;
     fan_control_tick(&fan, last_temp, now, screen_on);
@@ -852,7 +728,6 @@ int main(void)
             read_led_settings(&led.settings, live, &present, &changed);
             if (memcmp(&before, &led.settings, sizeof(before)) != 0)
                 force_led = true;
-            charge_sep_tick(now);
             if (had_override && !led.settings.override_valid) {
                 changed = true;
                 force_led = true;
