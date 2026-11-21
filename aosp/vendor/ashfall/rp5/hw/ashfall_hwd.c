@@ -59,6 +59,7 @@ _Static_assert(HWD_VALUE_WATCH_MAX >= FAN_CURVE_MAX_LEN + 1,
 #define PROP_PERF_OVERRIDE "ashfall.perf.throttle_override"
 #define PROP_PERF_PERMANENT "persist.ashfall.perf.throttle_override_permanent"
 #define PROP_GPU_MAX_MHZ "persist.ashfall.perf.gpu_max_mhz"
+#define PROP_GPU_IDLE_MS "persist.ashfall.perf.gpu_idle_ms"
 #define PROP_CPU_MAX_SILVER "persist.ashfall.perf.cpu_max_silver"
 #define PROP_CPU_MAX_GOLD "persist.ashfall.perf.cpu_max_gold"
 #define PROP_CPU_MAX_PRIME "persist.ashfall.perf.cpu_max_prime"
@@ -908,6 +909,11 @@ int main(void)
             }
         }
         if (now >= next_status_ms) {
+            /* KGSL idle timer from the applied preset (#130); the thermal
+             * override always wins and parks the GPU at the stock timer. */
+            gpu_apply_idle_ms(&gpu, throttle.active ? 0
+                                  : prop_get_int_range(PROP_GPU_IDLE_MS, 0, 0,
+                                                       GPU_IDLE_MAX_MS));
             fan.rpm = fan_read_rpm();
             publish_status(&fan, last_temp, &status, &next_status_ms, now,
                            hwd_status_interval_ms(fan_live, power_live));

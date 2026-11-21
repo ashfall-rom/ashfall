@@ -304,3 +304,39 @@ int gpu_load_pct(void)
         pct = 100;
     return pct;
 }
+
+int gpu_apply_idle_ms(gpu_state *state, int request_ms)
+{
+    int want = request_ms;
+    static bool logged_missing;
+    const char *path;
+
+    if (!state)
+        return -1;
+    if (want <= 0)
+        want = GPU_IDLE_STOCK_MS;
+    if (want < GPU_IDLE_STOCK_MS)
+        want = GPU_IDLE_STOCK_MS;
+    if (want > GPU_IDLE_MAX_MS)
+        want = GPU_IDLE_MAX_MS;
+    if (state->idle_ms == want)
+        return want;
+
+    path = pick_path(GPU_IDLE_TIMER, GPU_IDLE_TIMER_LEGACY);
+    if (!path) {
+        if (!logged_missing) {
+            logged_missing = true;
+            ah_logf(AH_LOG_WARN, "gpu: %s unavailable; idle timer unchanged",
+                    GPU_IDLE_TIMER);
+        }
+        return -1;
+    }
+    if (sysfs_write_int(path, want) != 0) {
+        ah_logf(AH_LOG_WARN, "gpu: idle_timer <- %d failed", want);
+        return -1;
+    }
+    state->idle_ms = want;
+    ah_logf(AH_LOG_INFO, "gpu: idle_timer %d ms (requested %d ms)", want,
+            request_ms);
+    return want;
+}

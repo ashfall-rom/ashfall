@@ -344,6 +344,8 @@
     <string name="power_governor_powersave_note">Pins all cores to their lowest step. The caps cannot be changed while it is selected.</string>
     <string name="power_governor_performance_note">Holds all cores at maximum. The caps still apply.</string>
     <string name="power_gpu_title">GPU max frequency</string>
+    <string name="power_gpu_idle_title">Keep GPU clocks between bursts</string>
+    <string name="power_gpu_idle_summary">Hold the GPU clock for 10 s after the last frame: smoother menus and short actions, no measurable battery cost</string>
     <string name="power_gpu_value_305">305 MHz (preset minimum)</string>
     <string name="power_gpu_value_670">670 MHz (stock, default)</string>
     <string name="power_gpu_value_765">765 MHz</string>

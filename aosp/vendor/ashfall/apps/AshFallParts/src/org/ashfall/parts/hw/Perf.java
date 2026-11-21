@@ -44,6 +44,16 @@ public final class Perf {
 
     /** Requested GPU cap: 305..1000 MHz, default 670 (docs/phase6.md §3). */
     public static final String GPU_MAX_MHZ = "persist.ashfall.perf.gpu_max_mhz";
+    /**
+     * GPU idle timer request in ms (issue #130): 0 keeps the stock 80 ms,
+     * 10000 is the "keep the GPU clock between bursts" Performance option.
+     * The value belongs to the applied preset, not to a global setting.
+     */
+    public static final String GPU_IDLE_MS = "persist.ashfall.perf.gpu_idle_ms";
+    /** Stock KGSL idle timer, and the value the Power editor offers. */
+    public static final int GPU_IDLE_STOCK_MS = 80;
+    public static final int GPU_IDLE_PERFORMANCE_MS = 10000;
+    public static final int GPU_IDLE_MAX_MS = 60000;
     /** Actual cap applied by {@code ashfall-hwd}, in MHz. */
     public static final String STATUS_GPU_MAX_MHZ = "ashfall.status.perf.gpu_max_mhz";
     /** Daemon state: 0 stock (<= 670), 1 OC (> 670), -1 sysfs unavailable. */
@@ -160,6 +170,24 @@ public final class Perf {
         return sanitizeGpuMhz(Props.getInt(GPU_MAX_MHZ, GPU_STOCK_MHZ));
     }
 
+    /** The requested GPU idle timer in ms; 0 = stock. */
+    public static int gpuIdleMs() {
+        if (mockEnabled()) {
+            return Mock.gpuIdleMs;
+        }
+        return sanitizeGpuIdleMs(Props.getInt(GPU_IDLE_MS, 0));
+    }
+
+    /** Writes the idle timer request: 0 (stock) or 80..60000 ms. */
+    public static void setGpuIdleMs(int ms) {
+        final int value = sanitizeGpuIdleMs(ms);
+        if (mockEnabled()) {
+            Mock.gpuIdleMs = value;
+            return;
+        }
+        Props.setInt(GPU_IDLE_MS, value);
+    }
+
     /** Writes the requested cap; out-of-range values are stored as stock. */
     public static void setGpuRequestedMhz(int mhz) {
         final int value = sanitizeGpuMhz(mhz);
@@ -213,6 +241,13 @@ public final class Perf {
                 && "1".equals(Props.get(MOCK_PROP, "0"));
     }
 
+    private static int sanitizeGpuIdleMs(int ms) {
+        if (ms <= 0) {
+            return 0;
+        }
+        return Math.min(GPU_IDLE_MAX_MS, Math.max(GPU_IDLE_STOCK_MS, ms));
+    }
+
     private static int sanitizeGpuMhz(int mhz) {
         return mhz >= GPU_MIN_MHZ && mhz <= GPU_MAX_MHZ_VALUE ? mhz : GPU_STOCK_MHZ;
     }
@@ -234,6 +269,7 @@ public final class Perf {
     /** In-process state of the emulator fake daemon (test-only). */
     private static final class Mock {
         static int gpuRequested = GPU_STOCK_MHZ;
+        static int gpuIdleMs;
         static boolean override;
         static boolean permanent;
         static int throttleStatus = 0;

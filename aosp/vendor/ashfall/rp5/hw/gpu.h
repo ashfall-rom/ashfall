@@ -36,6 +36,13 @@
  * ashfall.status.perf.gpu_mhz (#124); min_freq/max_freq stay as they are. */
 #define GPU_CLOCK \
     "/sys/devices/platform/soc/3d00000.qcom,kgsl-3d0/kgsl/kgsl-3d0/gpuclk"
+/* KGSL idle timer (ms): how long the GPU may stay at its current clock after
+ * the last submission.  Measured in issue #130: keeping it at 10 s while the
+ * Performance preset is active removes the clock-ramp cost of short, bursty
+ * workloads (+12 % average throughput over 0.5 s bursts 3-4 s apart) without a
+ * measurable energy change. */
+#define GPU_IDLE_TIMER \
+    "/sys/devices/platform/soc/3d00000.qcom,kgsl-3d0/kgsl/kgsl-3d0/idle_timer"
 
 /* Older kona DT layouts expose the same nodes without the /platform level. */
 #define GPU_DEVFREQ_MAX_LEGACY \
@@ -46,6 +53,8 @@
     "/sys/devices/soc/3d00000.qcom,kgsl-3d0/kgsl/kgsl-3d0/gpu_available_frequencies"
 #define GPU_CLOCK_LEGACY \
     "/sys/devices/soc/3d00000.qcom,kgsl-3d0/kgsl/kgsl-3d0/gpuclk"
+#define GPU_IDLE_TIMER_LEGACY \
+    "/sys/devices/soc/3d00000.qcom,kgsl-3d0/kgsl/kgsl-3d0/idle_timer"
 #define GPU_BUSY \
     "/sys/devices/platform/soc/3d00000.qcom,kgsl-3d0/kgsl/kgsl-3d0/gpu_busy_percentage"
 #define GPU_BUSY_LEGACY \
@@ -55,6 +64,12 @@
 #define GPU_STOCK_MHZ 670
 #define GPU_MAX_MHZ 1000
 #define GPU_MAX_STEPS 32
+
+/* Stock KGSL idle timer, and the value the Performance preset requests
+ * (docs/rp5/gpu.md section 4.3, issue #130). */
+#define GPU_IDLE_STOCK_MS 80
+#define GPU_IDLE_PERFORMANCE_MS 10000
+#define GPU_IDLE_MAX_MS 60000
 
 typedef struct {
     /* Frequencies exposed by the running DT, in Hz, descending. */
@@ -66,6 +81,7 @@ typedef struct {
     int applied_mhz;  /* actual cap as read back, -1 = unknown */
     int request_mhz;  /* last evaluated request (for change logging) */
     bool clamped;     /* the throttle override forced <= 670 MHz */
+    int idle_ms; /* last idle_timer written, 0 = none yet */
     /* Resolved sysfs paths (NULL until the nodes exist; picked once). */
     const char *freqs_path;
     const char *max_path;
@@ -83,6 +99,16 @@ void gpu_state_init(gpu_state *state);
  * when the sysfs interface is unavailable (logged, never fatal).
  */
 int gpu_apply(gpu_state *state, int request_mhz, bool throttle_override);
+
+/*
+ * Apply the requested KGSL idle timer (issue #130).  0 selects the stock
+ * 80 ms; anything else is clamped to 80..60000 ms.  The request comes from
+ * `persist.ashfall.perf.gpu_idle_ms`, which the Power editor writes for the
+ * applied preset (the built-in Performance preset ships with 10 s).  Idempotent
+ * (writes only on change) and safe when the node is missing.  Returns the
+ * applied value in ms, or -1 when it could not be written.
+ */
+int gpu_apply_idle_ms(gpu_state *state, int request_ms);
 
 /* ashfall.status.perf.gpu_max_mhz: actual cap in MHz, -1 when unavailable. */
 int gpu_status_mhz(const gpu_state *state);

@@ -24,7 +24,8 @@ import org.json.JSONObject;
 
 /**
  * A named power configuration: one CPU cap per cluster, one CPU governor for
- * all three policies and the GPU cap (#124).
+ * all three policies, the GPU cap and whether the GPU keeps its clock between
+ * short bursts (#124, #130).
  *
  * <p>Presets are stored by this app only; the daemon never looks at them.  The
  * id is what {@code persist.ashfall.power.preset} carries, and is limited to
@@ -42,6 +43,13 @@ public final class PowerPreset {
     public int primeMhz = Power.PRIME_STOCK_MHZ;
     public String governor = Power.GOV_SCHEDUTIL;
     public int gpuMhz = Power.GPU_STOCK_MHZ;
+    /**
+     * Keep the GPU at its clock for 10 s after the last frame instead of the
+     * stock 80 ms (issue #130).  Off by default; the built-in Performance
+     * preset ships with it on, because that is the preset a user picks when
+     * they want the latency.
+     */
+    public boolean keepGpuClocks;
     public boolean builtin;
 
     public PowerPreset() {
@@ -54,13 +62,14 @@ public final class PowerPreset {
     }
 
     public static PowerPreset builtin(String id, String name, int silverMhz, int goldMhz,
-            int primeMhz, String governor, int gpuMhz) {
+            int primeMhz, String governor, int gpuMhz, boolean keepGpuClocks) {
         final PowerPreset preset = new PowerPreset(id, name, true);
         preset.silverMhz = silverMhz;
         preset.goldMhz = goldMhz;
         preset.primeMhz = primeMhz;
         preset.governor = Power.sanitizeGovernor(governor);
         preset.gpuMhz = Power.sanitizePresetGpuMhz(gpuMhz);
+        preset.keepGpuClocks = keepGpuClocks;
         return preset;
     }
 
@@ -103,7 +112,8 @@ public final class PowerPreset {
                 && goldMhz >= Power.GOLD_STOCK_MHZ
                 && primeMhz >= Power.PRIME_STOCK_MHZ
                 && Power.GOV_SCHEDUTIL.equals(governor)
-                && gpuMhz <= Power.GPU_STOCK_MHZ;
+                && gpuMhz <= Power.GPU_STOCK_MHZ
+                && !keepGpuClocks;
     }
 
     /**
@@ -127,6 +137,7 @@ public final class PowerPreset {
         preset.primeMhz = primeMhz;
         preset.governor = governor;
         preset.gpuMhz = gpuMhz;
+        preset.keepGpuClocks = keepGpuClocks;
         return preset;
     }
 
@@ -139,6 +150,7 @@ public final class PowerPreset {
         object.put("prime_mhz", primeMhz);
         object.put("governor", governor);
         object.put("gpu_mhz", gpuMhz);
+        object.put("keep_gpu_clocks", keepGpuClocks);
         object.put("builtin", builtin);
         return object;
     }
@@ -153,6 +165,7 @@ public final class PowerPreset {
         preset.governor = Power.sanitizeGovernor(
                 object.optString("governor", Power.GOV_SCHEDUTIL));
         preset.gpuMhz = object.optInt("gpu_mhz", Power.GPU_STOCK_MHZ);
+        preset.keepGpuClocks = object.optBoolean("keep_gpu_clocks", false);
         preset.builtin = object.optBoolean("builtin", false);
         preset.sanitize();
         return preset;

@@ -231,6 +231,7 @@ cap:
 | property | writer → reader | values |
 |---|---|---|
 | `persist.ashfall.perf.gpu_max_mhz` | Parts app → `ashfall-hwd` | 305..1000, default 670; missing/invalid → 670 |
+| `persist.ashfall.perf.gpu_idle_ms` | Parts app → `ashfall-hwd` | KGSL idle timer: `0` = stock 80 ms, else 80..60000; default 0 (§4.3) |
 | `ashfall.status.perf.gpu_max_mhz` | `ashfall-hwd` → app | actual cap in MHz; `-1` when the node is unavailable |
 | `ashfall.status.perf.gpu_oc` | `ashfall-hwd` → app | `1` = cap > 670, `0` = stock/≤670, `-1` = unavailable |
 
@@ -255,6 +256,8 @@ Behaviour:
 * devfreq refuses `max_freq < min_freq`; if the governor has raised `min_freq`
   above the requested cap, the daemon first lowers `min_freq` (never raises it)
   and retries once.
+* The KGSL idle timer follows the CPU governor (§4.3): 10 s while the
+  Performance preset is active, the stock 80 ms otherwise.
 
 ### 4.1 SELinux
 
@@ -266,13 +269,14 @@ The node's label is applied by userspace `restorecon` from `file_contexts`
 (verified: `getfattr -n security.selinux` shows a stored xattr on `gpuclk`, and
 those specific labels only exist in `vendor_file_contexts`).  `vendor_file_contexts`
 loads *after* `system_ext_file_contexts`, so the system_ext policy uses
-**exact pathname** specs (every `.` escaped) for exactly five attributes,
+**exact pathname** specs (every `.` escaped) for exactly six attributes,
 under both the `/platform` and the legacy `/devices/soc` prefixes:
 
 ```
 /sys/devices/platform/soc/3d00000\.qcom,kgsl-3d0/kgsl/kgsl-3d0/gpu_available_frequencies
 /sys/devices/platform/soc/3d00000\.qcom,kgsl-3d0/kgsl/kgsl-3d0/gpuclk
 /sys/devices/platform/soc/3d00000\.qcom,kgsl-3d0/kgsl/kgsl-3d0/gpu_busy_percentage
+/sys/devices/platform/soc/3d00000\.qcom,kgsl-3d0/kgsl/kgsl-3d0/idle_timer
 /sys/devices/platform/soc/3d00000\.qcom,kgsl-3d0/devfreq/3d00000\.qcom,kgsl-3d0/max_freq
 /sys/devices/platform/soc/3d00000\.qcom,kgsl-3d0/devfreq/3d00000\.qcom,kgsl-3d0/min_freq
 ```
@@ -281,13 +285,14 @@ under both the `/platform` and the legacy `/devices/soc` prefixes:
 behind all regex specifications, so these exact entries are matched first no
 matter which partition the competing regex came from.  They are labelled
 `ashfall_gpu_sysfs` (`fs_type, sysfs_type`) and `ashfall_hwd` gets
-`rw_file_perms` on that type.  The same five paths (both prefixes) are repeated
+`rw_file_perms` on that type.  The same six paths (both prefixes) are repeated
 in `genfs_contexts` as a fallback (longer than the vendor `/class/kgsl` prefix).
 
-Only these five attributes change label; `gpu_model`, `max_gpuclk`, `gpubusy`
+Only these six attributes change label; `gpu_model`, `max_gpuclk`, `gpubusy`
 and the rest keep `vendor_sysfs_kgsl`, so most stock vendor domains keep their
 access.  `gpuclk` (live clock, #124) and `gpu_busy_percentage` (live load, #156)
-are read-only telemetry for the Parts app, added after the cap.  Directory
+are read-only telemetry for the Parts app, added after the cap; `idle_timer`
+is the Performance-preset write from §4.3.  Directory
 traversal needs no new rule: the stock vendor
 policy grants `search` on `vendor_sysfs_kgsl:dir` to every domain except
 `isolated_app`.
@@ -338,6 +343,37 @@ Older kona layouts without the `/platform` level are a fallback
 (`/sys/devices/soc/...`); the daemon picks the first existing variant once and
 logs the fallback.  The `adb shell` examples below may keep the class path:
 `shell` has vendor lnk_file access, `ashfall-hwd` does not.
+
+### 4.3 KGSL idle timer (issue #130)
+
+`kgsl-3d0/idle_timer` is how long the GPU may stay at its clock after the last
+submission; the stock value is 80 ms.  At 1000 MHz the ramp from 305 MHz costs
+roughly 10 % of a short burst, so `ashfall-hwd` follows a per-preset request:
+
+| `persist.ashfall.perf.gpu_idle_ms` | `idle_timer` |
+|---|---|
+| `10000` (the Power editor's **Keep GPU clocks between bursts** switch) | **10 000 ms** |
+| `0` / missing, or the thermal override active | **80 ms** (stock) |
+
+The built-in **Performance** preset ships with the switch on; Balanced, Low
+power and every user preset default to off, so a fresh device (Balanced) keeps
+the stock timer.  The request belongs to the applied preset and is written by
+`Power.apply()`, not by a global setting.
+
+The write is idempotent (only on change) and never fails the daemon.  Measured
+on the RP5 (issue #130, `docs/perf-tuning.md` §5.3): 20-frame cold bursts 3 s
+apart are **12 % faster** (43.8 vs 39.1 Mpix/s), and a 60 s bursty pattern draws
+the same battery current (the bursts finish sooner).  Sustained rendering is
+unaffected; this is a UI/menu/short-action win.
+
+The node is relabelled `ashfall_gpu_sysfs` in `file_contexts` and
+`genfs_contexts` like the other kgsl attributes (§4.1), so an enforcing build
+does not need a new permission:
+
+```bash
+$S adb shell 'cat /sys/devices/platform/soc/3d00000.qcom,kgsl-3d0/kgsl/kgsl-3d0/idle_timer'
+# 10000 after applying a preset with the switch on, 80 otherwise
+```
 
 ## 5. Flashing and recovery
 
@@ -513,7 +549,7 @@ entered).  The bootloader still has the other slot's stock vendor_boot and
 | 1000 MHz request, cap stays 670 | expected on the stock DTB; check `ashfall.status.perf.gpu_oc` (0 = no OC step) and the DT table |
 | `avc: denied ... ashfall_hwd ... ashfall_gpu_sysfs` | policy build did not pick up the files; rebuild system.img (orchestrator) and check the merged `system_ext_file_contexts`/`system_ext_sepolicy.cil` |
 | `avc: denied ... vendor_sysfs_kgsl ... lnk_file` for `ashfall-hwd` | the daemon is following a class symlink (stale binary?); it must open the resolved paths (§4.2) |
-| `avc: denied ... ashfall_gpu_sysfs` (file) | the exact-path file_contexts entry lost; `ls -Z` the five relabelled kgsl attributes (both DT prefixes), rebuild system.img |
+| `avc: denied ... ashfall_gpu_sysfs` (file) | the exact-path file_contexts entry lost; `ls -Z` the six relabelled kgsl attributes (both DT prefixes), rebuild system.img |
 | `fastboot: error: Failed to write` / `unknown partition` | bootloader mode required (not fastbootd); re-run `ensure_bootloader` by starting from Android |
 | `Sending 'vendor_boot'` hangs / ABL wedged | the 96 MiB zero-padded image was used; flash the content-only `vendor_boot.img` (12,931,072 B), one detached fastboot batch (issue #54) |
 | `kgsl-3d ... failed to update frequency from PM QoS (-71)` | dmesg-only on the OC boot; scaling and the cap still work (10-min 1 GHz stress passed). Tracked in #116 |

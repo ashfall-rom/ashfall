@@ -35,6 +35,7 @@ import org.ashfall.parts.hw.Power;
 import org.ashfall.parts.hw.PowerPreset;
 import org.ashfall.parts.hw.PowerPresetStore;
 import org.ashfall.parts.ui.SliderPreference;
+import org.ashfall.parts.ui.TogglePreference;
 import org.ashfall.parts.ui.Ui;
 
 /**
@@ -208,6 +209,7 @@ public class PowerPresetActivity extends PartsActivity {
         private CapSliderPreference mPrime;
         private Preference mGovernor;
         private Preference mGpu;
+        private TogglePreference mGpuIdle;
 
         static PresetEditFragment newInstance(String presetId) {
             final PresetEditFragment fragment = new PresetEditFragment();
@@ -241,6 +243,7 @@ public class PowerPresetActivity extends PartsActivity {
             addCpuCategory(screen);
             addGovernorRow(screen);
             addGpuRow(screen);
+            addGpuIdleRow(screen);
 
             syncControls();
             setPreferenceScreen(screen);
@@ -392,6 +395,19 @@ public class PowerPresetActivity extends PartsActivity {
             screen.addPreference(mGpu);
         }
 
+        /** Keep the GPU clock between short bursts (#130). */
+        private void addGpuIdleRow(PreferenceScreen screen) {
+            mGpuIdle = new TogglePreference(requireContext());
+            mGpuIdle.setKey("power_editor_gpu_idle");
+            mGpuIdle.setTitle(R.string.power_gpu_idle_title);
+            mGpuIdle.setSummaryText(getString(R.string.power_gpu_idle_summary));
+            mGpuIdle.setOnToggleRequestedListener((preference, desired) -> {
+                mPreset.keepGpuClocks = desired;
+                commit();
+            });
+            screen.addPreference(mGpuIdle);
+        }
+
         private CapSliderPreference newCapSlider(String key, int title, int min, int max) {
             final CapSliderPreference slider =
                     new CapSliderPreference(requireContext(), CAP_STEP_MHZ);
@@ -468,6 +484,9 @@ public class PowerPresetActivity extends PartsActivity {
                             mPreset.gpuMhz, Power.gpuActualMhz());
                 }
                 mGpu.setSummary(summary);
+            }
+            if (mGpuIdle != null) {
+                mGpuIdle.setChecked(mPreset.keepGpuClocks);
             }
             if (mHeader != null) {
                 mHeader.setTitle(mPreset.displayName(requireContext()));
