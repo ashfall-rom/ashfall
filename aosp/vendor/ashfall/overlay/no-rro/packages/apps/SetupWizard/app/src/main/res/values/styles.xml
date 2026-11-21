@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Keep the upstream Theme.Setup behaviour and put the AshFall Ember accent
+     on the wizard only; the system-wide theme is deliberately unchanged. -->
+<resources>
+    <style name="Theme.Setup" parent="@style/SudThemeGlifExpressive.DayNight">
+        <item name="sucUsePartnerResource">true</item>
+        <item name="sudUsePartnerHeavyTheme">true</item>
+        <item name="colorPrimary">@color/ashfall_ember</item>
+        <item name="colorSecondary">@color/ashfall_ember</item>
+        <item name="colorAccent">@color/ashfall_ember</item>
+        <item name="colorOnPrimary">@color/ashfall_soot</item>
+        <item name="colorOnSecondary">@color/ashfall_soot</item>
+    </style>
+</resources>

@@ -37,9 +37,11 @@
 ASHFALL_DEBLOAT_PACKAGES := \
     Aperture \
     ApertureLensLauncher \
+    Camera2 \
     CameraExtensionsProxy \
     DeviceAsWebcam \
     cameraserver \
+    virtual_camera \
     Dialer \
     Contacts \
     ContactsPicker \

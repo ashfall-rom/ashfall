@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- AshFall setup palette: the same Ember/Ash/Soot as assets/brand/, so the
+     wizard's Start button and accents do not stay on LineageOS teal. -->
+<resources>
+    <color name="ashfall_ember">#FF8A3D</color>
+    <color name="ashfall_ash">#EDE9E4</color>
+    <color name="ashfall_soot">#0B0C0F</color>
+
+    <color name="lineage_accent">@color/ashfall_ember</color>
+    <color name="materialColorPrimary">@color/ashfall_ember</color>
+    <color name="materialColorOnPrimary">@color/ashfall_soot</color>
+    <color name="setup_compat_footer_primary_button_bg_color">@color/ashfall_ember</color>
+    <color name="setup_compat_footer_primary_button_text_color">@color/ashfall_soot</color>
+    <color name="finish_swipe_arrow">@color/ashfall_ember</color>
+</resources>

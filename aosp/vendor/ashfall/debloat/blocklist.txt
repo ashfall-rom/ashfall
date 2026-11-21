@@ -19,9 +19,11 @@ module UsbDisableDebugger
 # --- camera ----------------------------------------------------------------
 module Aperture
 module ApertureLensLauncher
+module Camera2
 module CameraExtensionsProxy
 module DeviceAsWebcam
 module cameraserver
+module virtual_camera
 
 # --- phone/cell (Wi-Fi-only) -----------------------------------------------
 module Dialer
@@ -82,6 +84,7 @@ package org.lineageos.aperture
 package org.lineageos.aperture.frameworksbaseoverlay
 package com.google.android.apps.googlecamera.fishfood
 package com.android.cameraextensions
+package com.android.camera2
 package com.android.DeviceAsWebcam
 package com.android.dialer
 package com.android.contacts
