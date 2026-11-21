@@ -702,62 +702,12 @@ static void powertest_apply(const char *what)
     ah_logf(AH_LOG_INFO, "powertest: applied '%s'", what);
 }
 
-/* Log a root-only debugfs file line by line (#233). */
-static void dump_file(const char *path, const char *tag, int max_lines)
-{
-    char line[512];
-    int shown = 0;
-    FILE *f = fopen(path, "re");
-
-    if (f == NULL) {
-        ah_logf(AH_LOG_WARN, "wakeups| [%s] %s: %s", tag, path, strerror(errno));
-        return;
-    }
-    while (fgets(line, sizeof(line), f) != NULL && shown < max_lines) {
-        line[strcspn(line, "\n")] = '\0';
-        if (line[0] == '\0')
-            continue;
-        ah_logf(AH_LOG_INFO, "wakeups| [%s] %s", tag, line);
-        shown++;
-    }
-    fclose(f);
-}
-
-/* Only clocks that are actually enabled say anything about the idle draw. */
-static void dump_enabled_clocks(void)
-{
-    char line[512], name[128];
-    int count = 0, shown = 0;
-    FILE *f = fopen("/sys/kernel/debug/clk/clk_summary", "re");
-
-    if (f == NULL) {
-        ah_logf(AH_LOG_WARN, "wakeups| [clk] unavailable: %s", strerror(errno));
-        return;
-    }
-    while (fgets(line, sizeof(line), f) != NULL && shown < 40) {
-        if (sscanf(line, " %127s %d", name, &count) != 2)
-            continue;
-        if (count <= 0)
-            continue;
-        line[strcspn(line, "\n")] = '\0';
-        ah_logf(AH_LOG_INFO, "wakeups| [clk] %s", line);
-        shown++;
-    }
-    fclose(f);
-}
-
 static void wakeup_dump(void)
 {
     /* debugfs is not mounted by default. */
     mount("none", "/sys/kernel/debug", "debugfs", 0, NULL);
     ah_logf(AH_LOG_INFO, "wakeups| ==== snapshot ====");
     wakeup_dump_sources();
-    dump_file("/sys/kernel/debug/pm_genpd/pm_genpd_summary", "pd", 45);
-    dump_file("/sys/kernel/debug/regulator/regulator_summary", "reg", 45);
-    dump_file("/sys/kernel/debug/suspend_stats/success_count", "ss", 1);
-    dump_file("/sys/kernel/debug/suspend_stats/fail_count", "ss", 1);
-    dump_file("/sys/kernel/debug/suspend_stats/last_failed_dev", "ss", 1);
-    dump_enabled_clocks();
     wakeup_dump_fds();
     ah_logf(AH_LOG_INFO, "wakeups| ==== end ====");
 }
