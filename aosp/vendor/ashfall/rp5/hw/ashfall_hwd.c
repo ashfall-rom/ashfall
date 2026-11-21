@@ -90,6 +90,15 @@ _Static_assert(HWD_VALUE_WATCH_MAX >= FAN_CURVE_MAX_LEN + 1,
  * it must stay below STATUS_LIVE_MS.  The status period itself is chosen by
  * hwd_status_interval_ms() in hwd.h. */
 #define IDLE_WAIT_MS 500
+/* Panel off (#233): no page can be reading ashfall.status.*, so the loop may
+ * sleep as long as the fan/thermal tick (FAN_SAMPLE_MS) allows.  Property
+ * changes - including the screen transition itself - still wake the daemon
+ * through prop_wait_any(), so this only bounds the "nothing happened" case. */
+#define IDLE_WAIT_MS_SCREEN_OFF 2000
+/* How often the status properties are refreshed while the panel is off.  They
+ * only feed the Parts pages, so the tick exists purely to keep the first
+ * publish after a wake cheap; the screen-on transition forces one anyway. */
+#define STATUS_SCREEN_OFF_MS 30000
 /* Retry period for LED writes that failed (vendor init chmod race, node not
  * there yet): lighting must not stay dark for the whole boot. */
 #define LED_RETRY_MS 500
@@ -442,6 +451,231 @@ static void publish_gpu_status(const gpu_state *gpu,
     cache->valid = true;
 }
 
+/* --- suspend diagnostics (issue #233) ------------------------------------
+ * The AP is kept awake by a userspace alarmtimer the kernel only names
+ * "[timerfd]"; naming the owner needs /proc/<pid>/fd and debugfs, i.e. root,
+ * which a field device does not have.  The daemon already runs as root, so a
+ * shell-settable token makes it write a one-shot snapshot to its log, which
+ * `adb shell` can read without any file-permission or sepolicy work:
+ *
+ *     adb shell setprop debug.ashfall.wakeups 1
+ *     adb shell logcat -d -s ashfall-hwd | grep 'wakeups|'
+ *
+ * Any new value triggers a new dump, so the property can be re-used to sample
+ * a later window. */
+#define PROP_DEBUG_WAKEUPS "debug.ashfall.wakeups"
+#define PROP_DEBUG_TRACE "debug.ashfall.trace"
+
+#if defined(__ANDROID__)
+#include <dirent.h>
+#include <errno.h>
+#include <sys/mount.h>
+
+static void wakeup_dump_sources(void)
+{
+    char line[512];
+    FILE *in;
+
+    in = fopen("/sys/kernel/debug/wakeup_sources", "re");
+    if (!in) {
+        ah_logf(AH_LOG_WARN, "wakeups| no wakeup_sources (%s)", strerror(errno));
+        return;
+    }
+    while (fgets(line, sizeof(line), in) != NULL) {
+        line[strcspn(line, "\n")] = '\0';
+        if (line[0] != '\0')
+            ah_logf(AH_LOG_INFO, "wakeups| %s", line);
+    }
+    fclose(in);
+}
+
+/* Every process holding a timerfd: the kernel reports those as the wakeup
+ * source "[timerfd]" and never says which one. */
+static void wakeup_dump_fds(void)
+{
+    DIR *proc = opendir("/proc");
+    struct dirent *pid;
+
+    if (!proc) {
+        ah_logf(AH_LOG_WARN, "wakeups| no /proc (%s)", strerror(errno));
+        return;
+    }
+    while ((pid = readdir(proc)) != NULL) {
+        char fd_dir[PATH_MAX];
+        DIR *fds;
+        struct dirent *fd;
+
+        if (pid->d_name[0] < '0' || pid->d_name[0] > '9')
+            continue;
+        snprintf(fd_dir, sizeof(fd_dir), "/proc/%s/fd", pid->d_name);
+        fds = opendir(fd_dir);
+        if (!fds)
+            continue;
+        while ((fd = readdir(fds)) != NULL) {
+            char path[PATH_MAX], link[PATH_MAX], comm[128] = "-";
+            char cmd[400] = "-";
+            ssize_t len;
+            FILE *f;
+
+            snprintf(path, sizeof(path), "%s/%s", fd_dir, fd->d_name);
+            len = readlink(path, link, sizeof(link) - 1);
+            if (len <= 0)
+                continue;
+            link[len] = '\0';
+            if (!strstr(link, "timerfd"))
+                continue;
+            snprintf(path, sizeof(path), "/proc/%s/comm", pid->d_name);
+            f = fopen(path, "re");
+            if (f) {
+                if (fgets(comm, sizeof(comm), f))
+                    comm[strcspn(comm, "\n")] = '\0';
+                fclose(f);
+            }
+            snprintf(path, sizeof(path), "/proc/%s/cmdline", pid->d_name);
+            f = fopen(path, "re");
+            if (f) {
+                size_t n = fread(cmd, 1, sizeof(cmd) - 1, f);
+                size_t i;
+
+                cmd[n] = '\0';
+                for (i = 0; i < n; i++)
+                    if (cmd[i] == '\0')
+                        cmd[i] = ' ';
+                fclose(f);
+            }
+            /* fdinfo names the timerfd clock: only CLOCK_BOOTTIME_ALARM (7)
+             * is a wakeup source, and it_value is how long until it fires. */
+            {
+                char path2[PATH_MAX], info[256] = "-", line[128];
+
+                snprintf(path2, sizeof(path2), "/proc/%s/fdinfo/%s",
+                         pid->d_name, fd->d_name);
+                f = fopen(path2, "re");
+                if (f) {
+                    size_t used = 0;
+
+                    while (fgets(line, sizeof(line), f) != NULL &&
+                           used < sizeof(info) - 1) {
+                        char *value = strchr(line, ':');
+                        int n;
+
+                        line[strcspn(line, "\n")] = '\0';
+                        /* ticks is the expiration counter: the timerfd that
+                         * matches the wake rate in wakeup_sources is the
+                         * owner, and this is the only place it is visible. */
+                        if (strncmp(line, "clockid", 7) != 0 &&
+                            strncmp(line, "ticks", 5) != 0 &&
+                            strncmp(line, "it_value", 8) != 0)
+                            continue;
+                        if (value != NULL)
+                            *value = '=';
+                        n = snprintf(info + used, sizeof(info) - used, "%s%s",
+                                     used ? " " : "", line);
+                        if (n > 0)
+                            used += (size_t)n;
+                    }
+                    fclose(f);
+                }
+                ah_logf(AH_LOG_INFO, "wakeups| pid %s fd %s -> %s (%s) [%s] %s",
+                        pid->d_name, fd->d_name, link, comm, cmd, info);
+            }
+        }
+        closedir(fds);
+    }
+    closedir(proc);
+}
+
+/* Wakeup-source tracing (issue #233): the fd scan names every alarm timerfd
+ * but cannot say which one fires, and the kernel resets a timerfd's own
+ * counter when its owner reads it.  ftrace has the answer and it needs root to
+ * switch on:
+ *
+ *     adb shell setprop debug.ashfall.trace on
+ *     ... wait 30 s ...
+ *     adb shell setprop debug.ashfall.trace off
+ *     adb shell logcat -d -s ashfall-hwd | grep 'wakeuptrace|'
+ *
+ * The trace line carries the task that activated the source, so the timerfd
+ * owner names itself. */
+#define TRACEFS "/sys/kernel/tracing"
+#define TRACE_MAX_LINES 120
+
+static const char *const trace_events[] = {
+    "wakeup_source_activate",
+    "wakeup_source_deactivate",
+};
+
+static void trace_set(bool on)
+{
+    char path[PATH_MAX];
+    size_t i;
+
+    mount("none", TRACEFS, "tracefs", 0, NULL);
+    for (i = 0; i < sizeof(trace_events) / sizeof(trace_events[0]); i++) {
+        FILE *f;
+
+        snprintf(path, sizeof(path), TRACEFS "/events/power/%s/enable",
+                 trace_events[i]);
+        f = fopen(path, "we");
+        if (f == NULL) {
+            ah_logf(AH_LOG_WARN, "trace: cannot %s %s (%s)",
+                    on ? "enable" : "disable", trace_events[i],
+                    strerror(errno));
+            continue;
+        }
+        fputs(on ? "1" : "0", f);
+        fclose(f);
+    }
+    ah_logf(AH_LOG_INFO, "trace: wakeup events %s", on ? "on" : "off");
+}
+
+static void trace_clear(void)
+{
+    FILE *f = fopen(TRACEFS "/trace", "we");
+
+    if (f != NULL)
+        fclose(f);
+}
+
+static void trace_dump(void)
+{
+    char line[512];
+    int shown = 0;
+    FILE *f;
+
+    f = fopen(TRACEFS "/trace", "re");
+    if (f == NULL) {
+        ah_logf(AH_LOG_WARN, "trace: cannot read trace (%s)", strerror(errno));
+        return;
+    }
+    while (fgets(line, sizeof(line), f) != NULL) {
+        line[strcspn(line, "\n")] = '\0';
+        if (strstr(line, "timerfd") == NULL)
+            continue;
+        ah_logf(AH_LOG_INFO, "wakeuptrace| %s", line);
+        if (++shown >= TRACE_MAX_LINES)
+            break;
+    }
+    fclose(f);
+    ah_logf(AH_LOG_INFO, "wakeuptrace| %d timerfd lines", shown);
+}
+
+static void wakeup_dump(void)
+{
+    /* debugfs is not mounted by default. */
+    mount("none", "/sys/kernel/debug", "debugfs", 0, NULL);
+    ah_logf(AH_LOG_INFO, "wakeups| ==== snapshot ====");
+    wakeup_dump_sources();
+    wakeup_dump_fds();
+    ah_logf(AH_LOG_INFO, "wakeups| ==== end ====");
+}
+#else
+static void wakeup_dump(void) {}
+static void trace_set(bool on) { (void)on; }
+static void trace_clear(void) {}
+static void trace_dump(void) {}
+#endif
+
 static void publish_throttle_status(const throttle_state *throttle,
                                     int *cache)
 {
@@ -531,6 +765,8 @@ int main(void)
     int64_t next_cpu_ms = 0;
     int64_t next_mem_ms = 0;
     int mem_retry_left = MEM_RETRY_BUDGET;
+    char wakeup_token[HWD_VALUE_WATCH_MAX] = "";
+    char trace_token[HWD_VALUE_WATCH_MAX] = "";
     int64_t now;
     int64_t next_fan_ms;
     int64_t next_led_ms = 0;
@@ -679,6 +915,33 @@ int main(void)
         int64_t screen_ms;
 
         now = ah_now_ms();
+        /* Wakeup-source tracing on/off (#233). */
+        {
+            char token[HWD_VALUE_WATCH_MAX];
+
+            if (prop_get_str(PROP_DEBUG_TRACE, token, sizeof(token)) > 0 &&
+                strcmp(token, trace_token) != 0) {
+                snprintf(trace_token, sizeof(trace_token), "%s", token);
+                if (!strcmp(token, "on")) {
+                    trace_set(true);
+                    trace_clear();
+                } else {
+                    trace_set(false);
+                    trace_dump();
+                }
+            }
+        }
+        /* One-shot suspend snapshot (#233): a new token in
+         * debug.ashfall.wakeups writes the snapshot to the log. */
+        {
+            char token[HWD_VALUE_WATCH_MAX];
+
+            if (prop_get_str(PROP_DEBUG_WAKEUPS, token, sizeof(token)) > 0 &&
+                strcmp(token, wakeup_token) != 0) {
+                snprintf(wakeup_token, sizeof(wakeup_token), "%s", token);
+                wakeup_dump();
+            }
+        }
         /* ashfall.ui.* lease (issue #94): sample the heartbeats before the
          * values are read, so a value is only accepted together with a
          * refresh the daemon has actually observed. */
@@ -759,6 +1022,10 @@ int main(void)
                 screen_on = led_screen_on(&screen);
                 changed = true;
                 force_led = true;
+                /* Status is not published while the panel is off (#233), so
+                 * force a fresh tick on the transition: the page that opens
+                 * right after a wake must not show pre-suspend numbers. */
+                next_status_ms = 0;
                 if (woke) {
                     /* The lighting block below rewrites both attributes now,
                      * at +0.5 s and at +1.5 s, regardless of led.applied. */
@@ -798,6 +1065,15 @@ int main(void)
                                          ? 0 : GPU_RETRY_MS);
                 publish_gpu_status(&gpu, &gpu_status);
             }
+
+            /* KGSL idle timer from the applied preset (#130), same rule.  It
+             * is a control write, so it must not live in the status tick:
+             * that one is 30 s apart while the panel is off (#233) and a
+             * thermal override has to park the GPU on the stock timer now.
+             * gpu_apply_idle_ms() is idempotent and writes only on change. */
+            gpu_apply_idle_ms(&gpu, throttle.active ? 0
+                                  : prop_get_int_range(PROP_GPU_IDLE_MS, 0, 0,
+                                                       GPU_IDLE_MAX_MS));
         }
 
         /* --- CPU caps / governor and memory ------------------------------
@@ -909,20 +1185,25 @@ int main(void)
             }
         }
         if (now >= next_status_ms) {
-            /* KGSL idle timer from the applied preset (#130); the thermal
-             * override always wins and parks the GPU at the stock timer. */
-            gpu_apply_idle_ms(&gpu, throttle.active ? 0
-                                  : prop_get_int_range(PROP_GPU_IDLE_MS, 0, 0,
-                                                       GPU_IDLE_MAX_MS));
-            fan.rpm = fan_read_rpm();
-            publish_status(&fan, last_temp, &status, &next_status_ms, now,
-                           hwd_status_interval_ms(fan_live, power_live));
-            publish_int(STATUS_PERF_GPU_MHZ, gpu_clock_mhz(), &gpu_clock_cache);
-            publish_int(STATUS_PERF_CPU_LOAD, cpu_load_pct(&cpu_load),
-                        &cpu_load_cache);
-            publish_int(STATUS_PERF_GPU_LOAD, gpu_load_pct(), &gpu_load_cache);
-            publish_cpu_status(&cpu, cpu_status_cache);
-            publish_mem_status(&mem, mem_status_cache);
+            if (screen_on) {
+                fan.rpm = fan_read_rpm();
+                publish_status(&fan, last_temp, &status, &next_status_ms, now,
+                               hwd_status_interval_ms(fan_live, power_live));
+                publish_int(STATUS_PERF_GPU_MHZ, gpu_clock_mhz(),
+                            &gpu_clock_cache);
+                publish_int(STATUS_PERF_CPU_LOAD, cpu_load_pct(&cpu_load),
+                            &cpu_load_cache);
+                publish_int(STATUS_PERF_GPU_LOAD, gpu_load_pct(), &gpu_load_cache);
+                publish_cpu_status(&cpu, cpu_status_cache);
+                publish_mem_status(&mem, mem_status_cache);
+            } else {
+                /* Panel off (#233): every ashfall.status.* write bumps the
+                 * global property serial and wakes property listeners in
+                 * other processes, and nothing can read them until the panel
+                 * is back.  Skip the whole tick; the screen-on transition
+                 * sets next_status_ms = 0 for an immediate fresh publish. */
+                next_status_ms = now + STATUS_SCREEN_OFF_MS;
+            }
         }
 
         /* --- sleep until something happens ------------------------------- */
@@ -941,8 +1222,8 @@ int main(void)
         if (fan.kick_until_ms > 0 && fan.kick_until_ms < deadline)
             deadline = fan.kick_until_ms;
         wait_ms = (int)(deadline - now);
-        if (wait_ms > IDLE_WAIT_MS)
-            wait_ms = IDLE_WAIT_MS;
+        if (wait_ms > (screen_on ? IDLE_WAIT_MS : IDLE_WAIT_MS_SCREEN_OFF))
+            wait_ms = screen_on ? IDLE_WAIT_MS : IDLE_WAIT_MS_SCREEN_OFF;
         if (wait_ms < 0)
             wait_ms = 0;
         prop_wait_any(wait_ms);

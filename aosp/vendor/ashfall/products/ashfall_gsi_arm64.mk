@@ -45,6 +45,18 @@ PRODUCT_BRAND := AshFall
 PRODUCT_MODEL := AshFall GSI arm64
 PRODUCT_MANUFACTURER := AshFall
 
+# --- adb root on userdebug (issue #255) -------------------------------------
+# LineageOS sets PRODUCT_NOT_DEBUGGABLE_IN_USERDEBUG := true in
+# vendor/lineage/config/common.mk, which makes a `userdebug` build ship
+# ro.debuggable=0: `adb root` is refused and with it `dmesg`, debugfs
+# (/sys/kernel/debug/wakeup_sources) and /proc/<pid>/fd - everything needed to
+# name a suspend blocker such as the [timerfd] that keeps the RP5 awake (#233).
+# The image is already userdebug + test-keys, so restoring the upstream
+# behaviour costs nothing extra and is what a userdebug build means.  Set after
+# the inherit above so it wins.  It must be *empty*, not `false`: the value is
+# exported with add_json_bool(), which reads any non-empty string as true.
+PRODUCT_NOT_DEBUGGABLE_IN_USERDEBUG :=
+
 # --- filesystem -------------------------------------------------------------
 # EROFS by default (compressed, and the stock RP5 kernel is 5.15 GKI with EROFS
 # support). The stock super group leaves ~4.2 GiB for system.img, so the

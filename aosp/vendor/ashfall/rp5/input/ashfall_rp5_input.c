@@ -79,6 +79,12 @@
 #define INPUT_DIR "/dev/input"
 
 #define PROP_REFRESH_MS 250
+/* Idle backoff (#233): the property refresh only exists to notice a
+ * persist.ashfall.pad.* change from the tester UI.  With no input for
+ * INPUT_IDLE_MS the daemon has nothing to do, so it stops waking 4x/s and
+ * returns to PROP_REFRESH_MS as soon as an event arrives. */
+#define PROP_REFRESH_IDLE_MS 2000
+#define INPUT_IDLE_MS 2000
 #define MCU_OPEN_MS 1000
 #define MCU_QUIET_MS 2000
 #define MCU_REINIT_MS 500
@@ -253,6 +259,7 @@ struct daemon {
     int cal_retries;
     int64_t last_cal_ms;
     int64_t last_props_ms;
+    int64_t last_event_ms; /* last poll event, for the idle backoff (#233) */
     int64_t last_mcu_ms;
     int64_t last_uinput_ms;
     int64_t last_pointer_ms;
@@ -2316,12 +2323,20 @@ static int pointer_sources_timeout_ms(struct daemon *d, int64_t now)
     return best;
 }
 
+/* Property refresh period: 250 ms while input is flowing, 2 s once the pad has
+ * been quiet for INPUT_IDLE_MS (#233). */
+static int props_refresh_ms(const struct daemon *d, int64_t now)
+{
+    return (now - d->last_event_ms > INPUT_IDLE_MS) ? PROP_REFRESH_IDLE_MS
+                                                    : PROP_REFRESH_MS;
+}
+
 /* Everything that must happen even when no fd is ready. */
 static void daemon_tick(struct daemon *d)
 {
     int64_t now = ah_now_ms();
 
-    if (now - d->last_props_ms >= PROP_REFRESH_MS) {
+    if (now - d->last_props_ms >= props_refresh_ms(d, now)) {
         deadzones_read(&d->ctx.dz);
         retry_calibration(&d->ctx, &d->cal_retries, &d->last_cal_ms);
         fusion_settings_read(&d->fusion);
@@ -2493,6 +2508,7 @@ int main(void)
         pad_scan(&d); /* pointer on: attach the shadow pads from the start */
     }
     d.last_scan_ms = ah_now_ms();
+    d.last_event_ms = d.last_scan_ms;
     ah_logf(AH_LOG_INFO, "fusion: %s", d.fusion.enabled ? "on" : "off");
     d.pointer_consume_prev = pointer_consume(&d);
 
@@ -2551,7 +2567,9 @@ int main(void)
         nfds += control_pollfds(d.control, fds + nfds,
                                 (int)ARRAY_SIZE(fds) - nfds);
 
-        timeout = d.mcu_fd >= 0 && d.good_frames ? PROP_REFRESH_MS : 500;
+        timeout = (d.mcu_fd >= 0 && d.good_frames)
+                      ? props_refresh_ms(&d, ah_now_ms())
+                      : 500;
         /* The pointer emits on a fixed 125 Hz tick, so the loop must wake for
          * it even when no MCU frame arrives - for every source (#250). */
         if (d.pointer_fd >= 0 && !d.grabbed) {
@@ -2569,6 +2587,7 @@ int main(void)
         }
         if (rc == 0)
             continue;
+        d.last_event_ms = ah_now_ms();
 
         if (idx_notify >= 0 && (fds[idx_notify].revents & POLLIN))
             drain_inotify(&d);
