@@ -465,6 +465,13 @@ static void publish_gpu_status(const gpu_state *gpu,
  * a later window. */
 #define PROP_DEBUG_WAKEUPS "debug.ashfall.wakeups"
 #define PROP_DEBUG_TRACE "debug.ashfall.trace"
+/* One-shot power experiments (issue #233): the suspects in the ~140 mA gap
+ * against stock are all root-only sysfs, so the daemon applies them and the
+ * drain harness does the measuring.
+ *   wifi-pm  - let the WLAN PCIe endpoint use runtime PM (it is pinned on)
+ *   usb2-off - unbind the secondary dwc3 controller (runtime-active, idle)
+ *   reboot undoes usb2-off; a reboot or "wifi-pm-on" undoes the first. */
+#define PROP_DEBUG_POWERTEST "debug.ashfall.powertest"
 
 #if defined(__ANDROID__)
 #include <dirent.h>
@@ -660,6 +667,23 @@ static void trace_dump(void)
     ah_logf(AH_LOG_INFO, "wakeuptrace| %d timerfd lines", shown);
 }
 
+static void powertest_apply(const char *what)
+{
+    if (!strcmp(what, "wifi-pm")) {
+        sysfs_write_str("/sys/bus/pci/devices/0000:01:00.0/power/control", "auto");
+        sysfs_write_str("/sys/bus/pci/devices/0000:00:00.0/power/control", "auto");
+    } else if (!strcmp(what, "wifi-pm-on")) {
+        sysfs_write_str("/sys/bus/pci/devices/0000:01:00.0/power/control", "on");
+        sysfs_write_str("/sys/bus/pci/devices/0000:00:00.0/power/control", "on");
+    } else if (!strcmp(what, "usb2-off")) {
+        sysfs_write_str("/sys/bus/platform/drivers/dwc3/unbind", "a600000.ssusb");
+    } else {
+        ah_logf(AH_LOG_WARN, "powertest: unknown '%s'", what);
+        return;
+    }
+    ah_logf(AH_LOG_INFO, "powertest: applied '%s'", what);
+}
+
 static void wakeup_dump(void)
 {
     /* debugfs is not mounted by default. */
@@ -671,6 +695,7 @@ static void wakeup_dump(void)
 }
 #else
 static void wakeup_dump(void) {}
+static void powertest_apply(const char *what) { (void)what; }
 static void trace_set(bool on) { (void)on; }
 static void trace_clear(void) {}
 static void trace_dump(void) {}
@@ -767,6 +792,7 @@ int main(void)
     int mem_retry_left = MEM_RETRY_BUDGET;
     char wakeup_token[HWD_VALUE_WATCH_MAX] = "";
     char trace_token[HWD_VALUE_WATCH_MAX] = "";
+    char powertest_token[HWD_VALUE_WATCH_MAX] = "";
     int64_t now;
     int64_t next_fan_ms;
     int64_t next_led_ms = 0;
@@ -915,6 +941,16 @@ int main(void)
         int64_t screen_ms;
 
         now = ah_now_ms();
+        /* Power experiments (#233). */
+        {
+            char token[HWD_VALUE_WATCH_MAX];
+
+            if (prop_get_str(PROP_DEBUG_POWERTEST, token, sizeof(token)) > 0 &&
+                strcmp(token, powertest_token) != 0) {
+                snprintf(powertest_token, sizeof(powertest_token), "%s", token);
+                powertest_apply(token);
+            }
+        }
         /* Wakeup-source tracing on/off (#233). */
         {
             char token[HWD_VALUE_WATCH_MAX];
