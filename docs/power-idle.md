@@ -124,6 +124,42 @@ scheduling, the mA do not move.  So:
   the stock firmware, which answers whether 150 mA is even abnormal for this
   device before more code is written.
 
+## 3d. Where the hunt stands (2026-11-21, late)
+
+The user's own measurement on the **stock firmware: 1-3 % in ~10 h** (~5-15 mA).
+This build draws ~150 mA, so it is a **10-30x regression**, not this hardware's
+idle floor.  Everything below is a measurement, not a guess:
+
+| hypothesis | test | result |
+|---|---|---|
+| the AshFall daemons | panel-off gating, before/after | no change (151.4 mA) |
+| the wake loop | 30 s alarm batching | wakeups 34.3 -> 5.8/min, current flat |
+| WiFi + Bluetooth | both off, `usb.config=none` | **-14 mA only** (136 mA) |
+| displays | both `state OFF` | excluded |
+| suspend entry | `mem_sleep`, monotonic-vs-wall drift | s2idle entered ~63 % of the time |
+| WLAN PCIe runtime PM | `power/control=auto` on `0000:01:00.0` | no help (173 mA) |
+| the SoC in s2idle | awake-vs-suspended current | **saves ~3 mA**, i.e. nothing |
+
+What stands out and has **not** been measured cleanly yet:
+
+* `a600000.dwc3` - the gadget controller named by
+  `androidboot.usbcontroller` - is `runtime_status=active` with the cable out
+  and no host; its PHY and `usb30_prim_gdsc` stay enabled.  A USB controller
+  plus PHY left active is the most plausible ~100 mA item on the board.
+* `adsp`, `cdsp` and `slpi` remoteprocs are all `running`.
+* `suspend_stats` and the power-domain/clock dump have not been captured yet:
+  the one attempt died when the device powered off mid-test.
+
+**Correction on an earlier probe.** The `usb2-off` run that appeared to show
+44 mA instead of 150 mA is invalid and must be redone: the unbind wrote
+`a600000.ssusb` while the platform device is `a600000.dwc3` (so it did
+nothing), and the window ended while the charger was attached, which offsets
+the fuel-gauge delta.  It is recorded here so the number is not reused.
+
+The clean next experiment is therefore: unbind **`a600000.dwc3`** (or verify it
+reaches `runtime_status=suspended` on its own), keep the cable out for the
+whole window, and take at least three samples.
+
 ## 3b. What actually wakes the AP
 
 The `debug.ashfall.wakeups` snapshots (§6a) taken at both ends of the run, with
