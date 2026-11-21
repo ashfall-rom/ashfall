@@ -5,19 +5,21 @@
 #   * refuses anything that is not a `kona` (SM8250) with an unlocked bootloader;
 #   * works through fastbootd (userspace fastboot), the only place logical
 #     partitions like `system` can be written;
-#   * writes only `system`/`vbmeta`, deletes only the logical product_<slot>/
-#     system_ext_<slot> (for space) and erases userdata/metadata with --wipe;
+#   * writes only `system`/`vbmeta`, deletes the logical product_<slot>/
+#     system_ext_<slot> by default (the GSI bundles its own, and phase 7 debloats
+#     the stock apps those partitions carry) and erases userdata/metadata with
+#     --wipe; --keep-stock/--keep-product keeps them;
 #   * hard-blocks the partitions from the guide's NEVER-flash list (§13);
 #   * computes the space budget of group `qti_dynamic_partitions_<slot>`
-#     (6.0 GiB; stock used ~4.6 GiB) and frees the stock product_<slot> first,
-#     then system_ext_<slot>, only when needed. vendor_/odm_ are never touched;
+#     (6.0 GiB; stock used ~4.6 GiB) and still frees product/system_ext when
+#     the image is too large. vendor_/odm_ are never touched;
 #   * accepts Android-sparse, EROFS (A17 GSI default, stock 5.15 kernel) and
 #     ext4 images;
 #   * the target slot is re-validated to be exactly a|b, including when it came
 #     from the device's current-slot;
 #   * `--dry-run` performs only read-only getvars and prints the plan including
 #     the space arithmetic (exact numbers once fastbootd is reachable). With
-#     --keep-product and a deficit it marks the plan as refused and exits 1.
+#     --keep-stock and a deficit it marks the plan as refused and exits 1.
 #
 # The device must be USB-connected to the build host ($BUILD_HOST); all
 # adb/fastboot calls run there in the `ashfall-dev` container.
@@ -31,8 +33,9 @@
 #                      userdata erase is seconds on this device, not minutes)
 #   --vbmeta PATH      use this vbmeta image instead of the stock one / an
 #                      auto-generated empty vbmeta (host path or local file)
-#   --keep-product     never delete product_<slot>/system_ext_<slot>, even if
-#                      the image needs room (fails instead)
+#   --keep-product     never delete product_<slot>/system_ext_<slot> (old
+#                      space-only behaviour; keeps the stock apps too)
+#   --keep-stock       alias for --keep-product
 #   --serial SERIAL    device serial (default: the only one connected)
 #   --yes              skip the interactive confirmation
 #   --dry-run          print the plan, write nothing (still does read-only checks)
@@ -80,6 +83,7 @@ WIPE=0
 DRY_RUN=0
 ASSUME_YES=0
 KEEP_PRODUCT=0
+DROP_STOCK=1
 SLOT_GIVEN=0
 SERIAL=""
 VBMETA=""
@@ -94,7 +98,7 @@ while (($#)); do
     --slot) SLOT=${2:?--slot needs a|b}; SLOT_GIVEN=1; shift 2 ;;
     --wipe|-w) WIPE=1; shift ;;
     --vbmeta) VBMETA=${2:?--vbmeta needs a path}; shift 2 ;;
-    --keep-product) KEEP_PRODUCT=1; shift ;;
+    --keep-product|--keep-stock) KEEP_PRODUCT=1; DROP_STOCK=0; shift ;;
     --serial) SERIAL=${2:?--serial needs a value}; shift 2 ;;
     --yes|-y) ASSUME_YES=1; shift ;;
     --dry-run) DRY_RUN=1; shift ;;
@@ -285,6 +289,14 @@ GROUP_MAX=${ASH_GROUP_MAX_BYTES:-6442450944}   # 6.0 GiB per slot group
 
 hexok() { [[ $1 =~ ^0x[0-9a-fA-F]+$ ]]; }
 
+# add_deletion <product|system_ext>: append once; keeps the phase-7 stock
+# deletion and the space-deficit path from emitting the same command twice.
+add_deletion() {
+  local part=$1
+  [[ " ${DELETIONS[*]} " == *" $part "* ]] && return 0
+  DELETIONS+=("$part")
+}
+
 compute_space_budget() {
   BUDGET_LINES=(); DELETIONS=(); SPACE_KNOWN=0; GROUP_NEED=0; PLAN_REFUSED=0
   local sys prod sx vendor odm sys_dlkm vend_dlkm sum free_after pair part v
@@ -316,7 +328,7 @@ compute_space_budget() {
     if ((b_need == 0)); then
       BUDGET_LINES+=("=> fits the group on the stock baseline")
     elif ((KEEP_PRODUCT)); then
-      BUDGET_LINES+=("=> does NOT fit and --keep-product forbids deleting product_$SLOT/system_ext_$SLOT: the run would refuse")
+      BUDGET_LINES+=("=> does NOT fit and --keep-stock forbids deleting product_$SLOT/system_ext_$SLOT: the run would refuse")
       PLAN_REFUSED=1
     else
       BUDGET_LINES+=("=> deficit $(human "$b_need"); deletion order: product_$SLOT, then system_ext_$SLOT")
@@ -333,6 +345,10 @@ compute_space_budget() {
       fi
     fi
     BUDGET_LINES+=("(mode=${MODE:-none}: sizes are re-measured in fastbootd before anything is deleted)")
+    if ((DROP_STOCK)); then
+      DELETIONS+=(product system_ext)
+      BUDGET_LINES+=("phase 7: delete stock product_$SLOT/system_ext_$SLOT so the stock apps cannot reappear (--keep-stock keeps them)")
+    fi
     return 0
   fi
 
@@ -354,6 +370,15 @@ compute_space_budget() {
     hexok "$v" && sum=$((sum + v))
   done
   free_after=$((GROUP_MAX - sum - IMG_SIZE))
+  if ((DROP_STOCK)); then
+    for pair in "product:$prod" "system_ext:$sx"; do
+      part=${pair%%:*}; v=${pair#*:}
+      hexok "$v" || continue
+      ((v > 0)) || continue
+      add_deletion "$part"
+      BUDGET_LINES+=("  -> delete ${part}_$SLOT ($(human "$v")): phase 7, stock apps must not reappear")
+    done
+  fi
   if ((free_after >= 0)); then
     BUDGET_LINES+=("budget: $(human "$GROUP_MAX") - $(human "$sum") (vendor+odm+product+system_ext+dlkm) - $(human "$IMG_SIZE") (image) = $(human "$free_after") free (${free_after} B)")
     SPACE_KNOWN=1
@@ -362,7 +387,7 @@ compute_space_budget() {
   GROUP_NEED=$((-free_after))
   BUDGET_LINES+=("budget: $(human "$GROUP_MAX") - $(human "$sum") - $(human "$IMG_SIZE") = deficit $(human "$GROUP_NEED")")
   if ((KEEP_PRODUCT)); then
-    BUDGET_LINES+=("--keep-product forbids deleting product_$SLOT/system_ext_$SLOT: the run would refuse")
+    BUDGET_LINES+=("--keep-stock forbids deleting product_$SLOT/system_ext_$SLOT: the run would refuse")
     SPACE_KNOWN=1
     PLAN_REFUSED=1
     return 0
@@ -371,8 +396,10 @@ compute_space_budget() {
     part=${pair%%:*}; v=${pair#*:}
     hexok "$v" || continue
     ((GROUP_NEED > 0)) || break
-    DELETIONS+=("$part")
-    BUDGET_LINES+=("  -> delete ${part}_$SLOT (frees $(human "$v"))")
+    if [[ " ${DELETIONS[*]} " != *" $part "* ]]; then
+      add_deletion "$part"
+      BUDGET_LINES+=("  -> delete ${part}_$SLOT (frees $(human "$v"))")
+    fi
     GROUP_NEED=$((GROUP_NEED - v))
   done
   SPACE_KNOWN=1
@@ -395,12 +422,15 @@ print_plan() {
   printf '\nsteps:\n'
   printf '  - reach fastbootd if needed (bootloader: reboot recovery -> adb reboot fastboot;\n'
   printf '    Android/recovery: adb reboot fastboot)\n'
-  if ((KEEP_PRODUCT)) && ((GROUP_NEED > 0)); then
-    printf '  - space budget: image does not fit and --keep-product forbids deleting\n'
-    printf '    product_%s/system_ext_%s -> this run would REFUSE\n' "$SLOT" "$SLOT"
+  if ((KEEP_PRODUCT)); then
+    if ((GROUP_NEED > 0)); then
+      printf '  - space budget: image does not fit and --keep-stock forbids deleting\n'
+      printf '    product_%s/system_ext_%s -> this run would REFUSE\n' "$SLOT" "$SLOT"
+    else
+      printf '  - keep stock product_%s/system_ext_%s (--keep-stock; the stock apps stay)\n' "$SLOT" "$SLOT"
+    fi
   else
-    printf '  - apply the space budget: free stock product_%s first, then\n' "$SLOT"
-    printf '    system_ext_%s only if still short (never vendor_/odm_)\n' "$SLOT"
+    printf '  - delete stock product_%s/system_ext_%s (phase 7 debloat; --keep-stock keeps them)\n' "$SLOT" "$SLOT"
   fi
   printf '  - fastboot --slot %s flash system %s\n' "$SLOT" "$img"
   if [[ $VB_FLAGS == 1 ]]; then
@@ -508,7 +538,7 @@ print_plan "$IMG_HOST" "$IMG_SIZE" "$VB" "$VB_DESC"
 
 if ((DRY_RUN)); then
   if ((PLAN_REFUSED)); then
-    warn "dry-run: this plan would be refused (--keep-product and the image does not fit)"
+    warn "dry-run: this plan would be refused (--keep-stock and the image does not fit)"
     log "dry-run: no device writes performed"
     exit 1
   fi
@@ -536,7 +566,7 @@ compute_space_budget
 log "space budget for qti_dynamic_partitions_$SLOT:"
 printf '  %s\n' "${BUDGET_LINES[@]}" >&2
 if ((GROUP_NEED > 0)) && ((KEEP_PRODUCT)); then
-  die "--keep-product: image does not fit the group and deleting product_$SLOT/system_ext_$SLOT is forbidden (deficit $(human "$GROUP_NEED"))"
+  die "--keep-stock: image does not fit the group and deleting product_$SLOT/system_ext_$SLOT is forbidden (deficit $(human "$GROUP_NEED"))"
 fi
 if ((GROUP_NEED > 0)); then
   die "image does not fit the group even after deleting product_$SLOT and system_ext_$SLOT (deficit $(human "$GROUP_NEED"))"
@@ -548,7 +578,7 @@ fi
 DELETED_PARTS=" "
 if ((${#DELETIONS[@]})); then
   if ((KEEP_PRODUCT)); then
-    die "--keep-product is set but the image needs room: ${DELETIONS[*]} would have to be deleted"
+    die "--keep-stock is set but the image needs room: ${DELETIONS[*]} would have to be deleted"
   fi
   for part in "${DELETIONS[@]}"; do
     log "deleting ${part}_$SLOT (GSIs bundle product/system_ext; vendor/odm are never touched)"
@@ -576,7 +606,7 @@ if flash_system; then
 fi
 if ((!flashed)) && grep -qiE 'not enough space|no space|failed to resize|cannot resize|too large' <<<"$LAST_FLASH_OUT"; then
   if ((KEEP_PRODUCT)); then
-    die "super is full and --keep-product is set; free space manually or drop the flag"
+    die "super is full and --keep-stock is set; free space manually or drop the flag"
   fi
   for part in product system_ext; do
     [[ $DELETED_PARTS == *" $part "* ]] && continue

@@ -174,8 +174,9 @@ Real flash:
 scripts/device/flash-gsi.sh /path/to/system.img --wipe --yes
 ```
 
-Options: `--slot a|b`, `--wipe`, `--vbmeta PATH`, `--keep-product`,
-`--serial S`, `--yes`, `--dry-run`, `--no-device` (plan only), `--help`.
+Options: `--slot a|b`, `--wipe`, `--vbmeta PATH`, `--keep-stock`
+(alias `--keep-product`), `--serial S`, `--yes`, `--dry-run`, `--no-device`
+(plan only), `--help`.
 
 Sequence:
 
@@ -203,16 +204,20 @@ Sequence:
    `image + vendor + odm + product + system_ext + system_dlkm + vendor_dlkm`
    against the 6.0 GiB budget and prints the arithmetic. Android-sparse images
    are budgeted by their **expanded** size (`total_blks * blk_sz` from the
-   sparse header), not by the on-disk file size. When short, it deletes the
-   stock `product_<slot>` first and `system_ext_<slot>` only if still needed (a
-   GSI bundles its own); `vendor_<slot>`/`odm_<slot>` and the dlkm partitions are
-   never touched. `--keep-product` forbids those deletions and fails instead.
-   The budget is overridable with `ASH_GROUP_MAX_BYTES` (default
-   `6442450944`). `restore-stock.sh` brings the stock super back. With
-   `--keep-product` and a deficit, `--dry-run` prints `would REFUSE` and exits
-   non-zero (the real run dies before any deletion). The target slot is
-   validated to be exactly `a` or `b`, including when it came from the
-   device-reported `current-slot`.
+   sparse header), not by the on-disk file size.
+   **Phase 7 default:** the stock `product_<slot>` and `system_ext_<slot>` are
+   deleted even when the image would fit, because the GSI bundles its own
+   product/system_ext and the stock partitions carry Retroid/Google apps
+   (Calendar, Chrome, DeskClock, SnapdragonMusic, QtiSoundRecorder, GMS).
+   `--keep-stock` (alias `--keep-product`) restores the old space-only
+   behaviour and keeps those apps. `vendor_<slot>`/`odm_<slot>` and the dlkm
+   partitions are never touched. If the image is too large even after the
+   deletions, the run refuses before writing anything. The budget is
+   overridable with `ASH_GROUP_MAX_BYTES` (default `6442450944`).
+   `restore-stock.sh` brings the stock super back. With `--keep-stock` and a
+   deficit, `--dry-run` prints `would REFUSE` and exits non-zero (the real run
+   dies before any deletion). The target slot is validated to be exactly `a` or
+   `b`, including when it came from the device-reported `current-slot`.
 5. **Flash `system`** -- `fastboot --slot <slot> flash system <img>` (fastbootd
    resizes the logical partition; fastboot sparse-splits large images using
    `max-download-size`).
@@ -237,9 +242,9 @@ fastboot/getvar call between them; that is what wedges the ABL.
 
 Hard blocks: every partition name is checked against the NEVER-flash list before
 any write. The script only writes `system` and `vbmeta`; it deletes the logical
-`product_<slot>`/`system_ext_<slot>` only for space, and erases
-`userdata`/`metadata` only with `--wipe`. `vendor_<slot>` and `odm_<slot>` are
-never touched.
+`product_<slot>`/`system_ext_<slot>` by default (phase 7 debloat; `--keep-stock`
+keeps them) and erases `userdata`/`metadata` only with `--wipe`.
+`vendor_<slot>` and `odm_<slot>` are never touched.
 
 Logs: `out/device/<ts>/flash-gsi.log`.
 
