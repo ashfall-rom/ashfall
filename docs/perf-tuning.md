@@ -162,9 +162,12 @@ repeated; A-B-A) isolates the ramp cost:
 * Sustained games render continuously, so this changes nothing there; it is a
   UI/menu/short-action win.
 
-Kept: `ashfall-hwd` writes **10 000 ms** while the CPU governor is
-`performance` (the Performance preset) and **80 ms** otherwise, and drops back
-to 80 ms while the thermal override is active.  See `docs/rp5/gpu.md` §4.3.
+Kept as a per-preset switch: the Power editor exposes **Keep GPU clocks
+between bursts**, stored with the preset and written to
+`persist.ashfall.perf.gpu_idle_ms` (10 000 or 0).  The built-in Performance
+preset ships with it on; Balanced, Low power and new user presets default to
+off, so a fresh device keeps the stock 80 ms.  The thermal override always
+wins.  See `docs/rp5/gpu.md` §4.3.
 
 ## 6. Rejected / not changed
 

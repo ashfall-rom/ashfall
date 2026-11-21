@@ -65,10 +65,11 @@
 #define GPU_MAX_MHZ 1000
 #define GPU_MAX_STEPS 32
 
-/* Stock KGSL idle timer, and the value used while the Performance preset is
- * active (docs/rp5/gpu.md section 4.3, issue #130). */
+/* Stock KGSL idle timer, and the value the Performance preset requests
+ * (docs/rp5/gpu.md section 4.3, issue #130). */
 #define GPU_IDLE_STOCK_MS 80
 #define GPU_IDLE_PERFORMANCE_MS 10000
+#define GPU_IDLE_MAX_MS 60000
 
 typedef struct {
     /* Frequencies exposed by the running DT, in Hz, descending. */
@@ -100,12 +101,14 @@ void gpu_state_init(gpu_state *state);
 int gpu_apply(gpu_state *state, int request_mhz, bool throttle_override);
 
 /*
- * Keep the GPU at its clock between short bursts while the Performance preset
- * is active: 10 s idle timer with `performance`, the stock 80 ms otherwise.
- * Idempotent (writes only on change) and safe when the node is missing.
- * Returns the applied value in ms, or -1 when it could not be written.
+ * Apply the requested KGSL idle timer (issue #130).  0 selects the stock
+ * 80 ms; anything else is clamped to 80..60000 ms.  The request comes from
+ * `persist.ashfall.perf.gpu_idle_ms`, which the Power editor writes for the
+ * applied preset (the built-in Performance preset ships with 10 s).  Idempotent
+ * (writes only on change) and safe when the node is missing.  Returns the
+ * applied value in ms, or -1 when it could not be written.
  */
-int gpu_apply_idle_timer(gpu_state *state, bool performance);
+int gpu_apply_idle_ms(gpu_state *state, int request_ms);
 
 /* ashfall.status.perf.gpu_max_mhz: actual cap in MHz, -1 when unavailable. */
 int gpu_status_mhz(const gpu_state *state);

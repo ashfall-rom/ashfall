@@ -231,6 +231,7 @@ cap:
 | property | writer → reader | values |
 |---|---|---|
 | `persist.ashfall.perf.gpu_max_mhz` | Parts app → `ashfall-hwd` | 305..1000, default 670; missing/invalid → 670 |
+| `persist.ashfall.perf.gpu_idle_ms` | Parts app → `ashfall-hwd` | KGSL idle timer: `0` = stock 80 ms, else 80..60000; default 0 (§4.3) |
 | `ashfall.status.perf.gpu_max_mhz` | `ashfall-hwd` → app | actual cap in MHz; `-1` when the node is unavailable |
 | `ashfall.status.perf.gpu_oc` | `ashfall-hwd` → app | `1` = cap > 670, `0` = stock/≤670, `-1` = unavailable |
 
@@ -347,12 +348,17 @@ logs the fallback.  The `adb shell` examples below may keep the class path:
 
 `kgsl-3d0/idle_timer` is how long the GPU may stay at its clock after the last
 submission; the stock value is 80 ms.  At 1000 MHz the ramp from 305 MHz costs
-roughly 10 % of a short burst, so `ashfall-hwd` writes:
+roughly 10 % of a short burst, so `ashfall-hwd` follows a per-preset request:
 
-| state | `idle_timer` |
+| `persist.ashfall.perf.gpu_idle_ms` | `idle_timer` |
 |---|---|
-| CPU governor `performance` (the Performance preset), no thermal override | **10 000 ms** |
-| every other preset, or the thermal override active | **80 ms** (stock) |
+| `10000` (the Power editor's **Keep GPU clocks between bursts** switch) | **10 000 ms** |
+| `0` / missing, or the thermal override active | **80 ms** (stock) |
+
+The built-in **Performance** preset ships with the switch on; Balanced, Low
+power and every user preset default to off, so a fresh device (Balanced) keeps
+the stock timer.  The request belongs to the applied preset and is written by
+`Power.apply()`, not by a global setting.
 
 The write is idempotent (only on change) and never fails the daemon.  Measured
 on the RP5 (issue #130, `docs/perf-tuning.md` §5.3): 20-frame cold bursts 3 s
@@ -361,12 +367,12 @@ the same battery current (the bursts finish sooner).  Sustained rendering is
 unaffected; this is a UI/menu/short-action win.
 
 The node is relabelled `ashfall_gpu_sysfs` in `file_contexts` and
-`genfs_contexts` like the other four kgsl attributes (§4.1), so an enforcing
-build does not need a new permission:
+`genfs_contexts` like the other kgsl attributes (§4.1), so an enforcing build
+does not need a new permission:
 
 ```bash
 $S adb shell 'cat /sys/devices/platform/soc/3d00000.qcom,kgsl-3d0/kgsl/kgsl-3d0/idle_timer'
-# 10000 with the Performance preset, 80 with Balanced
+# 10000 after applying a preset with the switch on, 80 otherwise
 ```
 
 ## 5. Flashing and recovery

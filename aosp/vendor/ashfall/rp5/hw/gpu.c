@@ -305,14 +305,20 @@ int gpu_load_pct(void)
     return pct;
 }
 
-int gpu_apply_idle_timer(gpu_state *state, bool performance)
+int gpu_apply_idle_ms(gpu_state *state, int request_ms)
 {
-    const int want = performance ? GPU_IDLE_PERFORMANCE_MS : GPU_IDLE_STOCK_MS;
+    int want = request_ms;
     static bool logged_missing;
     const char *path;
 
     if (!state)
         return -1;
+    if (want <= 0)
+        want = GPU_IDLE_STOCK_MS;
+    if (want < GPU_IDLE_STOCK_MS)
+        want = GPU_IDLE_STOCK_MS;
+    if (want > GPU_IDLE_MAX_MS)
+        want = GPU_IDLE_MAX_MS;
     if (state->idle_ms == want)
         return want;
 
@@ -330,7 +336,7 @@ int gpu_apply_idle_timer(gpu_state *state, bool performance)
         return -1;
     }
     state->idle_ms = want;
-    ah_logf(AH_LOG_INFO, "gpu: idle_timer %d ms (%s)", want,
-            performance ? "performance preset" : "stock");
+    ah_logf(AH_LOG_INFO, "gpu: idle_timer %d ms (requested %d ms)", want,
+            request_ms);
     return want;
 }

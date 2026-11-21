@@ -1400,7 +1400,7 @@ static void test_gpu(void)
     remove_rel(FAKE_KGSL_LEGACY);
 }
 
-/* --- issue #130: KGSL idle timer follows the Performance preset ---------- */
+/* --- issue #130: KGSL idle timer request -------------------------------- */
 
 static void test_gpu_idle_timer(void)
 {
@@ -1411,24 +1411,29 @@ static void test_gpu_idle_timer(void)
     write_file(idle, "80\n");
 
     gpu_state_init(&gpu);
-    CHECK_EQ(gpu_apply_idle_timer(&gpu, false), GPU_IDLE_STOCK_MS);
+    /* 0 is the stock request. */
+    CHECK_EQ(gpu_apply_idle_ms(&gpu, 0), GPU_IDLE_STOCK_MS);
     CHECK_EQ(read_int(idle), 80);
     /* Written once per change: the stock value is a no-op the second time. */
-    CHECK_EQ(gpu_apply_idle_timer(&gpu, false), GPU_IDLE_STOCK_MS);
+    CHECK_EQ(gpu_apply_idle_ms(&gpu, 0), GPU_IDLE_STOCK_MS);
     CHECK_EQ(read_int(idle), 80);
 
-    /* The Performance preset keeps the GPU at its clock between short bursts. */
-    CHECK_EQ(gpu_apply_idle_timer(&gpu, true), GPU_IDLE_PERFORMANCE_MS);
+    /* The Performance preset's "keep GPU clocks" option. */
+    CHECK_EQ(gpu_apply_idle_ms(&gpu, GPU_IDLE_PERFORMANCE_MS), 10000);
     CHECK_EQ(read_int(idle), 10000);
 
-    /* Leaving the preset restores the stock timer. */
-    CHECK_EQ(gpu_apply_idle_timer(&gpu, false), GPU_IDLE_STOCK_MS);
+    /* Back to stock when the option (or the preset) goes away. */
+    CHECK_EQ(gpu_apply_idle_ms(&gpu, 0), GPU_IDLE_STOCK_MS);
     CHECK_EQ(read_int(idle), 80);
+
+    /* Values are clamped into the documented range. */
+    CHECK_EQ(gpu_apply_idle_ms(&gpu, 5), GPU_IDLE_STOCK_MS);
+    CHECK_EQ(gpu_apply_idle_ms(&gpu, 999999), GPU_IDLE_MAX_MS);
 
     /* A missing node is a logged no-op, not a crash. */
     remove_rel(FAKE_KGSL_DEV "/kgsl/kgsl-3d0");
     gpu_state_init(&gpu);
-    CHECK_EQ(gpu_apply_idle_timer(&gpu, true), -1);
+    CHECK_EQ(gpu_apply_idle_ms(&gpu, GPU_IDLE_PERFORMANCE_MS), -1);
 }
 
 /* --- phase 6: live GPU clock for the Power page graph (#124) ------------- */

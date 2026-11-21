@@ -108,6 +108,9 @@ governor change:
 | Balanced | stock (1804) | stock (2419) | stock (2841) | `schedutil` | 670 |
 | Performance | stock (1804) | stock (2419) | stock (2841) | `performance` | 850 |
 
+The Performance preset also ships with **Keep GPU clocks between bursts** on
+(issue #130): see the editor list below.
+
 * Stored as JSON in device-protected storage
   (`/data/user_de/0/org.ashfall.parts/shared_prefs/power_presets.xml`, file
   `power_presets`), so the page, the tile and the Handheld summary work before
@@ -121,7 +124,7 @@ governor change:
    "prime_mhz":2841,"governor":"schedutil","gpu_mhz":670,"builtin":true},
   {"id":"builtin.performance","name":"Performance","silver_mhz":1804,
    "gold_mhz":2419,"prime_mhz":2841,"governor":"performance","gpu_mhz":850,
-   "builtin":true},
+   "keep_gpu_clocks":true,"builtin":true},
   {"id":"user.1a2b3c4d","name":"Custom preset","silver_mhz":1804,...,
    "governor":"schedutil","gpu_mhz":940,"builtin":false}
 ]}
@@ -130,7 +133,10 @@ governor change:
 * The editor (`PowerPresetActivity`) lists **every** preset, the built-ins
   included, marks the active one and opens each on its own screen (#156 §5):
   * three cap sliders (50 MHz per D-pad press, full range on a touch drag),
-    the governor selector and the GPU selector;
+    the governor selector, the GPU selector and the **Keep GPU clocks between
+    bursts** switch (#130: writes `persist.ashfall.perf.gpu_idle_ms` 10000 or
+    0, so the GPU does not drop to 305 MHz and re-ramp inside a short burst);
+    the switch is on for the built-in Performance preset and off otherwise;
   * **Apply this preset** writes the caps, the governor, the GPU cap and the
     preset id;
   * **Duplicate** creates an editable copy (`user.` + 8 hex characters);
@@ -193,6 +199,7 @@ governor change:
 | `persist.ashfall.perf.cpu_max_prime` | `ashfall_perf_prop` | app → daemon | MHz cap, `0` = stock maximum |
 | `persist.ashfall.perf.cpu_gov` | `ashfall_perf_prop` | app → daemon | one governor for all three policies, default `schedutil`; `schedutil`/`conservative`/`powersave`/`performance` |
 | `persist.ashfall.perf.gpu_max_mhz` | `ashfall_perf_prop` | app → daemon | GPU cap 305..1000 MHz, default 670 |
+| `persist.ashfall.perf.gpu_idle_ms` | `ashfall_perf_prop` | app → daemon | KGSL idle timer: `0` = stock 80 ms, else 80..60000; the Performance preset writes 10000 (#130) |
 | `persist.ashfall.perf.throttle_override` | `ashfall_perf_prop` | app → daemon | `1` = software clock throttling off until reboot |
 | `persist.ashfall.perf.throttle_override_permanent` | `ashfall_prop` | app → daemon | re-apply the override at every boot |
 | `persist.ashfall.power.preset` | `ashfall_prop` | app only | active preset id |

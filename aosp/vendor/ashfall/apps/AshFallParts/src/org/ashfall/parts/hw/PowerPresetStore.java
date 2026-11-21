@@ -48,7 +48,7 @@ public final class PowerPresetStore {
     private static final String KEY_PRESETS = "presets";
     private static final String KEY_VERSION = "version";
     private static final String KEY_SEEDED = "seeded";
-    private static final int VERSION = 2;
+    private static final int VERSION = 3;
 
     public static final String ID_LOW_POWER = "builtin.low_power";
     public static final String ID_BALANCED = "builtin.balanced";
@@ -106,21 +106,24 @@ public final class PowerPresetStore {
     /** The built-in Low power preset of the #124 table. */
     public static PowerPreset lowPower() {
         return PowerPreset.builtin(ID_LOW_POWER, "Low power", 1171, 1478, 1632,
-                Power.GOV_CONSERVATIVE, 305);
+                Power.GOV_CONSERVATIVE, 305, false);
     }
 
     /** The built-in Balanced preset: every cap at stock. */
     public static PowerPreset balanced() {
         return PowerPreset.builtin(ID_BALANCED, "Balanced", Power.SILVER_STOCK_MHZ,
                 Power.GOLD_STOCK_MHZ, Power.PRIME_STOCK_MHZ, Power.GOV_SCHEDUTIL,
-                Power.GPU_STOCK_MHZ);
+                Power.GPU_STOCK_MHZ, false);
     }
 
-    /** The built-in Performance preset: stock CPU, the 850 MHz GPU step, `performance`. */
+    /**
+     * The built-in Performance preset: stock CPU, the 850 MHz GPU step,
+     * `performance`, and the GPU clock kept between bursts (#130).
+     */
     public static PowerPreset performance() {
         return PowerPreset.builtin(ID_PERFORMANCE, "Performance", Power.SILVER_STOCK_MHZ,
                 Power.GOLD_STOCK_MHZ, Power.PRIME_STOCK_MHZ, Power.GOV_PERFORMANCE,
-                Power.PERFORMANCE_GPU_MHZ);
+                Power.PERFORMANCE_GPU_MHZ, true);
     }
 
     public synchronized boolean rename(PowerPreset preset, String name) {
@@ -219,6 +222,7 @@ public final class PowerPresetStore {
         existing.primeMhz = table.primeMhz;
         existing.governor = table.governor;
         existing.gpuMhz = table.gpuMhz;
+        existing.keepGpuClocks = table.keepGpuClocks;
         existing.builtin = true;
         persist();
         return true;
@@ -273,6 +277,7 @@ public final class PowerPresetStore {
         existing.primeMhz = table.primeMhz;
         existing.governor = table.governor;
         existing.gpuMhz = table.gpuMhz;
+        existing.keepGpuClocks = table.keepGpuClocks;
         existing.builtin = true;
     }
 
@@ -319,9 +324,17 @@ public final class PowerPresetStore {
                 final JSONArray array = root.optJSONArray(KEY_PRESETS);
                 if (array != null) {
                     for (int i = 0; i < array.length(); i++) {
-                        final PowerPreset preset = PowerPreset.fromJson(array.getJSONObject(i));
+                        final JSONObject object = array.getJSONObject(i);
+                        final PowerPreset preset = PowerPreset.fromJson(object);
                         if (preset.id == null || preset.id.length() > PowerPreset.MAX_ID_LENGTH) {
                             continue;
+                        }
+                        // v2 -> v3: the field did not exist.  The Performance
+                        // preset gets the #130 behaviour; every other preset
+                        // keeps the stock timer.
+                        if (!object.has("keep_gpu_clocks")
+                                && ID_PERFORMANCE.equals(preset.id)) {
+                            preset.keepGpuClocks = true;
                         }
                         mPresets.add(preset);
                     }

@@ -255,7 +255,10 @@ public final class Power {
         return all.isEmpty() ? null : all.get(0);
     }
 
-    /** Applies a preset: the caps, the governor, the GPU cap, then its id. */
+    /**
+     * Applies a preset: the caps, the governor, the GPU cap, the GPU idle
+     * timer (#130), then its id.
+     */
     public static void apply(PowerPreset preset) {
         if (preset == null) {
             return;
@@ -265,6 +268,8 @@ public final class Power {
         setCpuCapPrimeMhz(preset.primeMhz);
         setGovernor(preset.governor);
         setGpuMhz(preset.gpuMhz);
+        Perf.setGpuIdleMs(preset.keepGpuClocks
+                ? Perf.GPU_IDLE_PERFORMANCE_MS : 0);
         setPresetId(preset.id);
     }
 
@@ -279,6 +284,7 @@ public final class Power {
         clearCpuCaps();
         setGovernor(GOV_SCHEDUTIL);
         setGpuMhz(GPU_STOCK_MHZ);
+        Perf.setGpuIdleMs(0);
         setThrottleOverride(false);
         setPresetId(PowerPresetStore.ID_BALANCED);
     }

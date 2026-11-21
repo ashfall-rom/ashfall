@@ -95,6 +95,7 @@ New property (already covered by the `persist.ashfall.perf.` ->
 | Property | Type | Writer -> reader | Values / meaning |
 |---|---|---|---|
 | `persist.ashfall.perf.gpu_max_mhz` | `ashfall_perf_prop` | app -> `ashfall-hwd` | 305..1000; default `670`; missing/invalid -> `670` |
+| `persist.ashfall.perf.gpu_idle_ms` | `ashfall_perf_prop` | app -> `ashfall-hwd` | KGSL idle timer: `0` = stock 80 ms, else 80..60000; default `0` (issue #130) |
 
 `ashfall-hwd` (new `gpu.c`/`gpu.h`, wired into the existing main loop):
 
@@ -112,6 +113,10 @@ New property (already covered by the `persist.ashfall.perf.` ->
   to 670 MHz and publish `ashfall.status.perf.gpu_oc=0`; log one line. This
   prevents 1 GHz with the GPU clock trips raised to 110 C. The UI must show the
   clamp.
+- The KGSL `idle_timer` follows the applied power preset (#130): `0` keeps the
+  stock 80 ms and the Performance preset's "Keep GPU clocks between bursts"
+  writes `10000`, so a short GPU burst does not pay the 305 MHz ramp again.
+  The throttle override always forces the stock 80 ms.
 - The SELinux change is minimal: the node is labelled
   `vendor_sysfs_kgsl` on the device; add the `ashfall-hwd` allow (or a dedicated
   `sysfs_type` only if the vendor label cannot be used) and verify with a full
