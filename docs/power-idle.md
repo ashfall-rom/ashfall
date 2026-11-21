@@ -112,13 +112,37 @@ writes are why the daemon was waking *other* processes, not just itself.
 * **The WLAN radio.**  `/sys/kernel/wifi/power_stats` shows the chip in deep
   sleep 63 099 times; it is the AP that stays up.
 
+## 6a. On-demand suspend snapshot
+
+`ashfall-hwd` runs as root, so it can read the two things a non-root shell
+cannot.  A new value in a shell-settable property writes a one-shot snapshot to
+its own log:
+
+```bash
+adb shell setprop debug.ashfall.wakeups 1
+adb shell logcat -d -s ashfall-hwd | grep 'wakeups|'
+```
+
+It logs every line of `/sys/kernel/debug/wakeup_sources` (event counts, expire
+counts, total block time) and every process holding a `timerfd`, with the
+`clockid` and `it_value` from `/proc/<pid>/fdinfo/<fd>` - `clockid 9` is
+`CLOCK_BOOTTIME_ALARM`, the only kind that can wake the AP.  Logcat instead of
+a file: no sepolicy exception for writing into `/data/local/tmp`, and shell can
+already read the daemon's log buffer.
+
 ## 6. Open (vendor/kernel, tracked in #255)
 
-* **The `[timerfd]` abort itself.** 688/20 min.  Naming the owner needs root:
-  `lsof | grep timerfd`, `/proc/<pid>/fd` and
-  `/sys/kernel/debug/wakeup_sources`.  This is why the build now ships
-  `ro.debuggable=1` (§7) - `vendor/lineage/config/common.mk` disables adb root
-  on userdebug, which left every suspend investigation with no tools.
+* **What actually fires every 1.75 s.**  `ashfall-hwd` can now answer the
+  "who holds the timerfd" half on demand (§6a), and the first snapshots rule
+  out the obvious answer: the only `CLOCK_BOOTTIME_ALARM` timerfds on the
+  device are the health HAL's ~50 s poll, `system_server`/AlarmManager's next
+  alarm (minutes away), two Bluetooth alarms (12 min / 1 h) and three disarmed
+  ones.  **There is no 1.75 s alarm**, so `[timerfd]` is the *consequence*: the
+  AP is woken by something else, and the still-pending AlarmManager timerfd
+  then blocks the next suspend attempt and stretches one wake into ~1 s of
+  awake time.  The next step is a `wakeup_sources` diff over an unplugged idle
+  window (event_count per source), which is exactly the `event_count` column
+  in the same snapshot.
 * `cnss_pci 0000:01:00.0 ... pci_pm_suspend ... -11` and the D3cold resume
   failure (#255 §1).
 * `qcom_rx_wakelock` (19 in 20 min) and `mhi0` (2): the WLAN RX path and the
@@ -131,9 +155,14 @@ writes are why the daemon was waking *other* processes, not just itself.
 `PRODUCT_NOT_DEBUGGABLE_IN_USERDEBUG` is empty in
 `vendor/ashfall/products/ashfall_gsi_arm64.mk` (after the LineageOS inherit
 that sets it).  It must be *empty*, not `false`: the value is exported with
-`add_json_bool()`, which reads any non-empty string as true.  With it set, a
-userdebug build gets `ro.debuggable=1`, `adb root`, `dmesg`, debugfs and
-`/proc/<pid>/fd`.
+`add_json_bool()`, which reads any non-empty string as true.  The built image
+reports `ro.debuggable=1`.
+
+Android 13 has a second gate that `ro.debuggable` alone does not open: adbd
+runs `adbroot_service`, which only restarts as root when the user has turned on
+Developer options -> **Root access** (state in `/data/adbroot/enabled`; only
+uid `system` may write it, so `adb shell` cannot).  So `adb root` still needs
+that one toggle; without it, §6a is the way to look at suspend on the device.
 
 ## 8. Acceptance mapping
 
