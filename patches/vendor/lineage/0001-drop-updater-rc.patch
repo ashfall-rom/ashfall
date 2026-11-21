@@ -1,0 +1,27 @@
+From cab2536bd935a670af571b623a138f1d074f3d9f Mon Sep 17 00:00:00 2001
+From: AshFall UI <ui@ashfall.local>
+Date: Sat, 21 Nov 2026 21:02:19 +0000
+Subject: [PATCH] common: drop the LineageOS Updater init rc
+
+---
+ config/common.mk | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/config/common.mk b/config/common.mk
+index c3a9eed..f9c52b5 100644
+--- a/config/common.mk
++++ b/config/common.mk
+@@ -155,8 +155,8 @@ PRODUCT_PACKAGES += \
+     LineageSettingsProvider \
+     Updater
+ 
+-PRODUCT_COPY_FILES += \
+-    vendor/lineage/prebuilt/common/etc/init/init.lineage-updater.rc:$(TARGET_COPY_OUT_SYSTEM_EXT)/etc/init/init.lineage-updater.rc
++# AshFall: the LineageOS Updater (and its init rc) is not part of the ROM
++# (docs/phase7.md). Do not ship an init service that can never exec.
+ 
+ # Config
+ PRODUCT_PACKAGES += \
+-- 
+2.53.0
+

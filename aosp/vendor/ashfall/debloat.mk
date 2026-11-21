@@ -59,7 +59,6 @@ ASHFALL_DEBLOAT_PACKAGES := \
     CallLogBackup \
     E2eeContactKeysProvider \
     CellBroadcastLegacyApp \
-    LocalContactsBackup \
     com.android.cellbroadcast \
     ExactCalculator \
     Etar \
@@ -81,12 +80,14 @@ ASHFALL_DEBLOAT_PACKAGES := \
     Jelly
 
 PRODUCT_PACKAGES_BLACKLIST := $(ASHFALL_DEBLOAT_PACKAGES)
-PRODUCT_COPY_FILES_BLACKLIST := %init.lineage-updater.rc:%
 
-# The blacklists are applied by patches/build/make/0001-product-blacklists.patch
+# The blacklist is applied by patches/build/make/0001-product-blacklists.patch
 # in product_config.mk, after the inherited products have been merged. Filtering
 # PRODUCT_PACKAGES here would be a no-op: the product node merge appends the
 # inherited values after this file has been included.
 #
 # PRODUCT_PACKAGES_DEBUG/ENG: UsbDisableDebugger is in the shared blacklist, so
 # the same product_config.mk step removes it from the debug list too.
+#
+# The Updater's init rc is removed at its source by
+# patches/vendor/lineage/0001-drop-updater-rc.patch.

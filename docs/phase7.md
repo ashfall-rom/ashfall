@@ -123,8 +123,9 @@ feature flags are out of reach and stay.
 `TeleService`, `TelephonyProvider`, `TelecomShim`, `EmergencyInfo`,
 `CarrierConfig`, `CarrierDefaultApp`, `ImsServiceEntitlement`, `ONS`,
 `SimAppDialog`, `Stk`, `BlockedNumberProvider`, `CallLogBackup`,
-`E2eeContactKeysProvider`, `CellBroadcastLegacyApp`, `LocalContactsBackup`,
-`com.android.cellbroadcast` (APEX).
+`E2eeContactKeysProvider`, `CellBroadcastLegacyApp`,
+`com.android.cellbroadcast` (APEX). Seedvault keeps its `LocalContactsBackup`
+companion; it uses the retained ContactsProvider.
 
 Kept: `ContactsProvider`, `CalendarProvider`, `com.android.telephonycore`
 (APEX; framework dependency), vendor RIL. The device already declares no
@@ -154,14 +155,16 @@ APEX removal if a boot test proves it safe.
   **before** `$(call inherit-product, vendor/lineage/build/target/product/lineage_gsi_arm64.mk)`;
   the inherited makefile reads it at include time.
 - `debloat.mk` is included last in `ashfall_common.mk`; it sets
-  `PRODUCT_PACKAGES_BLACKLIST` and `PRODUCT_COPY_FILES_BLACKLIST`. The
-  blacklists are applied by
+  `PRODUCT_PACKAGES_BLACKLIST`. The blacklist is applied by
   `patches/build/make/0001-product-blacklists.patch` in
   `build/make/core/product_config.mk`, **after** the product node merge. A
   plain `PRODUCT_PACKAGES := $(filter-out ...)` in the product makefile is a
   no-op for inherited packages: the node merge appends the inherited values
   after the product file's body (the first phase-7 build proved this: it still
   had Dialer/Etar/Updater even though the product makefile filtered them).
+- The Updater's `init.lineage-updater.rc` copy rule is removed at its source by
+  `patches/vendor/lineage/0001-drop-updater-rc.patch`, not by a copy-file
+  blacklist.
 - The `com.android.virt` APEX is **not** removed: its `service-virtualization`
   fragment must be declared in `PRODUCT_APEX_SYSTEM_SERVER_JARS` (Soong rejects
   the APEX otherwise). Only `VmTerminalApp` is removed from its `apps` list.
@@ -204,7 +207,7 @@ Runtime (orchestrator, after a lease):
 
 | Workstream | Paths |
 |---|---|
-| Product/debloat + guard | `aosp/vendor/ashfall/debloat.mk`, `aosp/vendor/ashfall/debloat/blocklist.txt`, `aosp/vendor/ashfall/products/ashfall_gsi_arm64.mk`, `aosp/vendor/ashfall/ashfall_common.mk`, `patches/build/make/0001-product-blacklists.patch`, `patches/packages/modules/Virtualization/0001-drop-avf-terminal-app.patch`, `scripts/verify/debloat.sh` |
+| Product/debloat + guard | `aosp/vendor/ashfall/debloat.mk`, `aosp/vendor/ashfall/debloat/blocklist.txt`, `aosp/vendor/ashfall/products/ashfall_gsi_arm64.mk`, `aosp/vendor/ashfall/ashfall_common.mk`, `patches/build/make/0001-product-blacklists.patch`, `patches/vendor/lineage/0001-drop-updater-rc.patch`, `patches/packages/modules/Virtualization/0001-drop-avf-terminal-app.patch`, `scripts/verify/debloat.sh` |
 | Branding/defaults | `aosp/vendor/ashfall/overlay/no-rro/**`, `patches/lineage-sdk/0002-*`, `patches/frameworks/base/0007-*`, `patches/packages/apps/Settings/0002-*`, `docs/branding.md` |
 | Flash policy | `scripts/device/flash-gsi.sh`, `docs/flashing.md` |
 | Integration/build/flash | orchestrator |

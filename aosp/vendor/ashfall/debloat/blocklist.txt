@@ -43,7 +43,6 @@ module BlockedNumberProvider
 module CallLogBackup
 module E2eeContactKeysProvider
 module CellBroadcastLegacyApp
-module LocalContactsBackup
 module com.android.cellbroadcast
 
 # --- Lineage OTA -----------------------------------------------------------
@@ -105,7 +104,6 @@ package com.android.providers.contactkeys
 package com.android.cellbroadcastreceiver
 package com.android.cellbroadcastreceiver.module
 package com.android.cellbroadcastservice
-package org.calyxos.backup.contacts
 package org.lineageos.updater
 package org.lineageos.updater.auto_generated_rro_product__
 package com.android.printspooler
