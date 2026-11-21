@@ -8,6 +8,26 @@ the SoC never reaching a low-power state.
 This page records the measurement harness, the baseline, what was fixed on the
 AshFall side, and what is left (which is mostly vendor/kernel, see #255).
 
+> **Status: UNSOLVED (2026-11-21).**  The RP5 draws **~150 mA / ~6 %/h** with
+> the panel off on this build; the user measures **1-3 % in ~10 h (~5-15 mA) on
+> the stock firmware**, so it is a 10-30x regression, not this hardware's idle
+> floor.  #233 stays open.  Measured and **excluded** so far: AshFall's daemons
+> (gating changed nothing), the 34/min `[timerfd]` wake loop (6x fewer wakeups
+> with alarm batching, same current), the radios (-14 mA with WiFi+BT off),
+> the displays (OFF), WLAN PCIe runtime PM (made it worse), and s2idle itself
+> (entered ~63 % of screen-off time, worth ~3 mA).  Userspace cannot attribute
+> the rest: CPU is idle, the per-uid model leaves 95 % of the mAh unattributed,
+> and ODPM is absent (all rail counters read 0).  Remaining suspects are
+> device-level: `a600000.dwc3` never leaves `runtime_status=active`, and
+> `adsp`/`cdsp`/`slpi` are running.  A second, worse symptom appeared the same
+> day: the device **powers itself off** after ~10-15 min unplugged and idle
+> (three times); it is not a kernel panic (pstore is empty, no
+> `system_last_kmsg`), and the last known power-off reason was
+> `PS_HOLD`/PMIC, so it is a power event - see `scripts/device/ramdump.sh` if
+> it ever lands in crash-dump mode (05c6:900e) instead.  Next steps: a 10-hour
+> stock run with the harness below, pstore capture at boot, and an external USB
+> power meter for the rail attribution.
+
 ## 1. Why the bench number was wrong
 
 With the charger attached the USB PHY never transitions to L2

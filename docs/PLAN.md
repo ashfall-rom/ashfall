@@ -49,6 +49,15 @@ First a self-built GSI, then a full device ROM.
   ext4.** The stock kernel supports EROFS, but the stock first-stage fstab (vendor_boot)
   only lists `system` as ext4, so an EROFS system cannot mount (issue #39: init panics
   with "Invalid ext4 superblock ... Failed to mount /system").
+- **Idle power (UNSOLVED, #233)**: stock idles at 1-3 % per 10 h (~5-15 mA);
+  this GSI draws ~150 mA with the panel off.  Not the daemons, the alarm wake
+  loop, the radios, the displays, the WLAN PCIe runtime PM or s2idle entry -
+  all measured and excluded, and userspace cannot attribute it (no ODPM).
+  Suspects left are device-level (`a600000.dwc3` stays runtime-active, three
+  DSPs running).  A second symptom appeared on 2026-11-21: the device powers
+  itself off after ~10-15 min unplugged and idle (PMIC/`PS_HOLD`, not a kernel
+  panic - pstore is empty).  Details, numbers and next steps:
+  `docs/power-idle.md`.
 - **Fastbootd**: the RP5 ABL rejects `fastboot reboot fastboot`; fastbootd is reached
   via `fastboot reboot recovery` + `adb reboot fastboot` (issue #38, scripts handle it).
 - **Debugging boot crashes**: panics go to Qualcomm crash-dump mode (05c6:900e);

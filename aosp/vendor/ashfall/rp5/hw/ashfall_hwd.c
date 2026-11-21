@@ -676,56 +676,30 @@ static void powertest_apply(const char *what)
         sysfs_write_str("/sys/bus/pci/devices/0000:01:00.0/power/control", "on");
         sysfs_write_str("/sys/bus/pci/devices/0000:00:00.0/power/control", "on");
     } else if (!strcmp(what, "usb2-off")) {
-        sysfs_write_str("/sys/bus/platform/drivers/dwc3/unbind", "a600000.ssusb");
+        /* The gadget controller is a600000.dwc3; the earlier probe wrote the
+         * wrong name and silently did nothing (issue #233). */
+        int rc = sysfs_write_str("/sys/bus/platform/drivers/dwc3/unbind",
+                                 "a600000.dwc3");
+
+        ah_logf(AH_LOG_INFO, "powertest: unbind a600000.dwc3 rc=%d bound=%d", rc,
+                access("/sys/bus/platform/devices/a600000.dwc3/driver", F_OK) == 0);
+    } else if (!strcmp(what, "usb2-on")) {
+        int rc = sysfs_write_str("/sys/bus/platform/drivers/dwc3/bind",
+                                 "a600000.dwc3");
+
+        ah_logf(AH_LOG_INFO, "powertest: rebind a600000.dwc3 rc=%d", rc);
+    } else if (!strcmp(what, "usb-pm")) {
+        int rc = sysfs_write_str("/sys/bus/platform/devices/a600000.dwc3/power/control",
+                                 "auto");
+
+        ah_logf(AH_LOG_INFO, "powertest: a600000.dwc3 control=auto rc=%d", rc);
+    } else if (!strcmp(what, "usb-pm-on")) {
+        sysfs_write_str("/sys/bus/platform/devices/a600000.dwc3/power/control", "on");
     } else {
         ah_logf(AH_LOG_WARN, "powertest: unknown '%s'", what);
         return;
     }
     ah_logf(AH_LOG_INFO, "powertest: applied '%s'", what);
-}
-
-/* Log a root-only debugfs file line by line (#233). */
-static void dump_file(const char *path, const char *tag, int max_lines)
-{
-    char line[512];
-    int shown = 0;
-    FILE *f = fopen(path, "re");
-
-    if (f == NULL) {
-        ah_logf(AH_LOG_WARN, "wakeups| [%s] %s: %s", tag, path, strerror(errno));
-        return;
-    }
-    while (fgets(line, sizeof(line), f) != NULL && shown < max_lines) {
-        line[strcspn(line, "\n")] = '\0';
-        if (line[0] == '\0')
-            continue;
-        ah_logf(AH_LOG_INFO, "wakeups| [%s] %s", tag, line);
-        shown++;
-    }
-    fclose(f);
-}
-
-/* Only clocks that are actually enabled say anything about the idle draw. */
-static void dump_enabled_clocks(void)
-{
-    char line[512], name[128];
-    int count = 0, shown = 0;
-    FILE *f = fopen("/sys/kernel/debug/clk/clk_summary", "re");
-
-    if (f == NULL) {
-        ah_logf(AH_LOG_WARN, "wakeups| [clk] unavailable: %s", strerror(errno));
-        return;
-    }
-    while (fgets(line, sizeof(line), f) != NULL && shown < 40) {
-        if (sscanf(line, " %127s %d", name, &count) != 2)
-            continue;
-        if (count <= 0)
-            continue;
-        line[strcspn(line, "\n")] = '\0';
-        ah_logf(AH_LOG_INFO, "wakeups| [clk] %s", line);
-        shown++;
-    }
-    fclose(f);
 }
 
 static void wakeup_dump(void)
@@ -734,12 +708,6 @@ static void wakeup_dump(void)
     mount("none", "/sys/kernel/debug", "debugfs", 0, NULL);
     ah_logf(AH_LOG_INFO, "wakeups| ==== snapshot ====");
     wakeup_dump_sources();
-    dump_file("/sys/kernel/debug/pm_genpd/pm_genpd_summary", "pd", 45);
-    dump_file("/sys/kernel/debug/regulator/regulator_summary", "reg", 45);
-    dump_file("/sys/kernel/debug/suspend_stats/success_count", "ss", 1);
-    dump_file("/sys/kernel/debug/suspend_stats/fail_count", "ss", 1);
-    dump_file("/sys/kernel/debug/suspend_stats/last_failed_dev", "ss", 1);
-    dump_enabled_clocks();
     wakeup_dump_fds();
     ah_logf(AH_LOG_INFO, "wakeups| ==== end ====");
 }
