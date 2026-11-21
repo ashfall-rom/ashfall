@@ -147,6 +147,20 @@ writes are why the daemon was waking *other* processes, not just itself.
 * **The WLAN radio.**  `/sys/kernel/wifi/power_stats` shows the chip in deep
   sleep 63 099 times; it is the AP that stays up.
 
+## 6b. Wakeup-source tracing
+
+```bash
+adb shell setprop debug.ashfall.trace on     # daemon enables the events
+adb shell 'echo 1 > /sys/kernel/tracing/tracing_on'   # world-writable
+#  ... the window to trace ...
+adb shell 'echo 0 > /sys/kernel/tracing/tracing_on'
+adb shell grep timerfd /sys/kernel/tracing/trace
+```
+
+`tracing_on` and `trace` are world-writable on this kernel (gid `readtracefs`
+3012), so only the tracepoint *enable* needs the daemon.  The task column names
+the process that armed the source.
+
 ## 6a. On-demand suspend snapshot
 
 `ashfall-hwd` runs as root, so it can read the two things a non-root shell
@@ -167,20 +181,37 @@ already read the daemon's log buffer.
 
 ## 6. Open (vendor/kernel, tracked in #255)
 
-* **Naming the timerfd owner.**  The device has exactly **9 `CLOCK_*_ALARM`
-  timerfds** and exactly **9 `[timerfd]` wakeup sources**, in creation order:
-  the Qualcomm health HAL, audioserver, two in `system_server`
-  (`CLOCK_REALTIME_ALARM`, disarmed, and AlarmManager's next alarm, minutes
-  away) and five in `com.android.bluetooth` (12 min, 1 h, three disarmed).
-  None of them is *armed* with a 1.5 s period, so the owner re-arms a short
-  timeout in bursts and the snapshot happens to catch it idle.
-  * **Bluetooth is ruled out**: with `svc bluetooth disable` the source still
-    woke the AP 92 times in 120 s (0.77/s, unchanged).
-  * The WiFi branch could not be tested from the host - `svc wifi disable`
-    kills the wireless-adb link being used to drive the test.
-  * The remaining step is one line of information: the `ticks` field of
-    `/proc/<pid>/fdinfo/<fd>`, i.e. the expiration counter per timerfd.  The
-    counter that grows by ~38/min names the owner outright.
+* **Naming the timerfd owner (done).**  `debug.ashfall.trace` (§6b) records
+  `power:wakeup_source_activate`, which carries the *task* that armed the
+  source.  A clean 95 s window on battery, marker-delimited:
+
+  ```
+  50 x wakeup_source_activate: [timerfd]        (31.5/min)
+    25  AlarmManager        (system_server)
+    21  kworker/*           (kernel alarmtimer/PM path)
+     4  <idle>              (actual expiries)
+  ```
+
+  So the 34/min wake cycle is the **framework alarm path**, not an app, not a
+  daemon, not the WiFi radio: `AlarmManager` re-arms its
+  `CLOCK_BOOTTIME_ALARM` `timerfd` about every 1.5 s while the device is
+  trying to sleep, each arm/expiry wakes the AP and the pending source aborts
+  the next suspend attempt.  `dumpsys alarm` shows no alarm *delivered* at
+  that rate (TIME_TICK 7 in 2 min, `DeviceIdleController.deep` 6 in 2 min), so
+  the re-arms come from alarm state churn - `AlarmManagerService.setLocked()`
+  is called on every job/alarm change, and JobScheduler/WorkManager churn
+  re-arms `*job.delay*` continuously.
+  * **Bluetooth ruled out**: with `svc bluetooth disable` the source still
+    woke the AP 92 times in 120 s (unchanged).
+  * **The health HAL ruled out**: it appeared in an early trace, but in the
+    clean window it does not appear at all; `fdinfo`'s `ticks` is the pending
+    (unread) counter and reads 0 for anyone who reads promptly, so it cannot
+    identify an owner either.
+  * Next experiment (needs the device on battery): log the
+    `AlarmManagerService.setLocked()` caller and/or set a larger
+    `alarm_manager` `min_window`/`min_futurity` through DeviceConfig to see
+    whether batching stops the re-arms.
+
 * **Old hypothesis, now discarded.**  `ashfall-hwd` can now answer the
   "who holds the timerfd" half on demand (§6a), and the first snapshots rule
   out the obvious answer: the only `CLOCK_BOOTTIME_ALARM` timerfds on the
