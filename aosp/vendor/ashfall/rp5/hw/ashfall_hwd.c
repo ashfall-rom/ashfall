@@ -464,6 +464,7 @@ static void publish_gpu_status(const gpu_state *gpu,
  * Any new value triggers a new dump, so the property can be re-used to sample
  * a later window. */
 #define PROP_DEBUG_WAKEUPS "debug.ashfall.wakeups"
+#define PROP_DEBUG_TRACE "debug.ashfall.trace"
 
 #if defined(__ANDROID__)
 #include <dirent.h>
@@ -584,6 +585,81 @@ static void wakeup_dump_fds(void)
     closedir(proc);
 }
 
+/* Wakeup-source tracing (issue #233): the fd scan names every alarm timerfd
+ * but cannot say which one fires, and the kernel resets a timerfd's own
+ * counter when its owner reads it.  ftrace has the answer and it needs root to
+ * switch on:
+ *
+ *     adb shell setprop debug.ashfall.trace on
+ *     ... wait 30 s ...
+ *     adb shell setprop debug.ashfall.trace off
+ *     adb shell logcat -d -s ashfall-hwd | grep 'wakeuptrace|'
+ *
+ * The trace line carries the task that activated the source, so the timerfd
+ * owner names itself. */
+#define TRACEFS "/sys/kernel/tracing"
+#define TRACE_MAX_LINES 120
+
+static const char *const trace_events[] = {
+    "wakeup_source_activate",
+    "wakeup_source_deactivate",
+};
+
+static void trace_set(bool on)
+{
+    char path[PATH_MAX];
+    size_t i;
+
+    mount("none", TRACEFS, "tracefs", 0, NULL);
+    for (i = 0; i < sizeof(trace_events) / sizeof(trace_events[0]); i++) {
+        FILE *f;
+
+        snprintf(path, sizeof(path), TRACEFS "/events/power/%s/enable",
+                 trace_events[i]);
+        f = fopen(path, "we");
+        if (f == NULL) {
+            ah_logf(AH_LOG_WARN, "trace: cannot %s %s (%s)",
+                    on ? "enable" : "disable", trace_events[i],
+                    strerror(errno));
+            continue;
+        }
+        fputs(on ? "1" : "0", f);
+        fclose(f);
+    }
+    ah_logf(AH_LOG_INFO, "trace: wakeup events %s", on ? "on" : "off");
+}
+
+static void trace_clear(void)
+{
+    FILE *f = fopen(TRACEFS "/trace", "we");
+
+    if (f != NULL)
+        fclose(f);
+}
+
+static void trace_dump(void)
+{
+    char line[512];
+    int shown = 0;
+    FILE *f;
+
+    f = fopen(TRACEFS "/trace", "re");
+    if (f == NULL) {
+        ah_logf(AH_LOG_WARN, "trace: cannot read trace (%s)", strerror(errno));
+        return;
+    }
+    while (fgets(line, sizeof(line), f) != NULL) {
+        line[strcspn(line, "\n")] = '\0';
+        if (strstr(line, "timerfd") == NULL)
+            continue;
+        ah_logf(AH_LOG_INFO, "wakeuptrace| %s", line);
+        if (++shown >= TRACE_MAX_LINES)
+            break;
+    }
+    fclose(f);
+    ah_logf(AH_LOG_INFO, "wakeuptrace| %d timerfd lines", shown);
+}
+
 static void wakeup_dump(void)
 {
     /* debugfs is not mounted by default. */
@@ -595,6 +671,9 @@ static void wakeup_dump(void)
 }
 #else
 static void wakeup_dump(void) {}
+static void trace_set(bool on) { (void)on; }
+static void trace_clear(void) {}
+static void trace_dump(void) {}
 #endif
 
 static void publish_throttle_status(const throttle_state *throttle,
@@ -687,6 +766,7 @@ int main(void)
     int64_t next_mem_ms = 0;
     int mem_retry_left = MEM_RETRY_BUDGET;
     char wakeup_token[HWD_VALUE_WATCH_MAX] = "";
+    char trace_token[HWD_VALUE_WATCH_MAX] = "";
     int64_t now;
     int64_t next_fan_ms;
     int64_t next_led_ms = 0;
@@ -835,8 +915,24 @@ int main(void)
         int64_t screen_ms;
 
         now = ah_now_ms();
+        /* Wakeup-source tracing on/off (#233). */
+        {
+            char token[HWD_VALUE_WATCH_MAX];
+
+            if (prop_get_str(PROP_DEBUG_TRACE, token, sizeof(token)) > 0 &&
+                strcmp(token, trace_token) != 0) {
+                snprintf(trace_token, sizeof(trace_token), "%s", token);
+                if (!strcmp(token, "on")) {
+                    trace_set(true);
+                    trace_clear();
+                } else {
+                    trace_set(false);
+                    trace_dump();
+                }
+            }
+        }
         /* One-shot suspend snapshot (#233): a new token in
-         * debug.ashfall.wakeups writes /data/local/tmp/ashfall-wakeups.txt. */
+         * debug.ashfall.wakeups writes the snapshot to the log. */
         {
             char token[HWD_VALUE_WATCH_MAX];
 
