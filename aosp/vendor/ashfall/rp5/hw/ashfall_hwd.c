@@ -559,7 +559,11 @@ static void wakeup_dump_fds(void)
                         int n;
 
                         line[strcspn(line, "\n")] = '\0';
+                        /* ticks is the expiration counter: the timerfd that
+                         * matches the wake rate in wakeup_sources is the
+                         * owner, and this is the only place it is visible. */
                         if (strncmp(line, "clockid", 7) != 0 &&
+                            strncmp(line, "ticks", 5) != 0 &&
                             strncmp(line, "it_value", 8) != 0)
                             continue;
                         if (value != NULL)
