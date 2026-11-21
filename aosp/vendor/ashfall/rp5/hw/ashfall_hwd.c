@@ -90,6 +90,15 @@ _Static_assert(HWD_VALUE_WATCH_MAX >= FAN_CURVE_MAX_LEN + 1,
  * it must stay below STATUS_LIVE_MS.  The status period itself is chosen by
  * hwd_status_interval_ms() in hwd.h. */
 #define IDLE_WAIT_MS 500
+/* Panel off (#233): no page can be reading ashfall.status.*, so the loop may
+ * sleep as long as the fan/thermal tick (FAN_SAMPLE_MS) allows.  Property
+ * changes - including the screen transition itself - still wake the daemon
+ * through prop_wait_any(), so this only bounds the "nothing happened" case. */
+#define IDLE_WAIT_MS_SCREEN_OFF 2000
+/* How often the status properties are refreshed while the panel is off.  They
+ * only feed the Parts pages, so the tick exists purely to keep the first
+ * publish after a wake cheap; the screen-on transition forces one anyway. */
+#define STATUS_SCREEN_OFF_MS 30000
 /* Retry period for LED writes that failed (vendor init chmod race, node not
  * there yet): lighting must not stay dark for the whole boot. */
 #define LED_RETRY_MS 500
@@ -759,6 +768,10 @@ int main(void)
                 screen_on = led_screen_on(&screen);
                 changed = true;
                 force_led = true;
+                /* Status is not published while the panel is off (#233), so
+                 * force a fresh tick on the transition: the page that opens
+                 * right after a wake must not show pre-suspend numbers. */
+                next_status_ms = 0;
                 if (woke) {
                     /* The lighting block below rewrites both attributes now,
                      * at +0.5 s and at +1.5 s, regardless of led.applied. */
@@ -798,6 +811,15 @@ int main(void)
                                          ? 0 : GPU_RETRY_MS);
                 publish_gpu_status(&gpu, &gpu_status);
             }
+
+            /* KGSL idle timer from the applied preset (#130), same rule.  It
+             * is a control write, so it must not live in the status tick:
+             * that one is 30 s apart while the panel is off (#233) and a
+             * thermal override has to park the GPU on the stock timer now.
+             * gpu_apply_idle_ms() is idempotent and writes only on change. */
+            gpu_apply_idle_ms(&gpu, throttle.active ? 0
+                                  : prop_get_int_range(PROP_GPU_IDLE_MS, 0, 0,
+                                                       GPU_IDLE_MAX_MS));
         }
 
         /* --- CPU caps / governor and memory ------------------------------
@@ -909,20 +931,25 @@ int main(void)
             }
         }
         if (now >= next_status_ms) {
-            /* KGSL idle timer from the applied preset (#130); the thermal
-             * override always wins and parks the GPU at the stock timer. */
-            gpu_apply_idle_ms(&gpu, throttle.active ? 0
-                                  : prop_get_int_range(PROP_GPU_IDLE_MS, 0, 0,
-                                                       GPU_IDLE_MAX_MS));
-            fan.rpm = fan_read_rpm();
-            publish_status(&fan, last_temp, &status, &next_status_ms, now,
-                           hwd_status_interval_ms(fan_live, power_live));
-            publish_int(STATUS_PERF_GPU_MHZ, gpu_clock_mhz(), &gpu_clock_cache);
-            publish_int(STATUS_PERF_CPU_LOAD, cpu_load_pct(&cpu_load),
-                        &cpu_load_cache);
-            publish_int(STATUS_PERF_GPU_LOAD, gpu_load_pct(), &gpu_load_cache);
-            publish_cpu_status(&cpu, cpu_status_cache);
-            publish_mem_status(&mem, mem_status_cache);
+            if (screen_on) {
+                fan.rpm = fan_read_rpm();
+                publish_status(&fan, last_temp, &status, &next_status_ms, now,
+                               hwd_status_interval_ms(fan_live, power_live));
+                publish_int(STATUS_PERF_GPU_MHZ, gpu_clock_mhz(),
+                            &gpu_clock_cache);
+                publish_int(STATUS_PERF_CPU_LOAD, cpu_load_pct(&cpu_load),
+                            &cpu_load_cache);
+                publish_int(STATUS_PERF_GPU_LOAD, gpu_load_pct(), &gpu_load_cache);
+                publish_cpu_status(&cpu, cpu_status_cache);
+                publish_mem_status(&mem, mem_status_cache);
+            } else {
+                /* Panel off (#233): every ashfall.status.* write bumps the
+                 * global property serial and wakes property listeners in
+                 * other processes, and nothing can read them until the panel
+                 * is back.  Skip the whole tick; the screen-on transition
+                 * sets next_status_ms = 0 for an immediate fresh publish. */
+                next_status_ms = now + STATUS_SCREEN_OFF_MS;
+            }
         }
 
         /* --- sleep until something happens ------------------------------- */
@@ -941,8 +968,8 @@ int main(void)
         if (fan.kick_until_ms > 0 && fan.kick_until_ms < deadline)
             deadline = fan.kick_until_ms;
         wait_ms = (int)(deadline - now);
-        if (wait_ms > IDLE_WAIT_MS)
-            wait_ms = IDLE_WAIT_MS;
+        if (wait_ms > (screen_on ? IDLE_WAIT_MS : IDLE_WAIT_MS_SCREEN_OFF))
+            wait_ms = screen_on ? IDLE_WAIT_MS : IDLE_WAIT_MS_SCREEN_OFF;
         if (wait_ms < 0)
             wait_ms = 0;
         prop_wait_any(wait_ms);

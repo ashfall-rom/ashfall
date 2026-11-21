@@ -142,6 +142,10 @@ public class LedSyncService extends Service implements DisplayManager.DisplayLis
         } else if (!mSync.isRunning()) {
             mSync.start(true);
         }
+        // The supervisor stops ticking while the panel is off (#233); this is
+        // what re-arms it after a wake.
+        mHandler.removeCallbacks(mSupervise);
+        mHandler.postDelayed(mSupervise, SUPERVISE_MS);
     }
 
     @Override
@@ -242,7 +246,14 @@ public class LedSyncService extends Service implements DisplayManager.DisplayLis
             // debounce so the configured colour never flashes before off.
             mSync.pauseForScreenOff();
         }
-        mHandler.postDelayed(mSupervise, SUPERVISE_MS);
+        if (screenOn()) {
+            mHandler.postDelayed(mSupervise, SUPERVISE_MS);
+        } else {
+            /* Panel off (#233): the sampler is paused and every input that can
+             * change the effect also needs the panel, so this 400 ms tick is
+             * pure wake pressure.  onDisplayChanged() re-arms it on wake. */
+            mHandler.removeCallbacks(mSupervise);
+        }
     }
 
     private void onCaptureFailed(String reason) {
