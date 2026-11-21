@@ -44,6 +44,8 @@ are resource overlays under `aosp/vendor/ashfall/overlay/no-rro/`, not forks:
 | Setup welcome/finish | `packages/apps/SetupWizard/app/src/main/res/drawable/logo.xml`, `layout/welcome_activity.xml` | AshFall tile + mark, Soot/Ember |
 | Setup name and title | `.../values/strings.xml` (`os_name`, `app_name`) | "AshFall", "AshFall Setup" |
 | Setup flow | `.../raw/lineage_wizard_script.xml` | no SIM, empty device-specific, recovery-update or biometric page |
+| Setup accent/icon | `.../values/colors.xml`, `.../values/styles.xml`, `.../drawable/ic_launcher_*` | Ember controls and the AshFall adaptive icon |
+| Setup Theme page | `.../drawable-nodpi/theme_preview_wallpaper.jpg`, `.../drawable/theme_preview_qs.xml`, `.../drawable/ic_palette.xml` | AshFall tile/wordmark in the preview, Ember QS tiles, AshFall page glyph |
 | Settings > System entry | `packages/apps/LineageParts/res/values/strings.xml` | "AshFall Settings" |
 | About phone | `packages/apps/Settings/res/xml/my_device_info.xml` + `AshFallVersionPreferenceController` | "AshFall version" (version + build id), "AshFall project"; Lineage row becomes "LineageOS base" |
 | Device name / model / Bluetooth | product makefile + SettingsProvider migration | "RP5 AshFall" |

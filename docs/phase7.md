@@ -47,6 +47,14 @@ Resource overlays in `aosp/vendor/ashfall/overlay/no-rro/packages/apps/SetupWiza
 - `values/strings.xml`: `os_name` = `AshFall`, `app_name` = `AshFall Setup`,
   plus `ashfall_setup_wordmark` and `ashfall_setup_subtitle` ("LineageOS 24.0
   for the Retroid Pocket 5").
+- `values/colors.xml` / `values/styles.xml`: the wizard's Start button and
+  controls use the Ember accent (`#FF8A3D`) on Soot, not the LineageOS teal;
+  the system-wide theme is unchanged.
+- `drawable/ic_launcher_background.xml` / `drawable/ic_launcher_foreground.xml`:
+  the adaptive AshFall setup icon.
+- `drawable-nodpi/theme_preview_wallpaper.jpg`, `drawable/theme_preview_qs.xml`
+  and `drawable/ic_palette.xml`: the Theme page preview carries the AshFall
+  tile/wordmark and the Ember QS preview; the page glyph is the AshFall A.
 - `drawable/logo.xml`: the AshFall tile (Soot disc, Ember bloom, Ash mark),
   replacing the Lineage wordmark on the finish page and in the welcome hero.
 - `layout/welcome_activity.xml` and `layout-w600dp/welcome_activity.xml`:
@@ -117,9 +125,10 @@ inherits; the blocklist drives the host and device audits.
 ### 4.2 Camera
 
 `Aperture` (with `PRODUCT_NO_CAMERA := true`, set **before** the product
-inherit), `ApertureLensLauncher`, `CameraExtensionsProxy`, `DeviceAsWebcam`,
-`cameraserver`. The vendor camera HAL and the `android.hardware.camera*`
-feature flags are out of reach and stay.
+inherit), `ApertureLensLauncher`, `Camera2` (the AOSP fallback that reappears
+when Aperture is not added), `CameraExtensionsProxy`, `DeviceAsWebcam`,
+`cameraserver` and the `virtual_camera` service. The vendor camera HAL and the
+`android.hardware.camera*` feature flags are out of reach and stay.
 
 ### 4.3 Phone/cell (full Wi-Fi-only)
 
