@@ -49,8 +49,10 @@ Resource overlays in `aosp/vendor/ashfall/overlay/no-rro/packages/apps/SetupWiza
   for the Retroid Pocket 5").
 - `drawable/logo.xml`: the AshFall tile (Soot disc, Ember bloom, Ash mark),
   replacing the Lineage wordmark on the finish page and in the welcome hero.
-- `layout/welcome_activity.xml`: the Lottie Lineage logo becomes the AshFall
-  mark + wordmark + "Welcome to AshFall" + subtitle. The `start` and
+- `layout/welcome_activity.xml` and `layout-w600dp/welcome_activity.xml`:
+  the Lottie Lineage logo becomes the AshFall mark + wordmark + "Welcome to
+  AshFall" + subtitle. The RP5 is 853dp wide, so the `w600dp` variant is the one
+  the wizard actually inflates on this device. The `start` and
   `launch_accessibility` buttons keep their ids and behaviour.
 - `layout/welcome_locale_activity.xml`: same mark substitution for the
   TV/leanback locale welcome.
