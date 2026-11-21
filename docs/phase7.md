@@ -150,11 +150,17 @@ can take the APEX removal if a boot test proves it safe.
 ## 5. Implementation notes
 
 - `PRODUCT_NO_CAMERA := true` must be set in `products/ashfall_gsi_arm64.mk`
-  **before** `$(call inherit-product, vendor/lineage/build/target/product/lineage_gsi_arm64.mk)`.
-- `debloat.mk` is included last in `ashfall_common.mk`; it filters
-  `PRODUCT_PACKAGES`, `PRODUCT_PACKAGES_DEBUG`, `PRODUCT_PACKAGES_ENG`,
-  `PRODUCT_COPY_FILES` (updater rc), `PRODUCT_APEX_BOOT_JARS` and
-  `PRODUCT_APEX_SYSTEM_SERVER_JARS` (`com.android.virt:...`).
+  **before** `$(call inherit-product, vendor/lineage/build/target/product/lineage_gsi_arm64.mk)`;
+  the inherited makefile reads it at include time.
+- `debloat.mk` is included last in `ashfall_common.mk`; it sets
+  `PRODUCT_PACKAGES_BLACKLIST`, `PRODUCT_COPY_FILES_BLACKLIST` and
+  `PRODUCT_APEX_BLACKLIST`. The blacklists are applied by
+  `patches/build/make/0001-product-blacklists.patch` in
+  `build/make/core/product_config.mk`, **after** the product node merge. A
+  plain `PRODUCT_PACKAGES := $(filter-out ...)` in the product makefile is a
+  no-op for inherited packages: the node merge appends the inherited values
+  after the product file's body (the first phase-7 build proved this: it still
+  had Dialer/Etar/Updater even though the product makefile filtered them).
 - The stock product/system_ext deletion is a fastbootd operation (logical
   partitions); the bootloader batch rule is unchanged. Never use
   `fastboot getvar all` (AGENTS.md, issue #54).
@@ -194,7 +200,7 @@ Runtime (orchestrator, after a lease):
 
 | Workstream | Paths |
 |---|---|
-| Product/debloat + guard | `aosp/vendor/ashfall/debloat.mk`, `aosp/vendor/ashfall/debloat/blocklist.txt`, `aosp/vendor/ashfall/products/ashfall_gsi_arm64.mk`, `aosp/vendor/ashfall/ashfall_common.mk`, `scripts/verify/debloat.sh` |
+| Product/debloat + guard | `aosp/vendor/ashfall/debloat.mk`, `aosp/vendor/ashfall/debloat/blocklist.txt`, `aosp/vendor/ashfall/products/ashfall_gsi_arm64.mk`, `aosp/vendor/ashfall/ashfall_common.mk`, `patches/build/make/0001-product-blacklists.patch`, `scripts/verify/debloat.sh` |
 | Branding/defaults | `aosp/vendor/ashfall/overlay/no-rro/**`, `patches/lineage-sdk/0002-*`, `patches/frameworks/base/0007-*`, `patches/packages/apps/Settings/0002-*`, `docs/branding.md` |
 | Flash policy | `scripts/device/flash-gsi.sh`, `docs/flashing.md` |
 | Integration/build/flash | orchestrator |

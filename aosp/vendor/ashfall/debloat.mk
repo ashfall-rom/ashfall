@@ -66,6 +66,7 @@ ASHFALL_DEBLOAT_PACKAGES := \
     Etar \
     Twelve \
     Recorder \
+    UsbDisableDebugger \
     Updater \
     PrintSpooler \
     PrintRecommendationService \
@@ -81,17 +82,17 @@ ASHFALL_DEBLOAT_PACKAGES := \
     Jelly \
     com.android.virt
 
-PRODUCT_PACKAGES := $(filter-out $(ASHFALL_DEBLOAT_PACKAGES),$(PRODUCT_PACKAGES))
-PRODUCT_PACKAGES_DEBUG := $(filter-out UsbDisableDebugger,$(PRODUCT_PACKAGES_DEBUG))
-PRODUCT_PACKAGES_ENG := $(filter-out UsbDisableDebugger,$(PRODUCT_PACKAGES_ENG))
+PRODUCT_PACKAGES_BLACKLIST := $(ASHFALL_DEBLOAT_PACKAGES)
+PRODUCT_COPY_FILES_BLACKLIST := %init.lineage-updater.rc:%
+PRODUCT_APEX_BLACKLIST := com.android.virt:%
 
-# Updater's init rc is added by vendor/lineage/config/common.mk independently of
-# the app. Drop it with the app instead of leaving an init service that can
-# never exec.
-PRODUCT_COPY_FILES := $(filter-out %init.lineage-updater.rc:%,$(PRODUCT_COPY_FILES))
-
-# com.android.virt: the AVF/Terminal APEX. Its framework and (conditional)
-# system-server jars are listed by default_art_config.mk; filter them too or the
-# build keeps trying to link a missing APEX.
-PRODUCT_APEX_BOOT_JARS := $(filter-out com.android.virt:%,$(PRODUCT_APEX_BOOT_JARS))
-PRODUCT_APEX_SYSTEM_SERVER_JARS := $(filter-out com.android.virt:%,$(PRODUCT_APEX_SYSTEM_SERVER_JARS))
+# The blacklists are applied by patches/build/make/0001-product-blacklists.patch
+# in product_config.mk, after the inherited products have been merged. Filtering
+# PRODUCT_PACKAGES here would be a no-op: the product node merge appends the
+# inherited values after this file has been included.
+#
+# PRODUCT_PACKAGES_DEBUG/ENG: UsbDisableDebugger is in the shared blacklist, so
+# the same product_config.mk step removes it from the debug list too.
+#
+# PRODUCT_APEX_BOOT_JARS / PRODUCT_APEX_SYSTEM_SERVER_JARS: the com.android.virt
+# entries are removed by the APEX blacklist in the same step.

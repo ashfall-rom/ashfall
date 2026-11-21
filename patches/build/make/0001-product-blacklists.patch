@@ -1,0 +1,54 @@
+From b402750f08805b4d51011edea8e96828c1dd735d Mon Sep 17 00:00:00 2001
+From: AshFall UI <ui@ashfall.local>
+Date: Sat, 21 Nov 2026 20:46:31 +0000
+Subject: [PATCH] build: add product-level package and copy-file blacklists
+
+---
+ core/product.mk        |  8 ++++++++
+ core/product_config.mk | 11 +++++++++++
+ 2 files changed, 19 insertions(+)
+
+diff --git a/core/product.mk b/core/product.mk
+index f62a539..ddfba6a 100644
+--- a/core/product.mk
++++ b/core/product.mk
+@@ -108,6 +108,14 @@ _product_single_value_vars += PRODUCT_CHARACTERISTICS
+ # The optional :<owner> is used to indicate the owner of a vendor file.
+ _product_list_vars += PRODUCT_COPY_FILES
+ 
++# AshFall: product-level blacklists. They are applied after the product node
++# merge in product_config.mk, because a product makefile cannot filter the
++# packages it inherits from a shared product (the inherited values are appended
++# after the product file's body).
++_product_list_vars += PRODUCT_PACKAGES_BLACKLIST
++_product_list_vars += PRODUCT_COPY_FILES_BLACKLIST
++_product_list_vars += PRODUCT_APEX_BLACKLIST
++
+ # The OTA key(s) specified by the product config, if any.  The names
+ # of these keys are stored in the target-files zip so that post-build
+ # signing tools can substitute them for the test key embedded by
+diff --git a/core/product_config.mk b/core/product_config.mk
+index 5883e21..4ade577 100644
+--- a/core/product_config.mk
++++ b/core/product_config.mk
+@@ -276,6 +276,17 @@ ifneq ($(ALLOW_RULES_IN_PRODUCT_CONFIG),)
+ _product_config_saved_KATI_ALLOW_RULES :=
+ endif
+ 
++# AshFall: apply the product-level blacklists after every inherited product has
++# been merged. A product makefile cannot remove an inherited package with
++# `PRODUCT_PACKAGES := $(filter-out ...)`: the node merge appends the inherited
++# values after the product file's body.
++PRODUCT_PACKAGES := $(filter-out $(PRODUCT_PACKAGES_BLACKLIST),$(PRODUCT_PACKAGES))
++PRODUCT_PACKAGES_DEBUG := $(filter-out $(PRODUCT_PACKAGES_BLACKLIST),$(PRODUCT_PACKAGES_DEBUG))
++PRODUCT_PACKAGES_ENG := $(filter-out $(PRODUCT_PACKAGES_BLACKLIST),$(PRODUCT_PACKAGES_ENG))
++PRODUCT_COPY_FILES := $(filter-out $(PRODUCT_COPY_FILES_BLACKLIST),$(PRODUCT_COPY_FILES))
++PRODUCT_APEX_BOOT_JARS := $(filter-out $(PRODUCT_APEX_BLACKLIST),$(PRODUCT_APEX_BOOT_JARS))
++PRODUCT_APEX_SYSTEM_SERVER_JARS := $(filter-out $(PRODUCT_APEX_BLACKLIST),$(PRODUCT_APEX_SYSTEM_SERVER_JARS))
++
+ # Sort/dedup all PRODUCT_PACKAGES variables. This is every PRODUCT_PACKAGES_* variable that appears
+ # in product-installed-modules.
+ PRODUCT_PACKAGES := $(sort $(PRODUCT_PACKAGES))
+-- 
+2.53.0
+
