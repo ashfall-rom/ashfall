@@ -69,8 +69,10 @@ animation already carries the motion.
 - `overlay/no-rro/lineage-sdk/lineage/res/res/values/strings.xml`:
   `lineage_version` = "LineageOS base" (upstream attribution stays).
 - `overlay/no-rro/packages/apps/Settings/res/values/config.xml`:
-  `config_show_system_update_settings=false` and
-  `config_additional_system_update_setting_enable=false` (Updater is gone).
+  `config_show_system_update_settings=false`,
+  `config_additional_system_update_setting_enable=false` (Updater is gone) and
+  `config_show_sim_info=false` (no telephony; hides Phone number, SIM status,
+  IMEI/MEID and EID in About phone).
 - `patches/packages/apps/Settings/0002-ashfall-about-branding.patch`:
   new "AshFall version" preference (summary from `ro.ashfall.version` and
   `ro.ashfall.build.id`) and an "AshFall project" preference. The existing

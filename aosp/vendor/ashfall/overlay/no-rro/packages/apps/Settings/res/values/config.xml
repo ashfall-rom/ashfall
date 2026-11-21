@@ -6,4 +6,8 @@
 <resources>
     <bool name="config_show_system_update_settings">false</bool>
     <bool name="config_additional_system_update_setting_enable">false</bool>
+    <!-- No telephony: hide Phone number, SIM status, IMEI/MEID and EID rows in
+         About phone. The device declares no android.hardware.telephony and the
+         phone/cell apps are removed in phase 7. -->
+    <bool name="config_show_sim_info">false</bool>
 </resources>
