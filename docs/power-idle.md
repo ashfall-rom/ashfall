@@ -87,6 +87,43 @@ were never the cause.  It removes ~360 `ashfall.status.*` writes per minute and
 current.  The `%/h` column of the harness is useless on a 20-minute window (1 %
 of a 4000 mAh pack is 40 mAh); the fuel-gauge current is the number to read.
 
+## 3c. Alarm batching test: the wake loop is not the drain
+
+Cheap framework-side mitigation, no build: batch alarms through DeviceConfig.
+
+```bash
+adb shell device_config put alarm_manager min_futurity 30000
+adb shell device_config put alarm_manager min_window 30000
+```
+
+| run (same build, panel off, unplugged) | awake | `[timerfd]` aborts | current |
+|---|---|---|---|
+| baseline `7d69b77` | 70.6 % | 34.3 / min | 153.5 mA |
+| after the panel-off work | 71.0 % | 34.3 / min | 151.4 mA |
+| **+ 30 s alarm batching** | **36.9 %** | **5.8 / min** | **159.7 mA** |
+
+Batching does exactly what it says: **six times fewer wakeups and half the
+awake time**.  It also does **nothing for the battery** - the current is flat
+(159.7 vs 151.4 mA, i.e. noise in the other direction).
+
+Solving the two runs for the per-state current gives `awake - suspended ≈
+-8 mA`: on this device **s2idle saves essentially nothing**.  The AP stops
+scheduling, the mA do not move.  So:
+
+* The 34/min wake loop is real but it is not where the 150 mA goes; it only
+  makes the failure visible in `batterystats`.
+* 150 mA is a **constant platform draw** that is present whether or not the AP
+  is suspended.  That points at the suspend state the platform actually
+  offers (`mem_sleep`), a rail or peripheral that stays powered, or simply
+  this hardware's idle floor - not at userspace.
+* Batching is therefore **not shipped**: 30 s of extra alarm latency for no
+  measured battery benefit.  The keys were restored with
+  `device_config delete`.
+* Next experiments, in order of value: (1) airplane mode for one window, to
+  see whether the radios own any of the 150 mA; (2) the same measurement on
+  the stock firmware, which answers whether 150 mA is even abnormal for this
+  device before more code is written.
+
 ## 3b. What actually wakes the AP
 
 The `debug.ashfall.wakeups` snapshots (§6a) taken at both ends of the run, with
