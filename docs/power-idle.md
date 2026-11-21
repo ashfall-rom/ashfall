@@ -272,6 +272,28 @@ counts, total block time) and every process holding a `timerfd`, with the
 a file: no sepolicy exception for writing into `/data/local/tmp`, and shell can
 already read the daemon's log buffer.
 
+## 6c. Root-only experiment hook (`debug.ashfall.powertest`)
+
+The remaining suspects are root-only sysfs, so `ashfall-hwd` carries a
+deliberately tiny hook. It does nothing unless the property is set, and any
+value runs exactly one whitelisted action:
+
+| value | effect |
+|---|---|
+| `wifi-pm` / `wifi-pm-on` | WLAN PCIe `power/control` = `auto` / `on` (ports + endpoint) |
+| `usb-pm` / `usb-pm-on` | `a600000.dwc3` `power/control` = `auto` / `on` |
+| `usb2-off` / `usb2-on` | unbind / rebind the `a600000.dwc3` gadget controller |
+
+`usb2-off` logs the write result and whether the device is still bound - the
+first attempt at this experiment wrote `a600000.ssusb` (the wrong name, it did
+nothing) and produced the invalid 44 mA reading corrected in §3d.  Always
+re-pair it with `usb2-on` or a reboot, so the USB port keeps charging.
+
+**Do not add debugfs dumps back to the snapshot.** Reading
+`clk_summary`/`pm_genpd_summary` on this kernel wedged the device twice
+(`panic_on_rcu_stall=1`, `PANIC_ON_BUG`); that is why the snapshot only carries
+`wakeup_sources` and the timerfd scan, which have never crashed anything.
+
 ## 6. Open (vendor/kernel, tracked in #255)
 
 * **Naming the timerfd owner (done).**  `debug.ashfall.trace` (§6b) records
