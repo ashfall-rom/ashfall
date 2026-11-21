@@ -306,6 +306,8 @@ and emulator benefits:
 | `persist.ashfall.pad.trigger_deadzone` | 0..30 % | 3 | trigger values below N % are 0, the rest is rescaled 0..255 |
 
 Values are re-read every 250 ms and applied without restarting the daemon.
+With no input for 2 s the refresh backs off to 2 s and returns to 250 ms on the
+next event, so an idle pad costs no periodic wakeups (#233).
 
 ### Control socket
 

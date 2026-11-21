@@ -398,7 +398,10 @@ contract does not change — the sampler is one more publisher of
   with a fresh heartbeat immediately (DisplayManager listener), then capture
   restarts and the first frame updates it; the configured effect is never
   shown in between.  The heartbeat stops after the grace, so sleep has no
-  400 ms property writes.
+  400 ms property writes.  The 400 ms supervisor tick stops with it: with the
+  panel off the sampler is paused and every input that can change the effect
+  needs the panel, so `supervise()` does not reschedule and the
+  `DisplayManager` listener re-arms it on wake (#233).
 * Capture: `DisplayManager.createVirtualDisplay` with
   `VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR` into an `ImageReader` (RGBA_8888, 64×36),
   `CAPTURE_VIDEO_OUTPUT`.  No MediaProjection, no consent dialog.

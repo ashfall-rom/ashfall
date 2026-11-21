@@ -128,9 +128,11 @@ writer). Measured on the device: with `show=1` written by Settings while SystemU
 running, no callback ever reached SystemUI and the status bar stayed empty until SystemUI restarted.
 
 So SystemUI re-reads the schema itself: the indicator runs one main-thread tick every **2 s** while it
-is attached, re-parses the table below once (a baker's dozen of property reads and one small
-snapshot) and notifies its listeners - the status bar view and the `REPLACE_PERCENT` composable -
-only when a parsed value actually changed. A change applies within ~2 s without restarting SystemUI.
+is attached **and the panel is on**, re-parses the table below once (a baker's dozen of property
+reads and one small snapshot) and notifies its listeners - the status bar view and the
+`REPLACE_PERCENT` composable - only when a parsed value actually changed. A change applies within
+~2 s without restarting SystemUI. The watch stops itself on `ACTION_SCREEN_OFF` and is
+rescheduled on `ACTION_SCREEN_ON` (#233).
 That tick is the only periodic work when the feature is off: it is removed with the view on
 `onViewDetached`, and it does not sample the battery, register a receiver or touch the estimator.
 
