@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Phase 7: the LineageOS Updater is not part of AshFall, so the System page
+     must not offer "System updates". config_additional_system_update_setting_enable
+     is already false in AOSP; pin both here so an upstream default cannot bring
+     the dead entry back. -->
+<resources>
+    <bool name="config_show_system_update_settings">false</bool>
+    <bool name="config_additional_system_update_setting_enable">false</bool>
+</resources>

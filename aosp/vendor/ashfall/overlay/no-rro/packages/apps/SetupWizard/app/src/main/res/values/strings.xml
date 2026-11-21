@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- AshFall setup wizard strings. Overlaid, not forked: the upstream wizard
+     keeps its ids and behaviour, only the user-visible identity changes. -->
+<resources>
+    <string name="app_name">AshFall Setup</string>
+    <string name="os_name" translatable="false">AshFall</string>
+    <string name="ashfall_setup_wordmark" translatable="false">AshFall</string>
+    <string name="ashfall_setup_subtitle">LineageOS 24.0 for the Retroid Pocket 5</string>
+</resources>

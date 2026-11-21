@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- AshFall mark on the Soot tile with the Ember bloom, from assets/brand/.
+     512x512 viewport, square so the wizard's fitCenter ImageView keeps the
+     circle round on the 16:9 panel. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:aapt="http://schemas.android.com/aapt"
+    android:width="512dp"
+    android:height="512dp"
+    android:viewportWidth="512"
+    android:viewportHeight="512">
+
+    <!-- tile -->
+    <path
+        android:pathData="M256,0a256,256 0,1 0,0 512a256,256 0,1 0,0 -512"
+        android:fillColor="#0B0C0F" />
+
+    <!-- ember bloom, kept inside the tile so no clip path is needed -->
+    <path android:pathData="M256,60a220,220 0,1 0,0 440a220,220 0,1 0,0 -440">
+        <aapt:attr name="android:fillColor">
+            <gradient
+                android:type="radial"
+                android:centerX="256"
+                android:centerY="280"
+                android:gradientRadius="220">
+                <item android:color="#29FF8A3D" android:offset="0" />
+                <item android:color="#0DFF8A3D" android:offset="0.45" />
+                <item android:color="#00FF8A3D" android:offset="1" />
+            </gradient>
+        </aapt:attr>
+    </path>
+
+    <!-- the mark: two drifting ash strokes and the crossbar -->
+    <path
+        android:pathData="M244,112 C228,208 204,316 120,408 L186,408 C236,318 256,200 268,112 Z"
+        android:fillColor="#EDE9E4" />
+    <path
+        android:pathData="M268,112 C284,208 308,316 392,408 L326,408 C276,318 256,200 244,112 Z"
+        android:fillColor="#EDE9E4" />
+    <path
+        android:pathData="M196,281 h120 a19,19 0,0 1,0 38 h-120 a19,19 0,0 1,0 -38 z"
+        android:fillColor="#EDE9E4" />
+</vector>

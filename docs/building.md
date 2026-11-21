@@ -213,7 +213,7 @@ the board config through `TARGET_DEVICE`, and the GSI board config is
 
 Set for this product: `PRODUCT_NAME := ashfall_gsi_arm64`,
 `PRODUCT_BRAND`/`PRODUCT_MANUFACTURER := AshFall`,
-`PRODUCT_MODEL := AshFall GSI arm64`, and the props
+`PRODUCT_MODEL := RP5 AshFall`, and the props
 
 ```
 ro.ashfall.version   <- ASH_VERSION from config/ashfall.conf

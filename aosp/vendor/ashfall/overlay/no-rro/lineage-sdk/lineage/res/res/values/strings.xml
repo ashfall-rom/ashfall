@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- About phone keeps the upstream base version visible, but labels it as the
+     base rather than as the product identity. The "AshFall version" row is
+     added by patches/packages/apps/Settings/0002-ashfall-about-branding.patch. -->
+<resources>
+    <string name="lineage_version">LineageOS base</string>
+</resources>
