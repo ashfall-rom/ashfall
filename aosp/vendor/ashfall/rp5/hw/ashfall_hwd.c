@@ -676,7 +676,25 @@ static void powertest_apply(const char *what)
         sysfs_write_str("/sys/bus/pci/devices/0000:01:00.0/power/control", "on");
         sysfs_write_str("/sys/bus/pci/devices/0000:00:00.0/power/control", "on");
     } else if (!strcmp(what, "usb2-off")) {
-        sysfs_write_str("/sys/bus/platform/drivers/dwc3/unbind", "a600000.ssusb");
+        /* The gadget controller is a600000.dwc3; the earlier probe wrote the
+         * wrong name and silently did nothing (issue #233). */
+        int rc = sysfs_write_str("/sys/bus/platform/drivers/dwc3/unbind",
+                                 "a600000.dwc3");
+
+        ah_logf(AH_LOG_INFO, "powertest: unbind a600000.dwc3 rc=%d bound=%d", rc,
+                access("/sys/bus/platform/devices/a600000.dwc3/driver", F_OK) == 0);
+    } else if (!strcmp(what, "usb2-on")) {
+        int rc = sysfs_write_str("/sys/bus/platform/drivers/dwc3/bind",
+                                 "a600000.dwc3");
+
+        ah_logf(AH_LOG_INFO, "powertest: rebind a600000.dwc3 rc=%d", rc);
+    } else if (!strcmp(what, "usb-pm")) {
+        int rc = sysfs_write_str("/sys/bus/platform/devices/a600000.dwc3/power/control",
+                                 "auto");
+
+        ah_logf(AH_LOG_INFO, "powertest: a600000.dwc3 control=auto rc=%d", rc);
+    } else if (!strcmp(what, "usb-pm-on")) {
+        sysfs_write_str("/sys/bus/platform/devices/a600000.dwc3/power/control", "on");
     } else {
         ah_logf(AH_LOG_WARN, "powertest: unknown '%s'", what);
         return;
