@@ -451,6 +451,148 @@ static void publish_gpu_status(const gpu_state *gpu,
     cache->valid = true;
 }
 
+/* --- suspend diagnostics (issue #233) ------------------------------------
+ * The AP is kept awake by a userspace alarmtimer the kernel only names
+ * "[timerfd]"; naming the owner needs /proc/<pid>/fd and debugfs, i.e. root,
+ * which a field device does not have.  The daemon already runs as root, so a
+ * shell-settable token makes it write a one-shot snapshot to its log, which
+ * `adb shell` can read without any file-permission or sepolicy work:
+ *
+ *     adb shell setprop debug.ashfall.wakeups 1
+ *     adb shell logcat -d -s ashfall-hwd | grep 'wakeups|'
+ *
+ * Any new value triggers a new dump, so the property can be re-used to sample
+ * a later window. */
+#define PROP_DEBUG_WAKEUPS "debug.ashfall.wakeups"
+
+#if defined(__ANDROID__)
+#include <dirent.h>
+#include <errno.h>
+#include <sys/mount.h>
+
+static void wakeup_dump_sources(void)
+{
+    char line[512];
+    FILE *in;
+
+    in = fopen("/sys/kernel/debug/wakeup_sources", "re");
+    if (!in) {
+        ah_logf(AH_LOG_WARN, "wakeups| no wakeup_sources (%s)", strerror(errno));
+        return;
+    }
+    while (fgets(line, sizeof(line), in) != NULL) {
+        line[strcspn(line, "\n")] = '\0';
+        if (line[0] != '\0')
+            ah_logf(AH_LOG_INFO, "wakeups| %s", line);
+    }
+    fclose(in);
+}
+
+/* Every process holding a timerfd: the kernel reports those as the wakeup
+ * source "[timerfd]" and never says which one. */
+static void wakeup_dump_fds(void)
+{
+    DIR *proc = opendir("/proc");
+    struct dirent *pid;
+
+    if (!proc) {
+        ah_logf(AH_LOG_WARN, "wakeups| no /proc (%s)", strerror(errno));
+        return;
+    }
+    while ((pid = readdir(proc)) != NULL) {
+        char fd_dir[PATH_MAX];
+        DIR *fds;
+        struct dirent *fd;
+
+        if (pid->d_name[0] < '0' || pid->d_name[0] > '9')
+            continue;
+        snprintf(fd_dir, sizeof(fd_dir), "/proc/%s/fd", pid->d_name);
+        fds = opendir(fd_dir);
+        if (!fds)
+            continue;
+        while ((fd = readdir(fds)) != NULL) {
+            char path[PATH_MAX], link[PATH_MAX], comm[128] = "-";
+            char cmd[400] = "-";
+            ssize_t len;
+            FILE *f;
+
+            snprintf(path, sizeof(path), "%s/%s", fd_dir, fd->d_name);
+            len = readlink(path, link, sizeof(link) - 1);
+            if (len <= 0)
+                continue;
+            link[len] = '\0';
+            if (!strstr(link, "timerfd"))
+                continue;
+            snprintf(path, sizeof(path), "/proc/%s/comm", pid->d_name);
+            f = fopen(path, "re");
+            if (f) {
+                if (fgets(comm, sizeof(comm), f))
+                    comm[strcspn(comm, "\n")] = '\0';
+                fclose(f);
+            }
+            snprintf(path, sizeof(path), "/proc/%s/cmdline", pid->d_name);
+            f = fopen(path, "re");
+            if (f) {
+                size_t n = fread(cmd, 1, sizeof(cmd) - 1, f);
+                size_t i;
+
+                cmd[n] = '\0';
+                for (i = 0; i < n; i++)
+                    if (cmd[i] == '\0')
+                        cmd[i] = ' ';
+                fclose(f);
+            }
+            /* fdinfo names the timerfd clock: only CLOCK_BOOTTIME_ALARM (7)
+             * is a wakeup source, and it_value is how long until it fires. */
+            {
+                char path2[PATH_MAX], info[256] = "-", line[128];
+
+                snprintf(path2, sizeof(path2), "/proc/%s/fdinfo/%s",
+                         pid->d_name, fd->d_name);
+                f = fopen(path2, "re");
+                if (f) {
+                    size_t used = 0;
+
+                    while (fgets(line, sizeof(line), f) != NULL &&
+                           used < sizeof(info) - 1) {
+                        char *value = strchr(line, ':');
+                        int n;
+
+                        line[strcspn(line, "\n")] = '\0';
+                        if (strncmp(line, "clockid", 7) != 0 &&
+                            strncmp(line, "it_value", 8) != 0)
+                            continue;
+                        if (value != NULL)
+                            *value = '=';
+                        n = snprintf(info + used, sizeof(info) - used, "%s%s",
+                                     used ? " " : "", line);
+                        if (n > 0)
+                            used += (size_t)n;
+                    }
+                    fclose(f);
+                }
+                ah_logf(AH_LOG_INFO, "wakeups| pid %s fd %s -> %s (%s) [%s] %s",
+                        pid->d_name, fd->d_name, link, comm, cmd, info);
+            }
+        }
+        closedir(fds);
+    }
+    closedir(proc);
+}
+
+static void wakeup_dump(void)
+{
+    /* debugfs is not mounted by default. */
+    mount("none", "/sys/kernel/debug", "debugfs", 0, NULL);
+    ah_logf(AH_LOG_INFO, "wakeups| ==== snapshot ====");
+    wakeup_dump_sources();
+    wakeup_dump_fds();
+    ah_logf(AH_LOG_INFO, "wakeups| ==== end ====");
+}
+#else
+static void wakeup_dump(void) {}
+#endif
+
 static void publish_throttle_status(const throttle_state *throttle,
                                     int *cache)
 {
@@ -540,6 +682,7 @@ int main(void)
     int64_t next_cpu_ms = 0;
     int64_t next_mem_ms = 0;
     int mem_retry_left = MEM_RETRY_BUDGET;
+    char wakeup_token[HWD_VALUE_WATCH_MAX] = "";
     int64_t now;
     int64_t next_fan_ms;
     int64_t next_led_ms = 0;
@@ -688,6 +831,17 @@ int main(void)
         int64_t screen_ms;
 
         now = ah_now_ms();
+        /* One-shot suspend snapshot (#233): a new token in
+         * debug.ashfall.wakeups writes /data/local/tmp/ashfall-wakeups.txt. */
+        {
+            char token[HWD_VALUE_WATCH_MAX];
+
+            if (prop_get_str(PROP_DEBUG_WAKEUPS, token, sizeof(token)) > 0 &&
+                strcmp(token, wakeup_token) != 0) {
+                snprintf(wakeup_token, sizeof(wakeup_token), "%s", token);
+                wakeup_dump();
+            }
+        }
         /* ashfall.ui.* lease (issue #94): sample the heartbeats before the
          * values are read, so a value is only accepted together with a
          * refresh the daemon has actually observed. */
