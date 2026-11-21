@@ -67,7 +67,42 @@ wake reasons:
      1x  432 msoc-delta:448 dma-grant
 ```
 
-Read that as a **1.75 s cycle**: 688 aborts in 20 minutes, and 683 awake
+## 3a. Same run after the fixes (§4)
+
+20 minutes would have been 5 samples 5 minutes apart; the on-device loop below
+took 27 m 40 s because `sleep` is CLOCK_MONOTONIC and stops while the system is
+suspended - which is itself a measurement of the suspend ratio.  Values are
+normalised, so the comparison is fair:
+
+| metric | baseline | after |
+|---|---|---|
+| awake / screen off | 70.6 % | 71.0 % |
+| awake episodes | 34.0 / min | 34.1 / min |
+| suspend aborts | 34.3 / min | 34.4 / min |
+| average current | 153.5 mA | 151.4 mA |
+
+**The panel-off work did not move the drain** - as predicted in §4, the daemons
+were never the cause.  It removes ~360 `ashfall.status.*` writes per minute and
+~10 k property polls per hour, which is right, but it is worth ~1 % of the
+current.  The `%/h` column of the harness is useless on a 20-minute window (1 %
+of a 4000 mAh pack is 40 mAh); the fuel-gauge current is the number to read.
+
+## 3b. What actually wakes the AP
+
+The `debug.ashfall.wakeups` snapshots (§6a) taken at both ends of the run, with
+their `wakeup_sources` counters differenced:
+
+```
+  1072 wakes (38.7/min)  [timerfd]
+    26 wakes ( 0.9/min)  a800000.ssusb
+    21 wakes ( 0.8/min)  qcom_rx_wakelock
+     6 wakes ( 0.2/min)  alarmtimer.0.auto
+     2 wakes ( 0.1/min)  mhi0
+```
+
+So it is a **userspace `timerfd`, every ~1.55 s**, and the abort message is the
+same source: it fires, the AP wakes, and the still-active source then blocks the
+next suspend attempt.  Read that as a **1.75 s cycle**: 688 aborts in 20 minutes, and 683 awake
 episodes whose median length is 1 s.  The wake itself has a legitimate cause,
 but the AP then stays up for ~1 s while the `timerfd` wakeup source is still
 pending - the multiplier the audit in #233 described.  At 154 mA and ~6 %/h the
@@ -132,7 +167,21 @@ already read the daemon's log buffer.
 
 ## 6. Open (vendor/kernel, tracked in #255)
 
-* **What actually fires every 1.75 s.**  `ashfall-hwd` can now answer the
+* **Naming the timerfd owner.**  The device has exactly **9 `CLOCK_*_ALARM`
+  timerfds** and exactly **9 `[timerfd]` wakeup sources**, in creation order:
+  the Qualcomm health HAL, audioserver, two in `system_server`
+  (`CLOCK_REALTIME_ALARM`, disarmed, and AlarmManager's next alarm, minutes
+  away) and five in `com.android.bluetooth` (12 min, 1 h, three disarmed).
+  None of them is *armed* with a 1.5 s period, so the owner re-arms a short
+  timeout in bursts and the snapshot happens to catch it idle.
+  * **Bluetooth is ruled out**: with `svc bluetooth disable` the source still
+    woke the AP 92 times in 120 s (0.77/s, unchanged).
+  * The WiFi branch could not be tested from the host - `svc wifi disable`
+    kills the wireless-adb link being used to drive the test.
+  * The remaining step is one line of information: the `ticks` field of
+    `/proc/<pid>/fdinfo/<fd>`, i.e. the expiration counter per timerfd.  The
+    counter that grows by ~38/min names the owner outright.
+* **Old hypothesis, now discarded.**  `ashfall-hwd` can now answer the
   "who holds the timerfd" half on demand (§6a), and the first snapshots rule
   out the obvious answer: the only `CLOCK_BOOTTIME_ALARM` timerfds on the
   device are the health HAL's ~50 s poll, `system_server`/AlarmManager's next
