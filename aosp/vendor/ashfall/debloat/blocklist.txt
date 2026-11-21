@@ -70,9 +70,9 @@ module QuickAccessWallet
 # --- duplicate browser -----------------------------------------------------
 module Jelly
 
-# --- AVF / terminal APEX ---------------------------------------------------
-module com.android.virt
-
+# --- AVF / terminal ---------------------------------------------------------
+# The com.android.virt APEX stays (framework dependency); its Terminal app is
+# removed by patches/packages/modules/Virtualization/0001-*.patch.
 # --- packages checked on the device ---------------------------------------
 package com.android.calculator2
 package org.lineageos.etar
@@ -122,8 +122,6 @@ package com.android.se
 package com.android.systemui.plugin.globalactions.wallet
 package org.lineageos.jelly
 package com.android.virtualization.terminal
-package com.android.virtualmachine.res
-package com.android.microdroid.empty_payload
 
 # --- auto-generated RROs of the removed phone apps --------------------------
 package com.android.dialer.auto_generated_rro_product__

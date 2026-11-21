@@ -135,17 +135,18 @@ Kept: `ContactsProvider`, `CalendarProvider`, `com.android.telephonycore`
 `Updater` + `init.lineage-updater.rc`; `PrintSpooler`,
 `PrintRecommendationService`, `BuiltInPrintService`; `BasicDreams`,
 `PhotoTable`, `EasterEgg`; `DeviceDiagnostics`; `HTMLViewer`; `Tag`,
-`SecureElement`, `QuickAccessWallet`; `Jelly` (Camelot stays);
-`com.android.virt` (Terminal/AVF; the conditional system-server jar is filtered
-too).
+`SecureElement`, `QuickAccessWallet`; `Jelly` (Camelot stays). The AVF Terminal
+app is removed by `patches/packages/modules/Virtualization/0001-*.patch`; the
+`com.android.virt` APEX itself stays.
 
 The following are **kept** because they are platform boot/system-server APEXes,
 not removable without a framework change: `com.android.nfcservices`,
 `com.android.uwb`, `com.android.healthfitness`,
-`com.android.ondevicepersonalization`, `com.android.webapp`. Their contained
-packages are not launcher entries, except the Terminal app, which goes away
-with `com.android.virt`. This is recorded as a known limit; a follow-up issue
-can take the APEX removal if a boot test proves it safe.
+`com.android.ondevicepersonalization`, `com.android.webapp` and
+`com.android.virt`. Their contained packages are not launcher entries. The
+Terminal app was the one launcher entry and is removed from the virt APEX's
+`apps` list. This is recorded as a known limit; a follow-up issue can take the
+APEX removal if a boot test proves it safe.
 
 ## 5. Implementation notes
 
@@ -153,14 +154,17 @@ can take the APEX removal if a boot test proves it safe.
   **before** `$(call inherit-product, vendor/lineage/build/target/product/lineage_gsi_arm64.mk)`;
   the inherited makefile reads it at include time.
 - `debloat.mk` is included last in `ashfall_common.mk`; it sets
-  `PRODUCT_PACKAGES_BLACKLIST`, `PRODUCT_COPY_FILES_BLACKLIST` and
-  `PRODUCT_APEX_BLACKLIST`. The blacklists are applied by
+  `PRODUCT_PACKAGES_BLACKLIST` and `PRODUCT_COPY_FILES_BLACKLIST`. The
+  blacklists are applied by
   `patches/build/make/0001-product-blacklists.patch` in
   `build/make/core/product_config.mk`, **after** the product node merge. A
   plain `PRODUCT_PACKAGES := $(filter-out ...)` in the product makefile is a
   no-op for inherited packages: the node merge appends the inherited values
   after the product file's body (the first phase-7 build proved this: it still
   had Dialer/Etar/Updater even though the product makefile filtered them).
+- The `com.android.virt` APEX is **not** removed: its `service-virtualization`
+  fragment must be declared in `PRODUCT_APEX_SYSTEM_SERVER_JARS` (Soong rejects
+  the APEX otherwise). Only `VmTerminalApp` is removed from its `apps` list.
 - The stock product/system_ext deletion is a fastbootd operation (logical
   partitions); the bootloader batch rule is unchanged. Never use
   `fastboot getvar all` (AGENTS.md, issue #54).
@@ -200,7 +204,7 @@ Runtime (orchestrator, after a lease):
 
 | Workstream | Paths |
 |---|---|
-| Product/debloat + guard | `aosp/vendor/ashfall/debloat.mk`, `aosp/vendor/ashfall/debloat/blocklist.txt`, `aosp/vendor/ashfall/products/ashfall_gsi_arm64.mk`, `aosp/vendor/ashfall/ashfall_common.mk`, `patches/build/make/0001-product-blacklists.patch`, `scripts/verify/debloat.sh` |
+| Product/debloat + guard | `aosp/vendor/ashfall/debloat.mk`, `aosp/vendor/ashfall/debloat/blocklist.txt`, `aosp/vendor/ashfall/products/ashfall_gsi_arm64.mk`, `aosp/vendor/ashfall/ashfall_common.mk`, `patches/build/make/0001-product-blacklists.patch`, `patches/packages/modules/Virtualization/0001-drop-avf-terminal-app.patch`, `scripts/verify/debloat.sh` |
 | Branding/defaults | `aosp/vendor/ashfall/overlay/no-rro/**`, `patches/lineage-sdk/0002-*`, `patches/frameworks/base/0007-*`, `patches/packages/apps/Settings/0002-*`, `docs/branding.md` |
 | Flash policy | `scripts/device/flash-gsi.sh`, `docs/flashing.md` |
 | Integration/build/flash | orchestrator |

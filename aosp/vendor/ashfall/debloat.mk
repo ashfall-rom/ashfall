@@ -31,9 +31,8 @@
 # They are in PRODUCT_APEX_BOOT_JARS / PRODUCT_APEX_SYSTEM_SERVER_JARS and are
 # loaded by system_server; removing them is a framework change, not debloat.
 # Their apps are either launcher-less or are covered by an app module below.
-# com.android.virt is an exception: it is only the AVF/Terminal APEX, it has no
-# system_server reference in this tree, and it is filtered together with its
-# conditional ART entries at the bottom of this file.
+# The com.android.virt APEX also stays; the AVF Terminal app is removed from its
+# apps list by patches/packages/modules/Virtualization/0001-*.patch.
 
 ASHFALL_DEBLOAT_PACKAGES := \
     Aperture \
@@ -79,12 +78,10 @@ ASHFALL_DEBLOAT_PACKAGES := \
     Tag \
     SecureElement \
     QuickAccessWallet \
-    Jelly \
-    com.android.virt
+    Jelly
 
 PRODUCT_PACKAGES_BLACKLIST := $(ASHFALL_DEBLOAT_PACKAGES)
 PRODUCT_COPY_FILES_BLACKLIST := %init.lineage-updater.rc:%
-PRODUCT_APEX_BLACKLIST := com.android.virt:%
 
 # The blacklists are applied by patches/build/make/0001-product-blacklists.patch
 # in product_config.mk, after the inherited products have been merged. Filtering
@@ -93,6 +90,3 @@ PRODUCT_APEX_BLACKLIST := com.android.virt:%
 #
 # PRODUCT_PACKAGES_DEBUG/ENG: UsbDisableDebugger is in the shared blacklist, so
 # the same product_config.mk step removes it from the debug list too.
-#
-# PRODUCT_APEX_BOOT_JARS / PRODUCT_APEX_SYSTEM_SERVER_JARS: the com.android.virt
-# entries are removed by the APEX blacklist in the same step.
