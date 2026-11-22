@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- AshFall: the framework fallback palette is Ember/Soot instead of the
+     Material baseline blue. This is what the AOSP setup pages read before the
+     SystemUI theme overlay is evaluated (the overlay is deferred until setup
+     completes); the runtime ThemeOverlayController then uses the same Ember
+     seed (patches/frameworks/base/0008-*). A theme chosen in ThemePicker still
+     wins after setup. -->
+<resources>
+    <!-- Primary -->
+    <color name="system_primary_light">#FF8A3D</color>
+    <color name="system_primary_dark">#FF8A3D</color>
+    <color name="system_on_primary_light">#0B0C0F</color>
+    <color name="system_on_primary_dark">#0B0C0F</color>
+    <color name="system_primary_container_light">#FFDCC6</color>
+    <color name="system_primary_container_dark">#5C2A0E</color>
+    <color name="system_on_primary_container_light">#3A1A08</color>
+    <color name="system_on_primary_container_dark">#FFDCC6</color>
+
+    <!-- Accent 1 (the main accent; buttons, tabs, switches) -->
+    <color name="system_accent1_100_light">#FFDCC6</color>
+    <color name="system_accent1_100_dark">#FFDCC6</color>
+    <color name="system_accent1_500_light">#FF8A3D</color>
+    <color name="system_accent1_500_dark">#FF8A3D</color>
+
+    <!-- Accent 2/3: keep them warm instead of falling back to blue -->
+    <color name="system_accent2_100_light">#F5D9C8</color>
+    <color name="system_accent2_100_dark">#F5D9C8</color>
+    <color name="system_accent2_500_light">#C96A2E</color>
+    <color name="system_accent2_500_dark">#C96A2E</color>
+    <color name="system_accent3_100_light">#E8E1D8</color>
+    <color name="system_accent3_100_dark">#E8E1D8</color>
+    <color name="system_accent3_500_light">#9A8F86</color>
+    <color name="system_accent3_500_dark">#9A8F86</color>
+</resources>
