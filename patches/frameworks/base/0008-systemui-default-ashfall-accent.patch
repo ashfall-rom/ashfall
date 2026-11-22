@@ -1,0 +1,37 @@
+From d47e00f6a91d9b4a98ee16c24e6f8c078abc626e Mon Sep 17 00:00:00 2001
+From: AshFall UI <ui@ashfall.local>
+Date: Sun, 22 Nov 2026 10:26:15 +0000
+Subject: [PATCH] ThemeOverlayController: default to the AshFall Ember accent
+
+---
+ .../systemui/theme/ThemeOverlayController.java      | 13 +++++++++++++
+ 1 file changed, 13 insertions(+)
+
+diff --git a/packages/SystemUI/src/com/android/systemui/theme/ThemeOverlayController.java b/packages/SystemUI/src/com/android/systemui/theme/ThemeOverlayController.java
+index ea7a192..fbf1d2a 100644
+--- a/packages/SystemUI/src/com/android/systemui/theme/ThemeOverlayController.java
++++ b/packages/SystemUI/src/com/android/systemui/theme/ThemeOverlayController.java
+@@ -687,7 +687,20 @@ public class ThemeOverlayController implements CoreStartable, Dumpable {
+         return ColorScheme.getSeedColor(wallpaperColors);
+     }
+ 
++    // AshFall: the default accent until the user picks a theme in ThemePicker.
++    private static final int ASHFALL_EMBER = 0xFFFF8A3D;
++
++    private boolean isAshFallDefaultTheme() {
++        final String overlayPackageJson = mSecureSettings.getStringForUser(
++                Settings.Secure.THEME_CUSTOMIZATION_OVERLAY_PACKAGES,
++                mUserTracker.getUserId());
++        return overlayPackageJson == null || overlayPackageJson.isEmpty();
++    }
++
+     protected int getAccentColor(@NonNull WallpaperColors wallpaperColors) {
++        if (isAshFallDefaultTheme()) {
++            return ASHFALL_EMBER;
++        }
+         return ColorScheme.getSeedColor(wallpaperColors);
+     }
+ 
+-- 
+2.53.0
+

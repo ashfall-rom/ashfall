@@ -1,0 +1,69 @@
+From 6a85ef190485134bec14c385204de2779731f410 Mon Sep 17 00:00:00 2001
+From: AshFall UI <ui@ashfall.local>
+Date: Sun, 22 Nov 2026 10:25:11 +0000
+Subject: [PATCH] LineageSettingsProvider: opt out of statistics on upgrade
+
+---
+ .../LineageDatabaseHelper.java                | 32 ++++++++++++++++++-
+ 1 file changed, 31 insertions(+), 1 deletion(-)
+
+diff --git a/packages/LineageSettingsProvider/src/org/lineageos/lineagesettings/LineageDatabaseHelper.java b/packages/LineageSettingsProvider/src/org/lineageos/lineagesettings/LineageDatabaseHelper.java
+index 91367b8..315644f 100644
+--- a/packages/LineageSettingsProvider/src/org/lineageos/lineagesettings/LineageDatabaseHelper.java
++++ b/packages/LineageSettingsProvider/src/org/lineageos/lineagesettings/LineageDatabaseHelper.java
+@@ -37,7 +37,7 @@ public class LineageDatabaseHelper extends SQLiteOpenHelper{
+     private static final boolean LOCAL_LOGV = false;
+ 
+     private static final String DATABASE_NAME = "lineagesettings.db";
+-    private static final int DATABASE_VERSION = 26;
++    private static final int DATABASE_VERSION = 27;
+ 
+     public static class LineageTableNames {
+         public static final String TABLE_SYSTEM = "system";
+@@ -382,6 +382,18 @@ public class LineageDatabaseHelper extends SQLiteOpenHelper{
+             upgradeVersion = 26;
+         }
+ 
++        if (upgradeVersion < 27) {
++            // AshFall: opt out of LineageOS diagnostic/usage statistics by
++            // default (docs/phase7.md 4.5). The provider default is already
++            // false, but the old "LineageOS features" setup page wrote 1 at the
++            // end of setup unless the user unchecked it. That page is removed;
++            // reset an existing 1 once so a no-wipe upgrade is opted out too.
++            // The user can still opt in in Settings > AshFall Settings >
++            // LineageOS statistics.
++            loadStatsCollectionOff(db);
++            upgradeVersion = 27;
++        }
++
+         // *** Remember to update DATABASE_VERSION above!
+         if (upgradeVersion != newVersion) {
+             Log.wtf(TAG, "warning: upgrading settings database to version "
+@@ -566,6 +578,24 @@ public class LineageDatabaseHelper extends SQLiteOpenHelper{
+      * boot while this key is not 1. Seeding it to 1 is the ROM default; the
+      * Trust interface itself and its security warnings are unaffected.
+      */
++    /**
++     * AshFall: writes LineageSettings.Secure.STATS_COLLECTION = 0.
++     *
++     * <p>Used by the 26 -> 27 migration; a fresh database already gets the
++     * provider default (def_stats_collection = false).
++     */
++    private void loadStatsCollectionOff(SQLiteDatabase db) {
++        SQLiteStatement stmt = null;
++        try {
++            stmt = db.compileStatement("INSERT OR REPLACE INTO secure(name,value) VALUES(?,?);");
++            stmt.bindString(1, LineageSettings.Secure.STATS_COLLECTION);
++            stmt.bindString(2, "0");
++            stmt.execute();
++        } finally {
++            if (stmt != null) stmt.close();
++        }
++    }
++
+     private void loadTrustInterfaceSetting(SQLiteDatabase db) {
+         SQLiteStatement stmt = null;
+         try {
+-- 
+2.53.0
+

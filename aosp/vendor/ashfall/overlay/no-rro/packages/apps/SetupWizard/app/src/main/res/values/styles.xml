@@ -10,5 +10,12 @@
         <item name="colorAccent">@color/ashfall_ember</item>
         <item name="colorOnPrimary">@color/ashfall_soot</item>
         <item name="colorOnSecondary">@color/ashfall_soot</item>
+        <!-- The AOSP setup pages (Internet, Protect your phone) still read the
+             framework accent attributes during setup, before the SystemUI
+             theme overlay is evaluated. Pin them here too. -->
+        <item name="android:colorPrimary">@color/ashfall_ember</item>
+        <item name="android:colorPrimaryDark">@color/ashfall_soot</item>
+        <item name="android:colorAccent">@color/ashfall_ember</item>
+        <item name="sudColorPrimary">@color/ashfall_ember</item>
     </style>
 </resources>
