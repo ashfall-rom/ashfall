@@ -48,13 +48,24 @@ Resource overlays in `aosp/vendor/ashfall/overlay/no-rro/packages/apps/SetupWiza
   plus `ashfall_setup_wordmark` and `ashfall_setup_subtitle` ("LineageOS 24.0
   for the Retroid Pocket 5").
 - `values/colors.xml` / `values/styles.xml`: the wizard's Start button and
-  controls use the Ember accent (`#FF8A3D`) on Soot, not the LineageOS teal;
-  the system-wide theme is unchanged.
+  controls use the Ember accent (`#FF8A3D`) on Soot, not the LineageOS teal.
+  The framework `android:colorPrimary`/`colorAccent` and `sudColorPrimary`
+  attributes are pinned too, because the AOSP Internet/Protect pages read them
+  before the SystemUI theme overlay is evaluated.
 - `drawable/ic_launcher_background.xml` / `drawable/ic_launcher_foreground.xml`:
   the adaptive AshFall setup icon.
 - `drawable-nodpi/theme_preview_wallpaper.jpg`, `drawable/theme_preview_qs.xml`
   and `drawable/ic_palette.xml`: the Theme page preview carries the AshFall
   tile/wordmark and the Ember QS preview; the page glyph is the AshFall A.
+- The AshFall mark uses the exact `assets/brand/ashfall-mark.svg` rounded-rect
+  crossbar (`196..316`); the earlier SetupWizard capsule path bulged 19 px past
+  the legs and is gone from the setup logo/icon/palette and the launcher icon.
+- The **LineageOS features** setup page is removed from the wizard script. Its
+  only unique control was the diagnostic/usage metrics opt-in; the nav-key
+  switch is unused on this gesture-only device. `def_stats_collection` is
+  already `false`; a LineageSettingsProvider 26 -> 27 migration resets an
+  existing `stats_collection=1` to `0` so a no-wipe upgrade is opted out too.
+  The user can still opt in from AshFall Settings > LineageOS statistics.
 - `drawable/logo.xml`: the AshFall tile (Soot disc, Ember bloom, Ash mark),
   replacing the Lineage wordmark on the finish page and in the welcome hero.
 - `layout/welcome_activity.xml` and `layout-w600dp/welcome_activity.xml`:
@@ -83,6 +94,11 @@ animation already carries the motion.
   `config_additional_system_update_setting_enable=false` (Updater is gone) and
   `config_show_sim_info=false` (no telephony; hides Phone number, SIM status,
   IMEI/MEID and EID in About phone).
+- `patches/frameworks/base/0008-systemui-default-ashfall-accent.patch`:
+  SystemUI defaults the generated accent to Ember (`#FF8A3D`) when
+  `THEME_CUSTOMIZATION_OVERLAY_PACKAGES` is empty, so Settings/SystemUI/QS stop
+  using the Material blue. A theme chosen in ThemePicker (non-empty setting)
+  still wins.
 - `patches/packages/apps/Settings/0002-ashfall-about-branding.patch`:
   new "AshFall version" preference (summary from `ro.ashfall.version` and
   `ro.ashfall.build.id`) and an "AshFall project" preference. The existing
@@ -221,6 +237,7 @@ Runtime (orchestrator, after a lease):
 | Workstream | Paths |
 |---|---|
 | Product/debloat + guard | `aosp/vendor/ashfall/debloat.mk`, `aosp/vendor/ashfall/debloat/blocklist.txt`, `aosp/vendor/ashfall/products/ashfall_gsi_arm64.mk`, `aosp/vendor/ashfall/ashfall_common.mk`, `patches/build/make/0001-product-blacklists.patch`, `patches/vendor/lineage/0001-drop-updater-rc.patch`, `patches/packages/modules/Virtualization/0001-drop-avf-terminal-app.patch`, `scripts/verify/debloat.sh` |
+| Accent/privacy | `patches/frameworks/base/0008-systemui-default-ashfall-accent.patch`, `patches/lineage-sdk/0003-lineagesettings-provider-ashfall-stats-off.patch` |
 | Branding/defaults | `aosp/vendor/ashfall/overlay/no-rro/**`, `patches/lineage-sdk/0002-*`, `patches/frameworks/base/0007-*`, `patches/packages/apps/Settings/0002-*`, `docs/branding.md` |
 | Flash policy | `scripts/device/flash-gsi.sh`, `docs/flashing.md` |
 | Integration/build/flash | orchestrator |
