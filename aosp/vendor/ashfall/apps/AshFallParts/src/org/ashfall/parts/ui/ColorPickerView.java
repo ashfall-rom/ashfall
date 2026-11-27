@@ -191,7 +191,7 @@ public class ColorPickerView extends View {
         if (getContext().getTheme().resolveAttribute(android.R.attr.colorAccent, value, true)) {
             return value.data;
         }
-        return 0xFFFF2020;
+        return 0xFFFF8A3D;
     }
 
     private static float clamp01(float value) {

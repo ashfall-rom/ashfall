@@ -685,10 +685,16 @@ static void test_led_colour(void)
     rgb_t colour;
 
     led_settings_default(&set);
-    CHECK(led_parse_colour("FF2020", &colour));
+    CHECK_EQ(set.left.r, 0xFF);
+    CHECK_EQ(set.left.g, 0x8A);
+    CHECK_EQ(set.left.b, 0x3D);
+    CHECK_EQ(set.right.r, 0xFF);
+    CHECK_EQ(set.right.g, 0x8A);
+    CHECK_EQ(set.right.b, 0x3D);
+    CHECK(led_parse_colour("FF8A3D", &colour));
     CHECK_EQ(colour.r, 0xFF);
-    CHECK_EQ(colour.g, 0x20);
-    CHECK_EQ(colour.b, 0x20);
+    CHECK_EQ(colour.g, 0x8A);
+    CHECK_EQ(colour.b, 0x3D);
     CHECK(led_parse_colour("#00ff80", &colour));
     CHECK_EQ(colour.g, 0xFF);
     CHECK(!led_parse_colour("ff20", &colour));
@@ -708,12 +714,13 @@ static void test_led_effects(void)
     led_state_init(&led, 0);
     CHECK_EQ(led.backend, LED_BACKEND_SN3112);
 
-    /* static at 60 %: FF20 20 -> 99 13 13 */
+    /* static at 60 %: FF8A3D -> 153 83 37 */
     led.settings.mode = LED_MODE_STATIC;
     led.settings.brightness = 60;
     led_frame(&led, 0, frame);
     CHECK_EQ(frame[0].r, 153);
-    CHECK_EQ(frame[0].g, 19);
+    CHECK_EQ(frame[0].g, 83);
+    CHECK_EQ(frame[0].b, 37);
     CHECK_EQ(frame[1].r, 153);
     CHECK(!memcmp(&frame[0], &frame[1], sizeof(frame[0])));
 

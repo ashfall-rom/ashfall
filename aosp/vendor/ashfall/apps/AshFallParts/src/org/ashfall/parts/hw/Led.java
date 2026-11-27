@@ -68,7 +68,7 @@ public final class Led {
     public static final int DEFAULT_SCREEN_RATE = 10;
     public static final int[] SCREEN_RATES = {10, 15, 30};
 
-    public static final String DEFAULT_COLOR = "FF2020";
+    public static final String DEFAULT_COLOR = "FF8A3D";
     public static final int DEFAULT_BRIGHTNESS = 60;
     public static final int DEFAULT_SPEED = 5;
 
@@ -272,7 +272,7 @@ public final class Led {
         try {
             return 0xFF000000 | Integer.parseInt(sanitizeColor(rgb, DEFAULT_COLOR), 16);
         } catch (NumberFormatException e) {
-            return 0xFFFF2020;
+            return 0xFFFF8A3D;
         }
     }
 

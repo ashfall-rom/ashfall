@@ -34,7 +34,7 @@ public class ColorSwatchView extends View {
     private final Paint mFill = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Paint mOutline = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final RectF mOval = new RectF();
-    private int mColor = 0xFFFF2020;
+    private int mColor = 0xFFFF8A3D;
     private boolean mSelected;
 
     public ColorSwatchView(Context context) {
@@ -90,6 +90,6 @@ public class ColorSwatchView extends View {
         if (getContext().getTheme().resolveAttribute(android.R.attr.colorAccent, value, true)) {
             return value.data;
         }
-        return ContextCompat.getColor(getContext(), R.color.ashfall_red);
+        return ContextCompat.getColor(getContext(), R.color.ashfall_ember);
     }
 }

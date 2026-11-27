@@ -30,8 +30,8 @@ void led_settings_default(led_settings *out)
 {
     memset(out, 0, sizeof(*out));
     out->mode = LED_MODE_STATIC;
-    out->left = (rgb_t){0xFF, 0x20, 0x20};
-    out->right = (rgb_t){0xFF, 0x20, 0x20};
+    out->left = (rgb_t){0xFF, 0x8A, 0x3D};
+    out->right = (rgb_t){0xFF, 0x8A, 0x3D};
     out->sync = true;
     out->brightness = 60;
     out->speed = 5;

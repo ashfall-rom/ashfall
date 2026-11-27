@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- AshFall: default hardware color style so ThemeOverlayController seeds the
+     initial palette during SetupWizard with AshFall Ember instead of
+     extracting GOOGLE_BLUE from the dark default wallpaper. -->
+<resources>
+    <string-array name="theming_defaults" translatable="false">
+        <item>*|TONAL_SPOT|#FF8A3D</item>
+    </string-array>
+</resources>

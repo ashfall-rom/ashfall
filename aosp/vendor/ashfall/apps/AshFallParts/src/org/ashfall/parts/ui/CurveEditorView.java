@@ -90,7 +90,7 @@ public class CurveEditorView extends View {
         setClickable(true);
 
         final float density = getResources().getDisplayMetrics().density;
-        final int accent = themeColor(android.R.attr.colorAccent, 0xFFFF2020);
+        final int accent = themeColor(android.R.attr.colorAccent, 0xFFFF8A3D);
         final int secondary = themeColor(android.R.attr.textColorSecondary, 0xFF888888);
         final int primary = themeColor(android.R.attr.textColorPrimary, 0xFFFFFFFF);
         mGrid.setColor(Ui.fade(secondary, 0.25f));
