@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Phase 7: the LineageOS Updater is not part of AshFall, so the System page
+     must not offer "System updates". config_additional_system_update_setting_enable
+     is already false in AOSP; pin both here so an upstream default cannot bring
+     the dead entry back. -->
+<resources>
+    <bool name="config_show_system_update_settings">false</bool>
+    <bool name="config_additional_system_update_setting_enable">false</bool>
+    <!-- No telephony: hide Phone number, SIM status, IMEI/MEID and EID rows in
+         About phone. The device declares no android.hardware.telephony and the
+         phone/cell apps are removed in phase 7. -->
+    <bool name="config_show_sim_info">false</bool>
+</resources>

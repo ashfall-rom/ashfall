@@ -8,7 +8,9 @@ build, and it is the only overlay directory that is rsynced with `--delete`.
 AndroidProducts.mk              product registration (PRODUCT_MAKEFILES, lunch choices)
 ashfall_common.mk               props/packages/overlays shared by GSI + future device build
 products/ashfall_gsi_arm64.mk   the GSI: inherits lineage_gsi_arm64, EROFS, branding
-overlay/                        static framework/package overlays (placeholder, phase 4)
+debloat.mk                      phase 7 package/APEX filters (docs/phase7.md)
+debloat/blocklist.txt           the debloat audit's module/package blocklist
+overlay/                        static framework/package overlays (phase 4, phase 7 branding)
 sepolicy/                       device sepolicy (placeholder, phase 4)
 ```
 

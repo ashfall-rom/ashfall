@@ -1,0 +1,130 @@
+From da13562321bd804bcc2c64d383a576b948907d5a Mon Sep 17 00:00:00 2001
+From: AshFall UI <ui@ashfall.local>
+Date: Sat, 21 Nov 2026 19:59:44 +0000
+Subject: [PATCH] Settings: AshFall version and project rows in About phone
+
+---
+ res/values/strings.xml                        |  3 +
+ res/xml/my_device_info.xml                    | 19 ++++++
+ .../AshFallVersionPreferenceController.java   | 58 +++++++++++++++++++
+ 3 files changed, 80 insertions(+)
+ create mode 100644 src/com/android/settings/deviceinfo/firmwareversion/AshFallVersionPreferenceController.java
+
+diff --git a/res/values/strings.xml b/res/values/strings.xml
+index 57d699d..6eeba08 100644
+--- a/res/values/strings.xml
++++ b/res/values/strings.xml
+@@ -3642,6 +3642,9 @@
+ 
+     <!-- About phone screen, status item label  [CHAR LIMIT=40] -->
+     <string name="firmware_version">Android version</string>
++    <string name="ashfall_version_title">AshFall version</string>
++    <string name="ashfall_project_title">AshFall project</string>
++    <string name="ashfall_project_summary">github.com/ashfall-rom/ashfall</string>
+     <!-- About phone screen, status item label  [CHAR LIMIT=60] -->
+     <string name="security_patch">Android security update</string>
+     <!-- About phone screen, status item label  [CHAR LIMIT=40] -->
+diff --git a/res/xml/my_device_info.xml b/res/xml/my_device_info.xml
+index 9148a9d..62ca06b 100644
+--- a/res/xml/my_device_info.xml
++++ b/res/xml/my_device_info.xml
+@@ -136,6 +136,15 @@
+             settings:isPreferenceVisible="@bool/config_show_sim_info"
+             settings:controller="com.android.settings.deviceinfo.imei.ImeiInfoPreferenceController"/>
+ 
++        <!-- AshFall version -->
++        <Preference
++            android:key="ashfall_version"
++            android:order="41"
++            android:title="@string/ashfall_version_title"
++            android:summary="@string/summary_placeholder"
++            settings:enableCopying="true"
++            settings:controller="com.android.settings.deviceinfo.firmwareversion.AshFallVersionPreferenceController"/>
++
+         <!-- Android version -->
+         <Preference
+             android:key="firmware_version"
+@@ -234,6 +243,16 @@
+             android:summary="@string/summary_placeholder"
+             settings:enableCopying="true"
+             settings:controller="com.android.settings.deviceinfo.BuildNumberPreferenceController"/>
++
++        <!-- AshFall project -->
++        <Preference
++            android:key="ashfall_project"
++            android:order="54"
++            android:title="@string/ashfall_project_title"
++            android:summary="@string/ashfall_project_summary">
++            <intent android:action="android.intent.action.VIEW"
++                    android:data="https://github.com/ashfall-rom/ashfall" />
++        </Preference>
+     </PreferenceCategory>
+ 
+ </PreferenceScreen>
+diff --git a/src/com/android/settings/deviceinfo/firmwareversion/AshFallVersionPreferenceController.java b/src/com/android/settings/deviceinfo/firmwareversion/AshFallVersionPreferenceController.java
+new file mode 100644
+index 0000000..c5ba69e
+--- /dev/null
++++ b/src/com/android/settings/deviceinfo/firmwareversion/AshFallVersionPreferenceController.java
+@@ -0,0 +1,58 @@
++/*
++ * Copyright (C) 2026 The AshFall Project
++ *
++ * Licensed under the Apache License, Version 2.0 (the "License");
++ * you may not use this file except in compliance with the License.
++ * You may obtain a copy of the License at
++ *
++ *      http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++
++package com.android.settings.deviceinfo.firmwareversion;
++
++import android.content.Context;
++import android.os.SystemProperties;
++
++import com.android.settings.R;
++import com.android.settings.core.BasePreferenceController;
++
++/**
++ * About phone -> "AshFall version".
++ *
++ * <p>Shows the ROM version and build id that {@code scripts/build.sh} exports
++ * into the product properties. The LineageOS base version keeps its own row,
++ * so the upstream attribution is not lost.
++ */
++public class AshFallVersionPreferenceController extends BasePreferenceController {
++
++    private static final String ASHFALL_VERSION_PROP = "ro.ashfall.version";
++    private static final String ASHFALL_BUILD_PROP = "ro.ashfall.build.id";
++
++    public AshFallVersionPreferenceController(Context context, String key) {
++        super(context, key);
++    }
++
++    @Override
++    public int getAvailabilityStatus() {
++        return AVAILABLE;
++    }
++
++    @Override
++    public boolean useDynamicSliceSummary() {
++        return true;
++    }
++
++    @Override
++    public CharSequence getSummary() {
++        final String version = SystemProperties.get(ASHFALL_VERSION_PROP,
++                mContext.getString(R.string.unknown));
++        final String build = SystemProperties.get(ASHFALL_BUILD_PROP, "");
++        return build.isEmpty() ? version : version + " (" + build + ")";
++    }
++}
+-- 
+2.53.0
+

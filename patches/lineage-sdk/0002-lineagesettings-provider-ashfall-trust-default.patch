@@ -1,0 +1,100 @@
+From 744fa311304ae940e506e9b25731118e05c616bd Mon Sep 17 00:00:00 2001
+From: AshFall UI <ui@ashfall.local>
+Date: Sat, 21 Nov 2026 19:58:57 +0000
+Subject: [PATCH] LineageSettingsProvider: default the Trust onboarding as seen
+
+---
+ .../res/values/defaults.xml                   |  9 +++++
+ .../LineageDatabaseHelper.java                | 35 ++++++++++++++++++-
+ 2 files changed, 43 insertions(+), 1 deletion(-)
+
+diff --git a/packages/LineageSettingsProvider/res/values/defaults.xml b/packages/LineageSettingsProvider/res/values/defaults.xml
+index b1fc8f7..085ec43 100644
+--- a/packages/LineageSettingsProvider/res/values/defaults.xml
++++ b/packages/LineageSettingsProvider/res/values/defaults.xml
+@@ -88,6 +88,15 @@
+     -->
+     <integer name="def_enable_taskbar">0</integer>
+ 
++    <!--
++        AshFall: LineageSettings.System.TRUST_INTERFACE_HINTED. 1 marks the Trust
++        onboarding as seen, so TrustInterfaceService does not post the recurring
++        "Discover Trust" notification on every boot. The Trust page and its
++        security warnings stay available in Settings; only the onboarding card is
++        suppressed. A user who already tapped the notification has 1 anyway.
++    -->
++    <integer name="def_trust_interface_hinted">1</integer>
++
+     <!-- Defaults for AOSP Global -->
+ 
+     <!-- Default for Settings.Global.DISABLE_WINDOW_BLURS -->
+diff --git a/packages/LineageSettingsProvider/src/org/lineageos/lineagesettings/LineageDatabaseHelper.java b/packages/LineageSettingsProvider/src/org/lineageos/lineagesettings/LineageDatabaseHelper.java
+index 65b9f48..91367b8 100644
+--- a/packages/LineageSettingsProvider/src/org/lineageos/lineagesettings/LineageDatabaseHelper.java
++++ b/packages/LineageSettingsProvider/src/org/lineageos/lineagesettings/LineageDatabaseHelper.java
+@@ -37,7 +37,7 @@ public class LineageDatabaseHelper extends SQLiteOpenHelper{
+     private static final boolean LOCAL_LOGV = false;
+ 
+     private static final String DATABASE_NAME = "lineagesettings.db";
+-    private static final int DATABASE_VERSION = 25;
++    private static final int DATABASE_VERSION = 26;
+ 
+     public static class LineageTableNames {
+         public static final String TABLE_SYSTEM = "system";
+@@ -371,6 +371,17 @@ public class LineageDatabaseHelper extends SQLiteOpenHelper{
+             upgradeVersion = 25;
+         }
+ 
++        if (upgradeVersion < 26) {
++            // AshFall: suppress the recurring Trust onboarding notification
++            // (docs/phase7.md 2). TrustInterfaceService posts "Discover Trust" on
++            // every boot while TRUST_INTERFACE_HINTED is not 1. A fresh database
++            // gets 1 from loadSystemSettings(); an existing database gets it
++            // here. The value is only ever written by the onboarding activity
++            // (to 1), so replacing a 0 cannot lose a user choice.
++            loadTrustInterfaceSetting(db);
++            upgradeVersion = 26;
++        }
++
+         // *** Remember to update DATABASE_VERSION above!
+         if (upgradeVersion != newVersion) {
+             Log.wtf(TAG, "warning: upgrading settings database to version "
+@@ -508,6 +519,8 @@ public class LineageDatabaseHelper extends SQLiteOpenHelper{
+ 
+             loadNavigationBarSettings(db, false /* resetNavigationBarHint */);
+ 
++            loadTrustInterfaceSetting(db);
++
+             if (mContext.getResources().getBoolean(R.bool.def_notification_pulse_custom_enable)) {
+                 loadStringSetting(stmt, LineageSettings.System.NOTIFICATION_LIGHT_PULSE_CUSTOM_VALUES,
+                         R.string.def_notification_pulse_custom_value);
+@@ -546,6 +559,26 @@ public class LineageDatabaseHelper extends SQLiteOpenHelper{
+         }
+     }
+ 
++    /**
++     * Writes the AshFall Trust onboarding default (docs/phase7.md 2).
++     *
++     * <p>TrustInterfaceService posts the "Discover Trust" notification at every
++     * boot while this key is not 1. Seeding it to 1 is the ROM default; the
++     * Trust interface itself and its security warnings are unaffected.
++     */
++    private void loadTrustInterfaceSetting(SQLiteDatabase db) {
++        SQLiteStatement stmt = null;
++        try {
++            stmt = db.compileStatement("INSERT OR REPLACE INTO system(name,value) VALUES(?,?);");
++            stmt.bindString(1, LineageSettings.System.TRUST_INTERFACE_HINTED);
++            stmt.bindString(2, Integer.toString(mContext.getResources()
++                    .getInteger(R.integer.def_trust_interface_hinted)));
++            stmt.execute();
++        } finally {
++            if (stmt != null) stmt.close();
++        }
++    }
++
+     private void loadGlobalSettings(SQLiteDatabase db) {
+         SQLiteStatement stmt = null;
+         try {
+-- 
+2.53.0
+

@@ -1,0 +1,35 @@
+From 54e7d5d853cc750f5ce099ad53beab636cf9e012 Mon Sep 17 00:00:00 2001
+From: AshFall UI <ui@ashfall.local>
+Date: Sat, 21 Nov 2026 20:50:53 +0000
+Subject: [PATCH] Virtualization: drop the AVF Terminal app from the
+ com.android.virt APEX
+
+---
+ build/apex/Android.bp | 9 +++------
+ 1 file changed, 3 insertions(+), 6 deletions(-)
+
+diff --git a/build/apex/Android.bp b/build/apex/Android.bp
+index f24eb80..6ef60ae 100644
+--- a/build/apex/Android.bp
++++ b/build/apex/Android.bp
+@@ -188,14 +188,11 @@ apex_defaults {
+     host_required: [
+         "vm_shell",
+     ],
++    // AshFall: the AVF Terminal demo app is not part of the handheld. The APEX
++    // itself stays (framework dependency); only its launcher app is dropped.
+     apps: [
+         "EmptyPayloadApp",
+-    ] + select(release_flag("RELEASE_AVF_SUPPORT_CUSTOM_VM_WITH_PARAVIRTUALIZED_DEVICES"), {
+-        true: [
+-            "VmTerminalApp",
+-        ],
+-        default: [],
+-    }),
++    ],
+     androidManifest: select(release_flag("RELEASE_AVF_ENABLE_LLPVM_CHANGES"), {
+         true: "AndroidManifest.xml",
+         default: unset,
+-- 
+2.53.0
+

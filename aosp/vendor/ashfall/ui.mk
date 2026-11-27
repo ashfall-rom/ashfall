@@ -26,6 +26,11 @@
 PRODUCT_ENFORCE_RRO_EXCLUDED_OVERLAYS += vendor/ashfall/overlay/no-rro
 PRODUCT_PACKAGE_OVERLAYS += vendor/ashfall/overlay/no-rro
 
+# Static product-partition RRO for framework-res so AshFall's theming_defaults,
+# fallback Ember palette and default_wallpaper beat vendor/lineage's
+# auto-generated product RRO (which runs at priority 1).
+PRODUCT_PACKAGES += AshFallFrameworksOverlay
+
 # --- patches ----------------------------------------------------------------
 #
 # What is a patch and what is an overlay:

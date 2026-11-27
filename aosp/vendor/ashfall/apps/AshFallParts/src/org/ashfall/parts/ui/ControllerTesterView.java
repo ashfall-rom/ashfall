@@ -340,7 +340,7 @@ public class ControllerTesterView extends View {
     }
 
     private void resolveTheme() {
-        mAccent = themeColor(android.R.attr.colorAccent, 0xFFFF2020);
+        mAccent = themeColor(android.R.attr.colorAccent, 0xFFFF8A3D);
         mPrimary = themeColor(android.R.attr.textColorPrimary, 0xFFEEEEEE);
         mSecondary = themeColor(android.R.attr.textColorSecondary, 0xFF888888);
         // The window background (styles.xml uses ?android:attr/colorBackground);

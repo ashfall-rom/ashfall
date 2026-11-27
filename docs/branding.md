@@ -34,6 +34,28 @@ circle and a transparent corner would show the page underneath.
 * `ashfall-rom/.github` — `profile/README.md` (the org landing page) and
   `profile/ashfall-icon.png` (the logo it shows).
 
+## In-ROM surfaces (phase 7)
+
+The ROM carries the same mark and palette on these user-visible surfaces; all
+are resource overlays under `aosp/vendor/ashfall/overlay/no-rro/`, not forks:
+
+| Surface | Resource | Value |
+|---|---|---|
+| Setup welcome/finish | `packages/apps/SetupWizard/app/src/main/res/drawable/logo.xml`, `layout/welcome_activity.xml` | AshFall tile + mark, Soot/Ember |
+| Setup name and title | `.../values/strings.xml` (`os_name`, `app_name`) | "AshFall", "AshFall Setup" |
+| Setup flow | `.../raw/lineage_wizard_script.xml` | no SIM, empty device-specific, recovery-update or biometric page |
+| Setup accent/icon | `.../values/colors.xml`, `.../values/styles.xml`, `.../drawable/ic_launcher_*` | Ember controls (Material, framework and SetupDesign attrs) and the AshFall adaptive icon |
+| System default accent | `patches/frameworks/base/0008-systemui-default-ashfall-accent.patch` | Ember when no ThemePicker theme is selected |
+| Setup Theme page | `.../drawable-nodpi/theme_preview_wallpaper.jpg`, `.../drawable/theme_preview_qs.xml`, `.../drawable/ic_palette.xml` | AshFall tile/wordmark in the preview, Ember QS tiles, AshFall page glyph |
+| Settings > System entry | `packages/apps/LineageParts/res/values/strings.xml` | "AshFall Settings" |
+| About phone | `packages/apps/Settings/res/xml/my_device_info.xml` + `AshFallVersionPreferenceController` | "AshFall version" (version + build id), "AshFall project"; Lineage row becomes "LineageOS base" |
+| Device name / model / Bluetooth | product makefile + SettingsProvider migration | "RP5 AshFall" |
+| Boot | `assets/brand/bootanimation/` | already AshFall (phase 4) |
+
+The system theme/accent is **not** re-branded in phase 7 (decision 2026-11-21);
+the launcher owns the wallpaper and accent for the home surface. A full Ember
+theme overlay is a candidate follow-up.
+
 ## What still needs the web UI
 
 GitHub exposes no API for an organisation avatar or a repository social

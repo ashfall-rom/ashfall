@@ -26,8 +26,14 @@
 # config through TARGET_DEVICE, and the GSI board config lives at
 # build/make/target/board/generic_arm64/BoardConfig.mk.
 
+# Must be set BEFORE lineage_gsi_arm64 is inherited: common_mobile_full.mk
+# decides whether to add Aperture at inherit time. The RP5 has no usable
+# camera, and phase 7 removes the camera apps/services (docs/phase7.md).
+PRODUCT_NO_CAMERA := true
+
 $(call inherit-product, vendor/lineage/build/target/product/lineage_gsi_arm64.mk)
 include vendor/ashfall/ashfall_common.mk
+include vendor/ashfall/debloat.mk
 
 # LineageOS' build system derives LINEAGE_BUILD from a "lineage_" product-name
 # prefix (vendor/lineage/build/envsetup.sh:check_product) and gates
@@ -42,7 +48,7 @@ LINEAGE_BUILD := ashfall_gsi_arm64
 
 PRODUCT_NAME := ashfall_gsi_arm64
 PRODUCT_BRAND := AshFall
-PRODUCT_MODEL := AshFall GSI arm64
+PRODUCT_MODEL := RP5 AshFall
 PRODUCT_MANUFACTURER := AshFall
 
 # --- adb root on userdebug (issue #255) -------------------------------------

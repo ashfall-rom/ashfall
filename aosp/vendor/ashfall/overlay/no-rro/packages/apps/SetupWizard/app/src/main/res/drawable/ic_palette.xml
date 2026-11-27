@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- AshFall mark in place of the palette glyph on the setup Theme page; the
+     fill follows the wizard's control tint (Ember in Theme.Setup). -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="512"
+    android:viewportHeight="512">
+    <path
+        android:fillColor="?android:colorControlNormal"
+        android:pathData="M244,112 C228,208 204,316 120,408 L186,408 C236,318 256,200 268,112 Z" />
+    <path
+        android:fillColor="?android:colorControlNormal"
+        android:pathData="M268,112 C284,208 308,316 392,408 L326,408 C276,318 256,200 244,112 Z" />
+    <path
+        android:fillColor="?android:colorControlNormal"
+        android:pathData="M215,281 H297 A19,19 0 0 1 316,300 A19,19 0 0 1 297,319 H215 A19,19 0 0 1 196,300 A19,19 0 0 1 215,281 Z" />
+</vector>

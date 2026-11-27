@@ -1,0 +1,11 @@
+//
+// Copyright (C) 2026 The AshFall Project
+//
+// SPDX-License-Identifier: Apache-2.0
+//
+
+runtime_resource_overlay {
+    name: "AshFallFrameworksOverlay",
+    product_specific: true,
+    aapt_include_all_resources: true,
+}

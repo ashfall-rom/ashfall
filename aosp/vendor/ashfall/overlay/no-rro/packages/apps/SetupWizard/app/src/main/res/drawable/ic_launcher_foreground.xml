@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- AshFall mark for the adaptive setup-wizard icon (108dp viewport, mark
+     scaled from the 512-unit brand SVG into the 72dp safe zone). -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <group
+        android:scaleX="0.16"
+        android:scaleY="0.16"
+        android:translateX="13"
+        android:translateY="13">
+        <path
+            android:fillColor="#EDE9E4"
+            android:pathData="M244,112 C228,208 204,316 120,408 L186,408 C236,318 256,200 268,112 Z" />
+        <path
+            android:fillColor="#EDE9E4"
+            android:pathData="M268,112 C284,208 308,316 392,408 L326,408 C276,318 256,200 244,112 Z" />
+        <path
+            android:fillColor="#EDE9E4"
+            android:pathData="M215,281 H297 A19,19 0 0 1 316,300 A19,19 0 0 1 297,319 H215 A19,19 0 0 1 196,300 A19,19 0 0 1 215,281 Z" />
+    </group>
+</vector>

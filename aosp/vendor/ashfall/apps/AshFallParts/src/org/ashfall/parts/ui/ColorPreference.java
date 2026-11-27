@@ -30,7 +30,7 @@ import org.ashfall.parts.R;
 /** A row that shows one or two colours and opens the colour picker. */
 public class ColorPreference extends Preference {
 
-    private int mColor = 0xFFFF2020;
+    private int mColor = 0xFFFF8A3D;
 
     public ColorPreference(Context context) {
         this(context, null);

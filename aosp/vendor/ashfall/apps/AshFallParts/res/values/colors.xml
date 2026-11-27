@@ -15,7 +15,8 @@
   limitations under the License.
 -->
 <resources>
-    <!-- AshFall ember red: the default stick colour in the daemons. -->
+    <!-- AshFall ember: the default stick colour in the daemons. -->
+    <color name="ashfall_ember">#FFFF8A3D</color>
     <color name="ashfall_red">#FFFF2020</color>
     <color name="ashfall_red_dark">#FFB30F0F</color>
 

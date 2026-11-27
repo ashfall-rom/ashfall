@@ -1,0 +1,146 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- AshFall: the framework fallback palette is Ember/Soot instead of the
+     Material baseline blue. This is what the AOSP setup pages read before the
+     SystemUI theme overlay is evaluated; the runtime ThemeOverlayController
+     uses the same Ember seed (theming_defaults + patches/frameworks/base/0008-*).
+     A theme chosen in ThemePicker still wins after setup. -->
+<resources>
+    <!-- Primary -->
+    <color name="system_primary_light">#C4540A</color>
+    <color name="system_primary_dark">#FFB68A</color>
+    <color name="system_primary_dim_light">#A84606</color>
+    <color name="system_primary_dim_dark">#F59B62</color>
+    <color name="system_on_primary_light">#FFFFFF</color>
+    <color name="system_on_primary_dark">#4E1F00</color>
+    <color name="system_primary_container_light">#FFDCC6</color>
+    <color name="system_primary_container_dark">#6E320B</color>
+    <color name="system_on_primary_container_light">#3A1A08</color>
+    <color name="system_on_primary_container_dark">#FFDCC6</color>
+    <color name="system_inverse_primary_light">#FFB68A</color>
+    <color name="system_inverse_primary_dark">#C4540A</color>
+    <color name="system_primary_fixed_light">#FFDCC6</color>
+    <color name="system_primary_fixed_dark">#FFDCC6</color>
+    <color name="system_primary_fixed_dim_light">#FFB68A</color>
+    <color name="system_primary_fixed_dim_dark">#FFB68A</color>
+    <color name="system_on_primary_fixed_light">#3A1A08</color>
+    <color name="system_on_primary_fixed_dark">#3A1A08</color>
+    <color name="system_on_primary_fixed_variant_light">#6E320B</color>
+    <color name="system_on_primary_fixed_variant_dark">#6E320B</color>
+
+    <!-- Secondary -->
+    <color name="system_secondary_light">#765848</color>
+    <color name="system_secondary_dark">#E5BFB0</color>
+    <color name="system_secondary_dim_light">#664A3B</color>
+    <color name="system_secondary_dim_dark">#D4AD9D</color>
+    <color name="system_on_secondary_light">#FFFFFF</color>
+    <color name="system_on_secondary_dark">#432B1E</color>
+    <color name="system_secondary_container_light">#FFDCC6</color>
+    <color name="system_secondary_container_dark">#5C4032</color>
+    <color name="system_on_secondary_container_light">#2B160B</color>
+    <color name="system_on_secondary_container_dark">#FFDCC6</color>
+    <color name="system_secondary_fixed_light">#FFDCC6</color>
+    <color name="system_secondary_fixed_dark">#FFDCC6</color>
+    <color name="system_secondary_fixed_dim_light">#E5BFB0</color>
+    <color name="system_secondary_fixed_dim_dark">#E5BFB0</color>
+    <color name="system_on_secondary_fixed_light">#2B160B</color>
+    <color name="system_on_secondary_fixed_dark">#2B160B</color>
+    <color name="system_on_secondary_fixed_variant_light">#5C4032</color>
+    <color name="system_on_secondary_fixed_variant_dark">#5C4032</color>
+
+    <!-- Tertiary -->
+    <color name="system_tertiary_light">#6B5E3F</color>
+    <color name="system_tertiary_dark">#D7C6A1</color>
+    <color name="system_tertiary_dim_light">#5C5033</color>
+    <color name="system_tertiary_dim_dark">#C4B490</color>
+    <color name="system_on_tertiary_light">#FFFFFF</color>
+    <color name="system_on_tertiary_dark">#3A3016</color>
+    <color name="system_tertiary_container_light">#F4E2BC</color>
+    <color name="system_tertiary_container_dark">#52462A</color>
+    <color name="system_on_tertiary_container_light">#241B04</color>
+    <color name="system_on_tertiary_container_dark">#F4E2BC</color>
+    <color name="system_tertiary_fixed_light">#F4E2BC</color>
+    <color name="system_tertiary_fixed_dark">#F4E2BC</color>
+    <color name="system_tertiary_fixed_dim_light">#D7C6A1</color>
+    <color name="system_tertiary_fixed_dim_dark">#D7C6A1</color>
+    <color name="system_on_tertiary_fixed_light">#241B04</color>
+    <color name="system_on_tertiary_fixed_dark">#241B04</color>
+    <color name="system_on_tertiary_fixed_variant_light">#52462A</color>
+    <color name="system_on_tertiary_fixed_variant_dark">#52462A</color>
+
+    <!-- Controls / surface tint / key colors -->
+    <color name="system_control_activated_light">#FF8A3D</color>
+    <color name="system_control_activated_dark">#FF8A3D</color>
+    <color name="system_surface_tint_light">#C4540A</color>
+    <color name="system_surface_tint_dark">#FFB68A</color>
+    <color name="system_palette_key_color_primary_light">#FF8A3D</color>
+    <color name="system_palette_key_color_primary_dark">#FF8A3D</color>
+    <color name="system_palette_key_color_secondary_light">#C96A2E</color>
+    <color name="system_palette_key_color_secondary_dark">#C96A2E</color>
+    <color name="system_palette_key_color_tertiary_light">#9A8F86</color>
+    <color name="system_palette_key_color_tertiary_dark">#9A8F86</color>
+
+    <!-- Accent 1 (the main accent; buttons, tabs, switches) -->
+    <color name="system_accent1_50_light">#FFF0E6</color>
+    <color name="system_accent1_50_dark">#FFF0E6</color>
+    <color name="system_accent1_100_light">#FFDCC6</color>
+    <color name="system_accent1_100_dark">#FFDCC6</color>
+    <color name="system_accent1_200_light">#FFB68A</color>
+    <color name="system_accent1_200_dark">#FFB68A</color>
+    <color name="system_accent1_300_light">#FF9C60</color>
+    <color name="system_accent1_300_dark">#FF9C60</color>
+    <color name="system_accent1_400_light">#FF8A3D</color>
+    <color name="system_accent1_400_dark">#FF8A3D</color>
+    <color name="system_accent1_500_light">#FF8A3D</color>
+    <color name="system_accent1_500_dark">#FF8A3D</color>
+    <color name="system_accent1_600_light">#C4540A</color>
+    <color name="system_accent1_600_dark">#C4540A</color>
+    <color name="system_accent1_700_light">#963E04</color>
+    <color name="system_accent1_700_dark">#963E04</color>
+    <color name="system_accent1_800_light">#6E320B</color>
+    <color name="system_accent1_800_dark">#6E320B</color>
+    <color name="system_accent1_900_light">#3A1A08</color>
+    <color name="system_accent1_900_dark">#3A1A08</color>
+
+    <!-- Accent 2/3: keep them warm instead of falling back to blue -->
+    <color name="system_accent2_50_light">#FFF1E8</color>
+    <color name="system_accent2_50_dark">#FFF1E8</color>
+    <color name="system_accent2_100_light">#F5D9C8</color>
+    <color name="system_accent2_100_dark">#F5D9C8</color>
+    <color name="system_accent2_200_light">#E5BFB0</color>
+    <color name="system_accent2_200_dark">#E5BFB0</color>
+    <color name="system_accent2_300_light">#C8A293</color>
+    <color name="system_accent2_300_dark">#C8A293</color>
+    <color name="system_accent2_400_light">#AD8879</color>
+    <color name="system_accent2_400_dark">#AD8879</color>
+    <color name="system_accent2_500_light">#C96A2E</color>
+    <color name="system_accent2_500_dark">#C96A2E</color>
+    <color name="system_accent2_600_light">#765848</color>
+    <color name="system_accent2_600_dark">#765848</color>
+    <color name="system_accent2_700_light">#5C4032</color>
+    <color name="system_accent2_700_dark">#5C4032</color>
+    <color name="system_accent2_800_light">#432B1E</color>
+    <color name="system_accent2_800_dark">#432B1E</color>
+    <color name="system_accent2_900_light">#2B160B</color>
+    <color name="system_accent2_900_dark">#2B160B</color>
+
+    <color name="system_accent3_50_light">#FAF3E6</color>
+    <color name="system_accent3_50_dark">#FAF3E6</color>
+    <color name="system_accent3_100_light">#E8E1D8</color>
+    <color name="system_accent3_100_dark">#E8E1D8</color>
+    <color name="system_accent3_200_light">#D7C6A1</color>
+    <color name="system_accent3_200_dark">#D7C6A1</color>
+    <color name="system_accent3_300_light">#BBAE90</color>
+    <color name="system_accent3_300_dark">#BBAE90</color>
+    <color name="system_accent3_400_light">#A19476</color>
+    <color name="system_accent3_400_dark">#A19476</color>
+    <color name="system_accent3_500_light">#9A8F86</color>
+    <color name="system_accent3_500_dark">#9A8F86</color>
+    <color name="system_accent3_600_light">#6B5E3F</color>
+    <color name="system_accent3_600_dark">#6B5E3F</color>
+    <color name="system_accent3_700_light">#52462A</color>
+    <color name="system_accent3_700_dark">#52462A</color>
+    <color name="system_accent3_800_light">#3A3016</color>
+    <color name="system_accent3_800_dark">#3A3016</color>
+    <color name="system_accent3_900_light">#241B04</color>
+    <color name="system_accent3_900_dark">#241B04</color>
+</resources>

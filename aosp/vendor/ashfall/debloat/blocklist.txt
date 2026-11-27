@@ -1,0 +1,137 @@
+# AshFall phase 7 blocklist (docs/phase7.md)
+#
+# One entry per line. Comments and blank lines are ignored.
+#
+#   module  <Soong/make module>   must not appear as /<module>/ or /<module>.apex
+#                                 in installed-files.txt
+#   path    <absolute path>       must not appear in installed-files.txt
+#   package <Android package>     must not be installed on the device
+#
+# Keep the module list in sync with aosp/vendor/ashfall/debloat.mk.
+
+# --- requested apps ---------------------------------------------------------
+module ExactCalculator
+module Etar
+module Twelve
+module Recorder
+module UsbDisableDebugger
+
+# --- camera ----------------------------------------------------------------
+module Aperture
+module ApertureLensLauncher
+module Camera2
+module CameraExtensionsProxy
+module DeviceAsWebcam
+module cameraserver
+module virtual_camera
+
+# --- phone/cell (Wi-Fi-only) -----------------------------------------------
+module Dialer
+module Contacts
+module ContactsPicker
+module messaging
+module MmsService
+module TeleService
+module TelephonyProvider
+module TelecomShim
+module EmergencyInfo
+module CarrierConfig
+module CarrierDefaultApp
+module ImsServiceEntitlement
+module ONS
+module SimAppDialog
+module Stk
+module BlockedNumberProvider
+module CallLogBackup
+module E2eeContactKeysProvider
+module CellBroadcastLegacyApp
+module com.android.cellbroadcast
+
+# --- Lineage OTA -----------------------------------------------------------
+module Updater
+path /system/system_ext/etc/init/init.lineage-updater.rc
+
+# --- printing --------------------------------------------------------------
+module PrintSpooler
+module PrintRecommendationService
+module BuiltInPrintService
+
+# --- screensavers, egg, diagnostics, test tools ----------------------------
+module BasicDreams
+module PhotoTable
+module EasterEgg
+module DeviceDiagnostics
+module HTMLViewer
+
+# --- NFC / secure element / wallet app APKs --------------------------------
+module Tag
+module SecureElement
+module QuickAccessWallet
+
+# --- duplicate browser -----------------------------------------------------
+module Jelly
+
+# --- AVF / terminal ---------------------------------------------------------
+# The com.android.virt APEX stays (framework dependency); its Terminal app is
+# removed by patches/packages/modules/Virtualization/0001-*.patch.
+# --- packages checked on the device ---------------------------------------
+package com.android.calculator2
+package org.lineageos.etar
+package org.lineageos.twelve
+package org.lineageos.recorder
+package com.android.usb.testing.debuggertool.datasignal
+package org.lineageos.aperture
+package org.lineageos.aperture.frameworksbaseoverlay
+package com.google.android.apps.googlecamera.fishfood
+package com.android.cameraextensions
+package com.android.camera2
+package com.android.DeviceAsWebcam
+package com.android.dialer
+package com.android.contacts
+package com.android.contactspicker
+package com.android.messaging
+package com.android.mms.service
+package com.android.phone
+package com.android.providers.telephony
+package com.android.server.telecom
+package com.android.emergency
+package com.android.carrierconfig
+package com.android.carrierdefaultapp
+package com.android.imsserviceentitlement
+package com.android.ons
+package com.android.simappdialog
+package com.android.stk
+package com.android.providers.blockednumber
+package com.android.calllogbackup
+package com.android.providers.contactkeys
+package com.android.cellbroadcastreceiver
+package com.android.cellbroadcastreceiver.module
+package com.android.cellbroadcastservice
+package org.lineageos.updater
+package org.lineageos.updater.auto_generated_rro_product__
+package com.android.printspooler
+package com.android.printservice.recommendation
+package com.android.bips
+package com.android.dreams.basic
+package com.android.dreams.phototable
+package com.android.egg
+package com.android.devicediagnostics
+package com.android.devicediagnostics.auto_generated_rro_product__
+package com.android.htmlviewer
+package com.android.apps.tag
+package com.android.se
+package com.android.systemui.plugin.globalactions.wallet
+package org.lineageos.jelly
+package com.android.virtualization.terminal
+
+# --- auto-generated RROs of the removed phone apps --------------------------
+package com.android.dialer.auto_generated_rro_product__
+package com.android.phone.auto_generated_rro_product__
+package com.android.imsserviceentitlement.auto_generated_rro_product__
+package com.android.emergency.auto_generated_rro_product__
+
+# --- sideloaded debug tool, not part of the image --------------------------
+# The LED test APK is installed in /data by a development session; phase 7
+# removes it from the device. It must never appear in a build, but the device
+# audit is the check that matters.
+package org.ashfall.ledtest

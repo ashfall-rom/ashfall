@@ -58,7 +58,7 @@ public class StickPreviewView extends View {
     public StickPreviewView(Context context, @Nullable AttributeSet attrs) {
         super(context, attrs);
         mDensity = getResources().getDisplayMetrics().density;
-        mAccent = themeColor(android.R.attr.colorAccent, 0xFFFF2020);
+        mAccent = themeColor(android.R.attr.colorAccent, 0xFFFF8A3D);
         mSecondary = themeColor(android.R.attr.textColorSecondary, 0xFF888888);
         mRing.setStyle(Paint.Style.STROKE);
         mRing.setStrokeWidth(1.5f * mDensity);

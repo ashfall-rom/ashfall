@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The Settings > System page is LineageParts. Rename the entry; the pages
+     (Buttons, Gestures, Trust, LiveDisplay, ...) keep their upstream titles. -->
+<resources>
+    <string name="lineageparts_title">AshFall Settings</string>
+</resources>

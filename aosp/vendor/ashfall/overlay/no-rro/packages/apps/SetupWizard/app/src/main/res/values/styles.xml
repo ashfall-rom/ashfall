@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Keep the upstream Theme.Setup behaviour and put the AshFall Ember accent
+     on the wizard only; the system-wide theme is deliberately unchanged. -->
+<resources>
+    <style name="Theme.Setup" parent="@style/SudThemeGlifExpressive.DayNight">
+        <item name="sucUsePartnerResource">true</item>
+        <item name="sudUsePartnerHeavyTheme">true</item>
+        <item name="colorPrimary">@color/ashfall_ember</item>
+        <item name="colorSecondary">@color/ashfall_ember</item>
+        <item name="colorAccent">@color/ashfall_ember</item>
+        <item name="colorOnPrimary">@color/ashfall_soot</item>
+        <item name="colorOnSecondary">@color/ashfall_soot</item>
+        <!-- The AOSP setup pages (Internet, Protect your phone) still read the
+             framework accent attributes during setup, before the SystemUI
+             theme overlay is evaluated. Pin them here too. -->
+        <item name="android:colorPrimary">@color/ashfall_ember</item>
+        <item name="android:colorPrimaryDark">@color/ashfall_soot</item>
+        <item name="android:colorAccent">@color/ashfall_ember</item>
+        <item name="sudColorPrimary">@color/ashfall_ember</item>
+    </style>
+</resources>
