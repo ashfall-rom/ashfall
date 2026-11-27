@@ -714,15 +714,28 @@ static void test_led_effects(void)
     led_state_init(&led, 0);
     CHECK_EQ(led.backend, LED_BACKEND_SN3112);
 
-    /* static at 60 %: FF8A3D -> 153 83 37 */
+    /* static at 60 %: gamma-decoded sRGB FF8A3D -> 153 35 5 */
     led.settings.mode = LED_MODE_STATIC;
     led.settings.brightness = 60;
     led_frame(&led, 0, frame);
     CHECK_EQ(frame[0].r, 153);
-    CHECK_EQ(frame[0].g, 83);
-    CHECK_EQ(frame[0].b, 37);
+    CHECK_EQ(frame[0].g, 35);
+    CHECK_EQ(frame[0].b, 5);
     CHECK_EQ(frame[1].r, 153);
     CHECK(!memcmp(&frame[0], &frame[1], sizeof(frame[0])));
+
+    /* orange swatch (#FF7A00) stays deep orange instead of shifting yellow */
+    led.settings.left = (rgb_t){0xFF, 0x7A, 0x00};
+    led_frame(&led, 0, frame);
+    CHECK_EQ(frame[0].r, 153);
+    CHECK_EQ(frame[0].g, 26);
+    CHECK_EQ(frame[0].b, 0);
+    led.settings.brightness = 100;
+    led_frame(&led, 0, frame);
+    CHECK_EQ(frame[0].r, 255);
+    CHECK_EQ(frame[0].g, 43);
+    CHECK_EQ(frame[0].b, 0);
+    led_settings_default(&led.settings);
 
     /* brightness 0 -> black, effect still "on" */
     led.settings.brightness = 0;
@@ -761,15 +774,16 @@ static void test_led_effects(void)
     led_frame(&led, 3000, frame);
     CHECK_EQ(frame[0].r, 255); /* a full period wraps back */
 
-    /* breathing stays between 2 % (gamma curve floor) and 100 % of the base
-     * colour, and is smooth (gamma-corrected) rather than a bare cosine. */
+    /* breathing stays between 2 % (gamma curve floor) and 100 % of the
+     * gamma-decoded base colour (200 -> 142), and is smooth rather than a
+     * bare cosine. */
     led.settings.mode = LED_MODE_BREATHING;
     led.settings.left = (rgb_t){200, 200, 200};
     led.settings.right = (rgb_t){200, 200, 200};
     for (int t = 0; t <= 2400; t += 5) {
         led_frame(&led, t, frame);
-        CHECK(frame[0].r >= 3);
-        CHECK(frame[0].r <= 200);
+        CHECK(frame[0].r >= 2);
+        CHECK(frame[0].r <= 142);
     }
 
     /* rainbow at t=0 is pure red, a third of the (3x slower) period later

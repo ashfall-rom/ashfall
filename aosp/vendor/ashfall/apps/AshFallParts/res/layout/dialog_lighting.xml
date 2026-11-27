@@ -149,7 +149,10 @@
                     android:id="@+id/qs_lighting_hue"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:max="360" />
+                    android:max="360"
+                    android:minHeight="44dp"
+                    android:paddingTop="8dp"
+                    android:paddingBottom="8dp" />
             </LinearLayout>
 
             <LinearLayout
@@ -242,16 +245,22 @@
         </LinearLayout>
     </ScrollView>
 
-    <Button
-        android:id="@+id/qs_lighting_done"
-        style="?android:attr/borderlessButtonStyle"
+    <LinearLayout
         android:layout_width="match_parent"
-        android:layout_height="48dp"
+        android:layout_height="wrap_content"
         android:layout_marginTop="4dp"
         android:gravity="end|center_vertical"
-        android:minWidth="0dp"
-        android:paddingStart="0dp"
-        android:paddingEnd="0dp"
-        android:text="@string/done"
-        android:textColor="?android:attr/colorAccent" />
+        android:orientation="horizontal">
+
+        <Button
+            android:id="@+id/qs_lighting_done"
+            style="?android:attr/borderlessButtonStyle"
+            android:layout_width="wrap_content"
+            android:layout_height="48dp"
+            android:minWidth="64dp"
+            android:paddingStart="16dp"
+            android:paddingEnd="8dp"
+            android:text="@string/done"
+            android:textColor="?android:attr/colorAccent" />
+    </LinearLayout>
 </LinearLayout>
