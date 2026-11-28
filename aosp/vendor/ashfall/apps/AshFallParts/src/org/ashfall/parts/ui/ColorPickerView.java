@@ -140,7 +140,15 @@ public class ColorPickerView extends View {
                 setFromPoint(event.getX(), event.getY());
                 return true;
             case MotionEvent.ACTION_UP:
+                if (getParent() != null) {
+                    getParent().requestDisallowInterceptTouchEvent(false);
+                }
                 performClick();
+                return true;
+            case MotionEvent.ACTION_CANCEL:
+                if (getParent() != null) {
+                    getParent().requestDisallowInterceptTouchEvent(false);
+                }
                 return true;
             default:
                 return super.onTouchEvent(event);
@@ -167,9 +175,15 @@ public class ColorPickerView extends View {
                 mSaturation = clamp01(mSaturation + 0.02f);
                 break;
             case KeyEvent.KEYCODE_DPAD_UP:
+                if (mValue >= 1f) {
+                    return super.onKeyDown(keyCode, event);
+                }
                 mValue = clamp01(mValue + 0.02f);
                 break;
             case KeyEvent.KEYCODE_DPAD_DOWN:
+                if (mValue <= 0f) {
+                    return super.onKeyDown(keyCode, event);
+                }
                 mValue = clamp01(mValue - 0.02f);
                 break;
             default:

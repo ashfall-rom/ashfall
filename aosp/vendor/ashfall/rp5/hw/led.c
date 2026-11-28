@@ -20,6 +20,12 @@
  * (docs/phase5.md §6.1). */
 #define LED_BREATH_GAMMA 2.2
 #define LED_BREATH_MIN 0.02
+/* Input RGB colours (settings, HSV rainbow, default #FF8A3D) are sRGB-encoded,
+ * whereas sn3112/htr3212 1-R:G:B registers drive linear PWM duty cycles.
+ * Without gamma decoding, sRGB mid-tones push 2-5x too much green/blue PWM,
+ * washing out Ember (#FF8A3D) toward white and shifting orange (#FF7A00) to
+ * yellow. */
+#define LED_COLOR_GAMMA 2.4
 
 static const char *const side_dirs[2] = {
     "/sys/class/sn3112l/led",
@@ -235,7 +241,29 @@ bool led_screen_on(const led_screen *screen)
     return screen->stable_on;
 }
 
-static rgb_t scale(rgb_t c, double factor)
+typedef struct {
+    double r, g, b;
+} linear_rgb_t;
+
+static double channel_to_linear(unsigned char c)
+{
+    if (c == 0)
+        return 0.0;
+    if (c == 255)
+        return 1.0;
+    return pow((double)c / 255.0, LED_COLOR_GAMMA);
+}
+
+static linear_rgb_t srgb_to_linear(rgb_t c)
+{
+    return (linear_rgb_t){
+        channel_to_linear(c.r),
+        channel_to_linear(c.g),
+        channel_to_linear(c.b),
+    };
+}
+
+static rgb_t linear_scale_to_pwm(linear_rgb_t c, double factor)
 {
     rgb_t out;
 
@@ -243,20 +271,19 @@ static rgb_t scale(rgb_t c, double factor)
         factor = 0;
     if (factor > 1)
         factor = 1;
-    out.r = (unsigned char)lround(c.r * factor);
-    out.g = (unsigned char)lround(c.g * factor);
-    out.b = (unsigned char)lround(c.b * factor);
+    out.r = (unsigned char)lround(c.r * factor * 255.0);
+    out.g = (unsigned char)lround(c.g * factor * 255.0);
+    out.b = (unsigned char)lround(c.b * factor * 255.0);
     return out;
 }
 
-static rgb_t lerp(rgb_t a, rgb_t b, double t)
+static linear_rgb_t lerp_linear(linear_rgb_t a, linear_rgb_t b, double t)
 {
-    rgb_t out;
-
-    out.r = (unsigned char)lround(a.r + (b.r - a.r) * t);
-    out.g = (unsigned char)lround(a.g + (b.g - a.g) * t);
-    out.b = (unsigned char)lround(a.b + (b.b - a.b) * t);
-    return out;
+    return (linear_rgb_t){
+        a.r + (b.r - a.r) * t,
+        a.g + (b.g - a.g) * t,
+        a.b + (b.b - a.b) * t,
+    };
 }
 
 /* h in [0,1) */
@@ -297,12 +324,9 @@ void led_frame(const led_state *state, int64_t now_ms, rgb_t out[2])
     int speed = set->speed < 1 ? 1 : set->speed > 10 ? 10 : set->speed;
     double elapsed = (double)(now_ms - state->anim_start_ms);
     double level = 1.0;
-    rgb_t left = set->left;
-    rgb_t right = set->right;
+    linear_rgb_t left;
+    linear_rgb_t right;
     double brightness;
-
-    if (set->sync)
-        right = left;
 
     /* Gamepad tester override: final colours, no brightness/mode processing. */
     if (set->override_valid) {
@@ -311,10 +335,16 @@ void led_frame(const led_state *state, int64_t now_ms, rgb_t out[2])
         return;
     }
 
-    switch (set->mode) {
-    case LED_MODE_OFF:
+    if (set->mode == LED_MODE_OFF) {
         out[0] = out[1] = (rgb_t){0, 0, 0};
         return;
+    }
+
+    left = srgb_to_linear(set->left);
+    right = set->sync ? left : srgb_to_linear(set->right);
+
+    switch (set->mode) {
+    case LED_MODE_OFF:
     case LED_MODE_STATIC:
         break;
     case LED_MODE_BREATHING: {
@@ -331,7 +361,8 @@ void led_frame(const led_state *state, int64_t now_ms, rgb_t out[2])
         double phase = fmod(elapsed, period) / period;
         double t = 0.5 - 0.5 * cos(2.0 * AH_PI * phase);
 
-        left = lerp(set->left, set->right, t);
+        left = lerp_linear(srgb_to_linear(set->left),
+                           srgb_to_linear(set->right), t);
         right = left; /* both sticks fade between the two colours */
         break;
     }
@@ -343,9 +374,11 @@ void led_frame(const led_state *state, int64_t now_ms, rgb_t out[2])
         double period = 54000.0 / speed;
         double hue = fmod(elapsed, period) / period;
 
-        left = hsv_to_rgb(hue, 1.0, 1.0);
-        right = set->sync ? left : hsv_to_rgb(fmod(hue + 1.0 / 3.0, 1.0), 1.0,
-                                              1.0);
+        left = srgb_to_linear(hsv_to_rgb(hue, 1.0, 1.0));
+        right = set->sync
+                    ? left
+                    : srgb_to_linear(
+                          hsv_to_rgb(fmod(hue + 1.0 / 3.0, 1.0), 1.0, 1.0));
         break;
     }
     }
@@ -354,8 +387,8 @@ void led_frame(const led_state *state, int64_t now_ms, rgb_t out[2])
                                                    ? 100
                                                    : set->brightness) /
                  100.0;
-    out[0] = scale(left, brightness * level);
-    out[1] = scale(right, brightness * level);
+    out[0] = linear_scale_to_pwm(left, brightness * level);
+    out[1] = linear_scale_to_pwm(right, brightness * level);
 }
 
 static bool write_side(led_state *state, int side, rgb_t colour, bool enabled)
